@@ -42,6 +42,7 @@ const MainLayout: React.FC = () => {
   const [targetSearchTerm, setTargetSearchTerm] = useState<string | undefined>(undefined);
 
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Check URL params for direct link to careers page
   useEffect(() => {
@@ -112,7 +113,11 @@ const MainLayout: React.FC = () => {
         onNavigateToProcess={handleNavigateToProcess}
         onNavigateToAI={handleNavigateToAI}
         isSidebarCollapsed={isSidebarCollapsed}
-        onToggleSidebar={() => setIsSidebarCollapsed(prev => !prev)}
+        onToggleSidebar={() => {
+          // lg+: collapse the fixed sidebar; below lg the menu is an off-canvas drawer
+          if (window.matchMedia('(min-width: 1024px)').matches) setIsSidebarCollapsed(prev => !prev);
+          else setIsMobileMenuOpen(prev => !prev);
+        }}
       />
 
       {/* Main Work Area - Expanded Widescreen Layout */}
@@ -121,6 +126,8 @@ const MainLayout: React.FC = () => {
         <Sidebar
           activeModule={activeModule}
           isCollapsed={isSidebarCollapsed}
+          mobileOpen={isMobileMenuOpen}
+          onCloseMobile={() => setIsMobileMenuOpen(false)}
           onToggleCollapse={() => setIsSidebarCollapsed(prev => !prev)}
           onSelectModule={(id) => {
             if (id === 16) {
@@ -133,7 +140,7 @@ const MainLayout: React.FC = () => {
         />
 
         {/* Content View */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 xl:p-9 overflow-y-auto max-w-full">
+        <main className="flex-1 min-w-0 p-3 sm:p-6 lg:p-8 xl:p-9 overflow-y-auto max-w-full">
           {isLoading ? (
             <div className="flex items-center justify-center h-64 text-slate-400 text-xs animate-pulse">
               Conectando dinamicamente ao banco do tenant...

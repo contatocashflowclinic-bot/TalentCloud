@@ -1,1 +1,7 @@
 @import "tailwindcss";
+
+/* Mobile: 16px fields stop iOS Safari from zooming the page on focus; no auto text inflation */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+@media (max-width: 767px) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea { font-size: 16px !important; }
+}

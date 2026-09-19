@@ -256,7 +256,7 @@ export const ModuleOpenings: React.FC<{
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Cargo Base</label>
                   <select
@@ -284,7 +284,7 @@ export const ModuleOpenings: React.FC<{
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Modelo de Trabalho</label>
                   <select

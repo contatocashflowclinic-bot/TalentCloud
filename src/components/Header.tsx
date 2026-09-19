@@ -10,6 +10,7 @@ import {
   Check,
   Globe,
   PanelLeftClose,
+  Menu,
   PanelLeft,
   LogOut,
   KeyRound,
@@ -56,20 +57,24 @@ export const Header: React.FC<{
   return (
     <header className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-xs">
       <div className="w-full max-w-[1820px] mx-auto px-3 sm:px-5 lg:px-7">
-        <div className="flex items-center justify-between h-16 gap-3 sm:gap-4">
+        {/* wraps on small screens: the candidate search drops to its own full-width row */}
+        <div className="flex flex-wrap items-center justify-between min-h-16 py-2 gap-x-2 sm:gap-x-4 gap-y-2">
           
           {/* Logo & Main Title & Sidebar Toggle */}
           <div className="flex items-center gap-2.5 sm:gap-3 shrink-0">
             {onToggleSidebar && (
               <button
                 onClick={onToggleSidebar}
-                className="p-2 rounded-xl text-slate-500 hover:text-indigo-600 hover:bg-slate-100 transition-colors"
+                data-testid="menu-toggle"
+                aria-label="Abrir menu"
+                className="p-2 -ml-1 rounded-xl text-slate-500 hover:text-indigo-600 hover:bg-slate-100 transition-colors"
                 title={isSidebarCollapsed ? "Expandir menu lateral" : "Recolher menu lateral para maximizar área"}
               >
+                <Menu className="w-5 h-5 lg:hidden" />
                 {isSidebarCollapsed ? (
-                  <PanelLeft className="w-5 h-5" />
+                  <PanelLeft className="w-5 h-5 hidden lg:block" />
                 ) : (
-                  <PanelLeftClose className="w-5 h-5" />
+                  <PanelLeftClose className="w-5 h-5 hidden lg:block" />
                 )}
               </button>
             )}
@@ -92,7 +97,7 @@ export const Header: React.FC<{
 
           {/* Global Intelligent Candidate Search Bar */}
           {can('candidates:view') && (
-            <div className="flex-1 min-w-0 max-w-xs xl:max-w-[250px] 2xl:max-w-md w-full mx-1 sm:mx-2">
+            <div className="order-last basis-full lg:order-none lg:basis-auto flex-1 min-w-0 lg:max-w-xs xl:max-w-[250px] 2xl:max-w-md lg:mx-2">
               <GlobalCandidateSearchBar
                 onNavigateToCandidate={onNavigateToCandidate}
                 onNavigateToProcess={onNavigateToProcess}
@@ -139,7 +144,7 @@ export const Header: React.FC<{
           )}
 
           {/* Tenant Switcher & Role Selector */}
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
             
             {/* Tenant Selector Dropdown */}
             <div className="relative">
@@ -149,11 +154,11 @@ export const Header: React.FC<{
                   setIsTenantMenuOpen(!isTenantMenuOpen);
                   setIsRoleMenuOpen(false);
                 }}
-                className="flex items-center gap-2.5 px-3.5 py-2 rounded-xl border text-sm font-medium transition-all bg-white border-slate-200 text-slate-800 hover:border-slate-300 shadow-xs"
+                className="flex items-center gap-2 sm:gap-2.5 px-2.5 sm:px-3.5 py-2 rounded-xl border text-sm font-medium transition-all bg-white border-slate-200 text-slate-800 hover:border-slate-300 shadow-xs"
               >
                 <Building2 className="w-4 h-4 text-indigo-600" />
-                <div className="text-left max-w-[120px] sm:max-w-[170px] truncate">
-                  <span className="block text-[10px] uppercase font-bold text-slate-400 leading-none">
+                <div className="text-left max-w-[76px] min-[400px]:max-w-[110px] sm:max-w-[170px] truncate">
+                  <span className="hidden sm:block text-[10px] uppercase font-bold text-slate-400 leading-none">
                     Empresa Ativa
                   </span>
                   <span className="font-semibold text-slate-900 text-xs sm:text-sm truncate block">
@@ -164,7 +169,7 @@ export const Header: React.FC<{
               </button>
 
               {canSwitchOrg && isTenantMenuOpen && (
-                <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
+                <div className="absolute right-0 mt-2 w-72 max-w-[calc(100vw-1.5rem)] bg-white rounded-2xl shadow-xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
                   <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
                     Minhas organizações
                   </div>
@@ -216,7 +221,7 @@ export const Header: React.FC<{
               </button>
 
               {isRoleMenuOpen && (
-                <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 py-1.5 z-50 animate-in fade-in duration-100">
+                <div className="absolute right-0 mt-2 w-64 max-w-[calc(100vw-1.5rem)] bg-white rounded-2xl shadow-xl border border-slate-200 py-1.5 z-50 animate-in fade-in duration-100">
                   <div className="px-3.5 py-2 border-b border-slate-100">
                     <div className="text-sm font-semibold text-slate-900 truncate">{user?.name}</div>
                     <div className="text-[11px] text-slate-500 truncate">{user?.email}</div>

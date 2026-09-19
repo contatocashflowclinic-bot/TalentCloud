@@ -568,7 +568,7 @@ Confira todos os detalhes e candidate-se pelo nosso portal oficial:
                 {/* Color Scheme Picker */}
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-2">Paleta Visual do Card</label>
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     {[
                       { id: 'indigo', name: 'Indigo Dark', bg: 'bg-indigo-700' },
                       { id: 'emerald', name: 'Emerald Pro', bg: 'bg-emerald-700' },

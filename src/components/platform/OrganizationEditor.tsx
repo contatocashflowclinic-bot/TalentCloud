@@ -102,7 +102,7 @@ export const OrganizationEditor: React.FC<{
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
               <div className="font-semibold text-slate-800 text-sm">Módulos liberados para a organização</div>
               <p className="text-slate-500">

@@ -168,7 +168,7 @@ export const PlatformUsersPanel: React.FC = () => {
                 <th className="px-5 py-3">Pessoa</th>
                 <th className="px-5 py-3">Organizações e perfis</th>
                 <th className="px-5 py-3">Status</th>
-                <th className="px-5 py-3">Último acesso</th>
+                <th className="px-5 py-3 hidden lg:table-cell">Último acesso</th>
                 <th className="px-5 py-3 text-right">Ações</th>
               </tr>
             </thead>
@@ -201,7 +201,7 @@ export const PlatformUsersPanel: React.FC = () => {
                       <span className={`w-1.5 h-1.5 rounded-full ${u.active ? 'bg-emerald-500' : 'bg-slate-300'}`}></span> {u.active ? 'Ativo' : 'Inativo'}
                     </span>
                   </td>
-                  <td className="px-5 py-3.5 text-xs text-slate-400 font-mono">{u.lastLoginAt ? formatDateTimeSP(u.lastLoginAt) : '—'}</td>
+                  <td className="px-5 py-3.5 text-xs text-slate-400 font-mono hidden lg:table-cell">{u.lastLoginAt ? formatDateTimeSP(u.lastLoginAt) : '—'}</td>
                   <td className="px-5 py-3.5 text-right whitespace-nowrap">
                     <div className="inline-flex gap-1.5">
                       <button onClick={() => setLinking(u)} className="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-600 hover:text-indigo-700 hover:bg-indigo-50 text-[11px] font-semibold inline-flex items-center gap-1.5">

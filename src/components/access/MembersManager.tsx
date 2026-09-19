@@ -253,9 +253,9 @@ export const MembersManager: React.FC<{
                 <tr>
                   <th className="px-5 py-3">Nome / Identificação</th>
                   <th className="px-5 py-3">Perfil de acesso</th>
-                  <th className="px-5 py-3">Cargo</th>
+                  <th className="px-5 py-3 hidden md:table-cell">Cargo</th>
                   <th className="px-5 py-3">Status</th>
-                  <th className="px-5 py-3">Último Acesso</th>
+                  <th className="px-5 py-3 hidden lg:table-cell">Último Acesso</th>
                   {caps.edit && <th className="px-5 py-3 text-right">Ações</th>}
                 </tr>
               </thead>
@@ -269,13 +269,13 @@ export const MembersManager: React.FC<{
                       <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5"><Mail className="w-3 h-3" /> {u.email}</div>
                     </td>
                     <td className="px-5 py-3.5">{profileBadge(u)}</td>
-                    <td className="px-5 py-3.5 text-xs text-slate-700">{u.jobTitle}</td>
+                    <td className="px-5 py-3.5 text-xs text-slate-700 hidden md:table-cell">{u.jobTitle}</td>
                     <td className="px-5 py-3.5">
                       <span className={`inline-flex items-center gap-1 text-xs font-medium ${u.active ? 'text-emerald-700' : 'text-slate-400'}`}>
                         <span className={`w-1.5 h-1.5 rounded-full ${u.active ? 'bg-emerald-500' : 'bg-slate-300'}`}></span> {u.active ? 'Ativo' : 'Inativo'}
                       </span>
                     </td>
-                    <td className="px-5 py-3.5 text-xs text-slate-400 font-mono" title="Horário de São Paulo - SP">
+                    <td className="px-5 py-3.5 text-xs text-slate-400 font-mono hidden lg:table-cell" title="Horário de São Paulo - SP">
                       {u.lastLoginAt ? formatDateTimeSP(u.lastLoginAt) : '—'}
                     </td>
                     {caps.edit && (
