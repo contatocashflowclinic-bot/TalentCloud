@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Lock, Pencil, Plus, ShieldCheck, Trash2, Users } from 'lucide-react';
-import { useTenant } from '../../context/TenantContext.js';
-import { TenantApi } from '../../services/api.js';
+import { MembersApi } from '../../services/api.js';
 import { AccessProfile } from '../../types.js';
 import { PermissionMatrix } from './PermissionMatrix.js';
 
@@ -13,11 +12,20 @@ interface Draft {
   locked: boolean;
 }
 
-export const ProfilesPanel: React.FC<{ profiles: AccessProfile[]; onChanged: () => Promise<void> | void }> = ({
-  profiles,
-  onChanged
-}) => {
-  const { can, permissions } = useTenant();
+export interface ProfileCaps {
+  create: boolean;
+  edit: boolean;
+  delete: boolean;
+}
+
+export const ProfilesPanel: React.FC<{
+  profiles: AccessProfile[];
+  api: Pick<MembersApi, 'createProfile' | 'updateProfile' | 'deleteProfile'>;
+  caps: ProfileCaps;
+  /** Permissions that may be handed out (what the actor holds, within the organization's enabled modules). */
+  limit: readonly string[];
+  onChanged: () => Promise<void> | void;
+}> = ({ profiles, api, caps, limit, onChanged }) => {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +34,7 @@ export const ProfilesPanel: React.FC<{ profiles: AccessProfile[]; onChanged: () 
     setError(null);
     setDraft(
       p
-        ? { id: p.id, name: p.name, description: p.description, permissions: p.permissions, locked: p.isAdmin || !can('profiles:edit') }
+        ? { id: p.id, name: p.name, description: p.description, permissions: p.permissions, locked: p.isAdmin || !caps.edit }
         : { name: '', description: '', permissions: [], locked: false }
     );
   };
@@ -38,8 +46,8 @@ export const ProfilesPanel: React.FC<{ profiles: AccessProfile[]; onChanged: () 
     setError(null);
     try {
       const body = { name: draft.name, description: draft.description, permissions: draft.permissions };
-      if (draft.id) await TenantApi.updateProfile(draft.id, body);
-      else await TenantApi.createProfile(body);
+      if (draft.id) await api.updateProfile(draft.id, body);
+      else await api.createProfile(body);
       setDraft(null);
       await onChanged();
     } catch (err: any) {
@@ -52,7 +60,7 @@ export const ProfilesPanel: React.FC<{ profiles: AccessProfile[]; onChanged: () 
   const remove = async (p: AccessProfile) => {
     if (!confirm(`Excluir o perfil "${p.name}"?`)) return;
     try {
-      await TenantApi.deleteProfile(p.id);
+      await api.deleteProfile(p.id);
       await onChanged();
     } catch (err: any) {
       alert(err.message || 'Erro ao excluir perfil');
@@ -65,7 +73,7 @@ export const ProfilesPanel: React.FC<{ profiles: AccessProfile[]; onChanged: () 
         <p className="text-xs text-slate-500">
           Cada perfil define, por rotina, o que o usuário pode visualizar, incluir, alterar ou excluir.
         </p>
-        {can('profiles:create') && (
+        {caps.create && (
           <button
             onClick={() => open()}
             className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs flex items-center gap-2"
@@ -101,9 +109,9 @@ export const ProfilesPanel: React.FC<{ profiles: AccessProfile[]; onChanged: () 
                 onClick={() => open(p)}
                 className="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-600 hover:text-indigo-700 hover:bg-indigo-50 text-[11px] font-semibold flex items-center gap-1.5"
               >
-                <Pencil className="w-3.5 h-3.5" /> {can('profiles:edit') && !p.isAdmin ? 'Editar' : 'Ver'}
+                <Pencil className="w-3.5 h-3.5" /> {caps.edit && !p.isAdmin ? 'Editar' : 'Ver'}
               </button>
-              {can('profiles:delete') && !p.isSystem && (
+              {caps.delete && !p.isSystem && (
                 <button
                   onClick={() => remove(p)}
                   className="px-2.5 py-1 rounded-lg border border-slate-200 text-rose-600 hover:bg-rose-50 text-[11px] font-semibold flex items-center gap-1.5"
@@ -157,7 +165,7 @@ export const ProfilesPanel: React.FC<{ profiles: AccessProfile[]; onChanged: () 
                 value={draft.permissions}
                 onChange={permissions => setDraft({ ...draft, permissions })}
                 disabled={draft.locked}
-                limit={permissions}
+                limit={limit}
               />
               {!draft.locked && (
                 <p className="text-[11px] text-slate-400 mt-1.5">Você só pode liberar permissões que você mesmo possui.</p>

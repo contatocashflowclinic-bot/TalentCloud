@@ -5,6 +5,8 @@ import {
   TenantRoutingResolution,
   TenantUser,
   AccessProfile,
+  Page,
+  PlatformUser,
   OrganizationalDNA,
   CulturePillar,
   Department,
@@ -105,11 +107,102 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   return data as T;
 }
 
+const qs = (q: Record<string, unknown>) => {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) if (v !== undefined && v !== null && v !== '') p.set(k, String(v));
+  const out = p.toString();
+  return out ? `?${out}` : '';
+};
+
+/**
+ * Access management of ONE organization (people linked to it and its profiles). The organization screens and the
+ * Conta Mãe screens share one component; only the base path differs.
+ */
+export interface MembersApi {
+  listMembers: (q: { search?: string; page?: number; pageSize?: number }) => Promise<Page<TenantUser>>;
+  listProfiles: () => Promise<AccessProfile[]>;
+  createMember: (p: {
+    name: string; email: string; profileId: string; jobTitle?: string; permissions?: string[];
+  }) => Promise<{ user: TenantUser; tempPassword?: string; linkedExisting: boolean }>;
+  updateMember: (id: string, p: {
+    name?: string; jobTitle?: string; profileId?: string; active?: boolean; permissions?: string[];
+  }) => Promise<TenantUser>;
+  resetPassword: (id: string) => Promise<{ user: TenantUser; tempPassword: string }>;
+  createProfile: (p: { name: string; description?: string; permissions: string[] }) => Promise<AccessProfile>;
+  updateProfile: (id: string, p: { name?: string; description?: string; permissions?: string[] }) => Promise<AccessProfile>;
+  deleteProfile: (id: string) => Promise<void>;
+}
+
+function membersApi(base: string, members: 'users' | 'members'): MembersApi {
+  const json = (method: string, body?: unknown): RequestInit => ({ method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  return {
+    listMembers: async q => {
+      const res = await request<{ success: boolean; users: TenantUser[]; total: number; page: number; pageSize: number }>(
+        `${base}/${members}${qs({ page: 1, pageSize: 25, ...q })}`
+      );
+      return { items: res.users, total: res.total, page: res.page, pageSize: res.pageSize };
+    },
+    listProfiles: async () => (await request<{ success: boolean; profiles: AccessProfile[] }>(`${base}/profiles`)).profiles,
+    createMember: async p => {
+      const res = await request<{ success: boolean; user: TenantUser; tempPassword?: string; linkedExisting: boolean }>(`${base}/${members}`, json('POST', p));
+      return { user: res.user, tempPassword: res.tempPassword, linkedExisting: res.linkedExisting };
+    },
+    updateMember: async (id, p) => (await request<{ success: boolean; user: TenantUser }>(`${base}/${members}/${id}`, json('PATCH', p))).user,
+    resetPassword: async id => {
+      const res = await request<{ success: boolean; user: TenantUser; tempPassword: string }>(`${base}/${members}/${id}/reset-password`, json('POST'));
+      return { user: res.user, tempPassword: res.tempPassword };
+    },
+    createProfile: async p => (await request<{ success: boolean; profile: AccessProfile }>(`${base}/profiles`, json('POST', p))).profile,
+    updateProfile: async (id, p) => (await request<{ success: boolean; profile: AccessProfile }>(`${base}/profiles/${id}`, json('PUT', p))).profile,
+    deleteProfile: async id => { await request<{ success: boolean }>(`${base}/profiles/${id}`, json('DELETE')); }
+  };
+}
+
 // Master / SuperAdmin APIs
 export const MasterApi = {
-  getTenants: async () => {
-    const res = await request<{ success: boolean; tenants: Tenant[] }>('/api/master/tenants');
-    return res.tenants;
+  getTenantsPage: async (q: { search?: string; page?: number; pageSize?: number } = {}) => {
+    const res = await request<{ success: boolean; tenants: Tenant[]; total: number; page: number; pageSize: number }>(
+      `/api/master/tenants${qs(q)}`
+    );
+    return { items: res.tenants, total: res.total, page: res.page, pageSize: res.pageSize } as Page<Tenant>;
+  },
+  updateTenant: async (
+    tenantId: string,
+    patch: Partial<Pick<Tenant, 'name' | 'tradingName' | 'document' | 'contactEmail' | 'logoUrl' | 'plan' | 'enabledRoutines'>>
+  ) => (await request<{ success: boolean; tenant: Tenant }>(`/api/master/tenants/${tenantId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch)
+  })).tenant,
+  /** Members / profiles of ONE organization, same shape the organization screens use. */
+  membersOf: (tenantId: string): MembersApi => membersApi(`/api/master/tenants/${tenantId}`, 'members'),
+  getUsersPage: async (q: { search?: string; page?: number; pageSize?: number } = {}) => {
+    const res = await request<{ success: boolean; users: PlatformUser[]; total: number; page: number; pageSize: number }>(
+      `/api/master/users${qs(q)}`
+    );
+    return { items: res.users, total: res.total, page: res.page, pageSize: res.pageSize } as Page<PlatformUser>;
+  },
+  createUser: async (payload: {
+    name: string;
+    email: string;
+    link?: { tenantId: string; profileId: string; jobTitle?: string; permissions?: string[] };
+  }) => {
+    const res = await request<{ success: boolean; user: PlatformUser; tempPassword: string }>('/api/master/users', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+    return { user: res.user, tempPassword: res.tempPassword };
+  },
+  updateUser: async (userId: string, patch: { active?: boolean; name?: string }) =>
+    (await request<{ success: boolean; user: PlatformUser }>(`/api/master/users/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch)
+    })).user,
+  resetUserPassword: async (userId: string) => {
+    const res = await request<{ success: boolean; user: PlatformUser; tempPassword: string }>(
+      `/api/master/users/${userId}/reset-password`,
+      { method: 'POST' }
+    );
+    return { user: res.user, tempPassword: res.tempPassword };
   },
   provisionTenant: async (payload: {
     name: string;
@@ -140,9 +233,11 @@ export const MasterApi = {
     const res = await request<{ success: boolean; telemetry: any }>('/api/master/telemetry');
     return res.telemetry;
   },
-  getAuditLogs: async () => {
-    const res = await request<{ success: boolean; logs: SystemAuditLog[] }>('/api/master/audit-logs');
-    return res.logs;
+  getAuditLogs: async (q: { limit?: number; before?: string; category?: string; q?: string } = {}) => {
+    const res = await request<{ success: boolean; logs: SystemAuditLog[]; nextCursor: string | null }>(
+      `/api/master/audit-logs${qs(q)}`
+    );
+    return { logs: res.logs, nextCursor: res.nextCursor };
   },
   resetAdminPassword: async (tenantId: string, userId?: string) => {
     return await request<{ success: boolean; user: { id: string; name: string; email: string }; tempPassword: string }>(
@@ -215,48 +310,9 @@ export const TenantApi = {
   },
 
   // 2. Usuários e Permissões
+  /** Lookup list (names for owners, approvers...). Management screens use `members` (paginated). */
   getUsers: async () => (await request<{ success: boolean; users: TenantUser[] }>('/api/v1/users')).users,
-  createUser: async (payload: {
-    name: string;
-    email: string;
-    profileId: string;
-    jobTitle?: string;
-    departmentId?: string;
-    permissions?: string[];
-  }) => {
-    const res = await request<{ success: boolean; user: TenantUser; tempPassword?: string; linkedExisting: boolean }>('/api/v1/users', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
-    return { user: res.user, tempPassword: res.tempPassword, linkedExisting: res.linkedExisting };
-  },
-  updateUser: async (
-    userId: string,
-    payload: { name?: string; jobTitle?: string; profileId?: string; active?: boolean; permissions?: string[] }
-  ) => (await request<{ success: boolean; user: TenantUser }>(`/api/v1/users/${userId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload)
-  })).user,
-  resetUserPassword: async (userId: string) => {
-    const res = await request<{ success: boolean; user: TenantUser; tempPassword: string }>(`/api/v1/users/${userId}/reset-password`, {
-      method: 'POST'
-    });
-    return { user: res.user, tempPassword: res.tempPassword };
-  },
-  getProfiles: async () => (await request<{ success: boolean; profiles: AccessProfile[] }>('/api/v1/profiles')).profiles,
-  createProfile: async (payload: { name: string; description?: string; permissions: string[] }) =>
-    (await request<{ success: boolean; profile: AccessProfile }>('/api/v1/profiles', {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    })).profile,
-  updateProfile: async (id: string, payload: { name?: string; description?: string; permissions?: string[] }) =>
-    (await request<{ success: boolean; profile: AccessProfile }>(`/api/v1/profiles/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload)
-    })).profile,
-  deleteProfile: async (id: string) => {
-    await request<{ success: boolean }>(`/api/v1/profiles/${id}`, { method: 'DELETE' });
-  },
+  members: membersApi('/api/v1', 'users'),
 
   // 3. DNA Organizacional
   getDNA: async () => (await request<{ success: boolean; dna: OrganizationalDNA }>('/api/v1/dna')).dna,

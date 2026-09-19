@@ -18,6 +18,7 @@ import {
   getBioSaudeSeedData
 } from '../server/tenant/masterSeed.js';
 import { closePool, getPool } from '../server/db/pool.js';
+import { PLAN_ROUTINES } from '../src/access.js';
 import { TenantRepository } from '../server/tenant/TenantRepository.js';
 import { AccessService } from '../server/auth/AccessService.js';
 
@@ -180,7 +181,7 @@ async function main() {
     createdTenantIds.push(provA.json.tenant?.id);
     const provB = await api('POST', '/api/master/tenants/provision', {
       token: adminToken,
-      body: { name: `Smoke B ${suffix}`, slug: slugB, contactEmail: emailB, adminUserName: 'Admin B', adminUserEmail: emailB, plan: 'Starter' }
+      body: { name: `Smoke B ${suffix}`, slug: slugB, contactEmail: emailB, adminUserName: 'Admin B', adminUserEmail: emailB, plan: 'Scale' }
     });
     check('provision B -> 201', provB.status === 201, provB.json);
     createdTenantIds.push(provB.json.tenant?.id);
@@ -459,6 +460,103 @@ async function main() {
     check('Conta Mãe cannot switch organization', (await api('POST', '/api/auth/switch-organization', { token: adminToken, body: { tenantId: provA.json.tenant.id } })).status === 400);
     check('Conta Mãe still has the platform routines', (await api('GET', '/api/master/tenants', { token: adminToken })).status === 200 && (await api('GET', '/api/master/telemetry', { token: adminToken })).status === 200);
 
+    // ---- Conta Mãe: editing organizations, plans and module entitlements -------------------
+    const T = (method: string, path: string, body?: unknown) => api(method, path, { token: adminToken, body });
+    const tA = provA.json.tenant.id, tB = provB.json.tenant.id;
+    check('new Scale orgs start with every module enabled', provA.json.tenant.enabledRoutines?.length === 15 && provB.json.tenant.enabledRoutines?.length === 15, [provA.json.tenant.enabledRoutines?.length, provB.json.tenant.enabledRoutines?.length]);
+    const toStarter = await T('PATCH', `/api/master/tenants/${tB}`, { plan: 'Starter', enabledRoutines: PLAN_ROUTINES.Starter });
+    check('plan preset: Starter has 11 modules and no AI / development / retention / indicators', toStarter.status === 200 && toStarter.json.tenant.enabledRoutines.length === 11 && !toStarter.json.tenant.enabledRoutines.some((k: string) => ['ai_evaluation', 'development', 'retention', 'indicators'].includes(k)), toStarter.json);
+    const provStarter = await api('POST', '/api/master/tenants/provision', { token: adminToken, body: { name: `Smoke C ${suffix}`, slug: `smoke-c-${suffix}`, contactEmail: `admin-c-${suffix}@smoke.test`, adminUserName: 'Admin C', plan: 'Starter' } });
+    createdTenantIds.push(provStarter.json.tenant?.id);
+    check('provisioning a Starter org applies the Starter preset by default', provStarter.status === 201 && provStarter.json.tenant.enabledRoutines.length === 11, provStarter.json);
+    check('provisioning accepts an explicit module list (core forced in)', (await api('POST', '/api/master/tenants/provision', { token: adminToken, body: { name: 'Bad', slug: `bad-${suffix}`, contactEmail: `bad-${suffix}@smoke.test`, enabledRoutines: ['nope'] } })).status === 400);
+    check('Starter org: blocked modules do not answer even for its admin', (await B('GET', '/api/v1/indicators')).status === 403 && (await B('GET', '/api/v1/retention')).status === 403 && (await B('POST', '/api/v1/ai/evaluate-candidate', { candidateId: 'x', jobOpeningId: 'y' })).status === 403);
+    check('Starter org: enabled modules still work for its admin', (await B('GET', '/api/v1/candidates')).status === 200 && (await B('GET', '/api/v1/dna')).status === 200);
+    const meB = (await api('GET', '/api/auth/me', { token: adminB })).json.user;
+    check('/me permissions of the admin are limited to the enabled modules', !meB.permissions.some((p: string) => p.startsWith('indicators:')) && meB.permissions.includes('users:create'), meB.permissions.length);
+
+    check('edit org: non-SuperAdmin -> 403', (await A('PATCH', `/api/master/tenants/${tA}`, { name: 'x' })).status === 403);
+    check('edit org: invalid module -> 400', (await T('PATCH', `/api/master/tenants/${tA}`, { enabledRoutines: ['dna', 'teleport'] })).status === 400);
+    check('edit org: invalid plan -> 400', (await T('PATCH', `/api/master/tenants/${tA}`, { plan: 'Gold' })).status === 400);
+    check('edit org: invalid contact e-mail -> 400', (await T('PATCH', `/api/master/tenants/${tA}`, { contactEmail: 'nope' })).status === 400);
+    check('edit org: invalid logo URL -> 400', (await T('PATCH', `/api/master/tenants/${tA}`, { logoUrl: 'javascript:alert(1)' })).status === 400);
+    check('edit org: unknown org -> 404', (await T('PATCH', '/api/master/tenants/tenant-nope', { name: 'x' })).status === 404);
+    const edited = await T('PATCH', `/api/master/tenants/${tA}`, { tradingName: 'Smoke A Editada', plan: 'Starter', enabledRoutines: ['dna', 'openings'] });
+    check('edit org: data + plan updated; core modules (users, profiles) forced on', edited.status === 200 && edited.json.tenant.tradingName === 'Smoke A Editada' && edited.json.tenant.plan === 'Starter' && ['users', 'profiles', 'dna', 'openings'].every(k => edited.json.tenant.enabledRoutines.includes(k)) && edited.json.tenant.enabledRoutines.length === 4, edited.json);
+    check('module block applies at once to a live session (no re-login)', (await A('GET', '/api/v1/candidates')).status === 403 && (await A('GET', '/api/v1/offers')).status === 403 && (await A('GET', '/api/v1/dna')).status === 200 && (await A('GET', '/api/v1/users')).status === 200);
+    check('blocked module also blocks writes', (await A('POST', '/api/v1/candidates', { name: 'x', email: 'x@smoke.test' })).status === 403);
+    const meA = (await api('GET', '/api/auth/me', { token: adminA })).json.user;
+    check('/me reflects only the enabled modules', meA.permissions.every((p: string) => ['users', 'profiles', 'dna', 'openings'].includes(p.split(':')[0])), meA.permissions);
+    check('org admin cannot hand out a blocked module (grant limit)', (await A('POST', '/api/v1/profiles', { name: 'Bloqueado', permissions: ['offers:view'] })).status === 403);
+    check('storage quota follows the new plan (Starter)', (await T('GET', `/api/master/tenants/${tA}`)).json.tenant.dbConfig.maxStorageMb === 1024);
+    const restored = await T('PATCH', `/api/master/tenants/${tA}`, { plan: 'Scale', enabledRoutines: ['users', 'profiles', 'dna', 'structure', 'positions', 'openings', 'candidates', 'selection', 'ai_evaluation', 'interviews', 'offers', 'onboarding', 'development', 'retention', 'indicators'] });
+    check('modules re-enabled: access returns immediately', restored.status === 200 && (await A('GET', '/api/v1/candidates')).status === 200 && (await A('GET', '/api/v1/offers')).status === 200);
+    check('audit trail records the module change with a diff', (await T('GET', '/api/master/audit-logs?q=' + encodeURIComponent('módulos bloqueados') + '&category=ACCESS_CONTROL')).json.logs.some((l: any) => l.action === 'TENANT_UPDATED' && l.tenantId === tA));
+
+    // ---- Conta Mãe: paginated / searched catalog ---------------------------------------------
+    const cat1 = await T('GET', '/api/master/tenants?pageSize=1&page=1');
+    const cat2 = await T('GET', '/api/master/tenants?pageSize=1&page=2');
+    check('catalog is paginated in the database', cat1.json.tenants.length === 1 && cat1.json.total >= 5 && cat2.json.tenants.length === 1 && cat1.json.tenants[0].id !== cat2.json.tenants[0].id, [cat1.json.total, cat1.json.pageSize]);
+    check('catalog search by identifier', (await T('GET', `/api/master/tenants?search=${slugA}`)).json.total === 1);
+    check('catalog search is LIKE-safe (% and _ are literal)', (await T('GET', '/api/master/tenants?search=%25')).json.total === 0);
+    check('catalog page size is capped', (await T('GET', '/api/master/tenants?pageSize=100000')).json.pageSize === 100);
+    check('audit filter by category + search + pagination', (await T('GET', '/api/master/audit-logs?category=ACCESS_CONTROL&limit=1')).json.logs.length === 1 && (await T('GET', '/api/master/audit-logs?limit=1')).json.nextCursor !== null);
+    check('audit bad cursor -> 400', (await T('GET', '/api/master/audit-logs?before=garbage')).status === 400);
+    const pgUsers = await A('GET', '/api/v1/users?page=1&pageSize=1');
+    check('org member list is paginated too', pgUsers.json.users.length === 1 && pgUsers.json.total > 1 && pgUsers.json.pageSize === 1, pgUsers.json.total);
+    const gmSearch = await A('GET', '/api/v1/users?search=gm');
+    check('org member search by name prefix', gmSearch.json.users.length >= 1 && gmSearch.json.users.every((u: any) => u.name.toLowerCase().startsWith('gm') || u.email.toLowerCase().startsWith('gm')), gmSearch.json.users.map((u: any) => u.name));
+
+    // ---- Conta Mãe: users of an organization (access metadata only) ---------------------------
+    check('master members: non-SuperAdmin -> 403', (await A('GET', `/api/master/tenants/${tA}/members`)).status === 403);
+    check('master members: unknown org -> 404', (await T('GET', '/api/master/tenants/tenant-nope/members')).status === 404);
+    const mA = await T('GET', `/api/master/tenants/${tA}/members?pageSize=100`);
+    check('master members: lists only that organization', mA.status === 200 && mA.json.users.length > 5 && mA.json.users.every((u: any) => u.tenantId === tA), mA.json.total);
+    const mnew = `master-${suffix}@smoke.test`;
+    const created = await T('POST', `/api/master/tenants/${tA}/members`, { name: 'Criado pela Conta Mãe', email: mnew, profileId: 'recruiter' });
+    check('master creates a user in an organization (one-time temp password)', created.status === 201 && !!created.json.tempPassword && created.json.user.tenantId === tA, created.json);
+    const mTok = (await activateUser(slugA, mnew, created.json.tempPassword, 'Senha#Master9')).token;
+    check('user created by the Conta Mãe can work with the assigned profile', !!mTok && (await api('GET', '/api/v1/candidates', { token: mTok })).status === 200 && (await api('GET', '/api/v1/dna', { token: mTok })).status === 200);
+    const changedProfile = await T('PATCH', `/api/master/tenants/${tA}/members/${created.json.user.id}`, { profileId: 'collaborator' });
+    check('master changes profile: immediate on the live session', changedProfile.json.user?.profileId === 'collaborator' && (await api('GET', '/api/v1/candidates', { token: mTok })).status === 403);
+    const withExc = await T('PATCH', `/api/master/tenants/${tA}/members/${created.json.user.id}`, { permissions: [...changedProfile.json.user.permissions, 'offers:view'] });
+    check('master grants an individual exception', withExc.json.user?.grantedPermissions?.join() === 'offers:view' && (await api('GET', '/api/v1/offers', { token: mTok })).status === 200);
+    check('master cannot touch a member through another organization\'s path (isolation)', (await T('PATCH', `/api/master/tenants/${tB}/members/${created.json.user.id}`, { active: false })).status === 404 && (await T('POST', `/api/master/tenants/${tB}/members/${created.json.user.id}/reset-password`)).status === 404);
+    check('master: a profile of another organization is rejected', (await T('POST', `/api/master/tenants/${tB}/members`, { name: 'x', email: `iso-${suffix}@smoke.test`, profileId: 'prf-of-org-a' })).status === 400);
+    const mprof = await T('POST', `/api/master/tenants/${tA}/profiles`, { name: 'Perfil da Conta Mãe', permissions: ['dna:view'] });
+    check('master creates / edits / deletes profiles of an organization', mprof.status === 201 && (await T('PUT', `/api/master/tenants/${tA}/profiles/${mprof.json.profile.id}`, { permissions: ['dna:view', 'openings:view'] })).json.profile.permissions.length === 2 && (await T('DELETE', `/api/master/tenants/${tA}/profiles/${mprof.json.profile.id}`)).status === 200);
+    check('master profile listing is per organization', (await T('GET', `/api/master/tenants/${tB}/profiles`)).json.profiles.every((p: any) => p.id !== mprof.json.profile.id));
+    const mreset = await T('POST', `/api/master/tenants/${tA}/members/${created.json.user.id}/reset-password`);
+    check('master resets a password (sessions revoked)', mreset.status === 200 && mreset.json.tempPassword?.length >= 12 && (await api('GET', '/api/v1/dna', { token: mTok })).status === 401);
+    check('master can deactivate a member; login refused', (await T('PATCH', `/api/master/tenants/${tA}/members/${created.json.user.id}`, { active: false })).json.user?.active === false && (await login(mnew, mreset.json.tempPassword, slugA)).status === 403);
+
+    // ---- Conta Mãe: people across the platform ----------------------------------------------------
+    const gEmail = `global-${suffix}@smoke.test`;
+    check('global users: non-SuperAdmin -> 403', (await A('GET', '/api/master/users')).status === 403);
+    const gNo = await T('POST', '/api/master/users', { name: 'Global Sem Vinculo', email: gEmail });
+    check('global user created without links (temp password once)', gNo.status === 201 && gNo.json.user.links.length === 0 && !!gNo.json.tempPassword, gNo.json);
+    check('global user without any active link cannot log in yet', (await login(gEmail, gNo.json.tempPassword)).status === 403);
+    check('duplicate global user -> 409 (password never replaced)', (await T('POST', '/api/master/users', { name: 'Dup', email: gEmail.toUpperCase() })).status === 409);
+    check('global user validation', (await T('POST', '/api/master/users', { name: 'X', email: 'nope' })).status === 400 && (await T('POST', '/api/master/users', { email: 'a@b.co' })).status === 400);
+    const gLink = await T('POST', `/api/master/tenants/${tB}/members`, { name: 'Global Sem Vinculo', email: gEmail, profileId: 'collaborator' });
+    check('link an existing person to an organization (password kept)', gLink.status === 201 && gLink.json.linkedExisting === true && gLink.json.tempPassword === undefined, gLink.json);
+    check('...and it appears in the platform list with its link', (await T('GET', `/api/master/users?search=global-${suffix}`)).json.users[0]?.links?.some((l: any) => l.tenantId === tB && l.profileId === 'collaborator'));
+    const gWith = await T('POST', '/api/master/users', { name: 'Global Com Vinculo', email: `global2-${suffix}@smoke.test`, link: { tenantId: tA, profileId: 'recruiter' } });
+    check('global user created already linked to an organization', gWith.status === 201 && gWith.json.user.links.length === 1 && gWith.json.user.links[0].tenantId === tA, gWith.json);
+    check('...and is visible only inside that organization', (await T('GET', `/api/master/tenants/${tA}/members?search=global2-${suffix}`)).json.total === 1 && (await T('GET', `/api/master/tenants/${tB}/members?search=global2-${suffix}`)).json.total === 0);
+    check('link with a profile of another organization is refused and rolled back', (await T('POST', '/api/master/users', { name: 'Rollback', email: `rb-${suffix}@smoke.test`, link: { tenantId: tB, profileId: 'nao-existe' } })).status === 400 && (await T('GET', `/api/master/users?search=rb-${suffix}`)).json.total === 0);
+    const gPg = await T('GET', '/api/master/users?pageSize=1&page=1');
+    check('global user list paginated + capped', gPg.json.users.length === 1 && gPg.json.total >= 5 && (await T('GET', '/api/master/users?pageSize=100000')).json.pageSize === 100);
+    check('global search is a LIKE-safe prefix', (await T('GET', '/api/master/users?search=%25')).json.total === 0);
+    const gTok = (await activateUser(slugB, gEmail, gNo.json.tempPassword, 'Senha#Global9')).token;
+    check('global user works after activation in the linked org', !!gTok && (await api('GET', '/api/v1/dna', { token: gTok })).status === 200);
+    const gOff = await T('PATCH', `/api/master/users/${gNo.json.user.id}`, { active: false });
+    check('global deactivation: session dropped and login refused everywhere', gOff.json.user?.active === false && (await api('GET', '/api/v1/dna', { token: gTok })).status === 401 && (await login(gEmail, 'Senha#Global9', slugB)).status === 403);
+    check('global reactivation restores access', (await T('PATCH', `/api/master/users/${gNo.json.user.id}`, { active: true })).json.user?.active === true && (await login(gEmail, 'Senha#Global9', slugB)).status === 200);
+    const gReset = await T('POST', `/api/master/users/${gNo.json.user.id}/reset-password`);
+    check('global password reset', gReset.status === 200 && gReset.json.tempPassword?.length >= 12 && (await login(gEmail, 'Senha#Global9', slugB)).status === 401);
+    check('global unknown user -> 404', (await T('PATCH', '/api/master/users/acc-nope', { active: false })).status === 404 && (await T('POST', '/api/master/users/acc-nope/reset-password')).status === 404);
+
     const susp = await api('PATCH', `/api/master/tenants/${provA.json.tenant.id}/status`, { token: adminToken, body: { status: 'suspended' } });
     check('suspend tenant', susp.json.tenant?.status === 'suspended', susp.json);
     check('suspended org: existing session blocked -> 403', (await A('GET', '/api/v1/users')).status === 403);
@@ -479,7 +577,15 @@ async function main() {
     check('logout revokes the token', (await api('POST', '/api/auth/logout', { token: tmpLogin.json.token })).status === 200 && (await api('GET', '/api/auth/me', { token: tmpLogin.json.token })).status === 401);
 
     // ---- Audit trail -------------------------------------------------------------------------------
-    const logs = (await api('GET', '/api/master/audit-logs', { token: adminToken })).json.logs as any[];
+    // whole trail via keyset pagination (also exercises nextCursor)
+    const logs: any[] = [];
+    let cursor: string | null = null;
+    for (let i = 0; i < 20; i++) {
+      const pg: any = (await api('GET', `/api/master/audit-logs?limit=200${cursor ? `&before=${encodeURIComponent(cursor)}` : ''}`, { token: adminToken })).json;
+      logs.push(...pg.logs);
+      cursor = pg.nextCursor;
+      if (!cursor) break;
+    }
     const has = (action: string, pred: (l: any) => boolean = () => true) => logs.some(l => l.action === action && pred(l));
     check('audit: ORGANIZATION_CREATED by the real actor', has('ORGANIZATION_CREATED', l => l.tenantId === provA.json.tenant.id && l.userId === 'super-01' && l.userName === 'SuperAdmin Root'));
     check('audit: TENANT_STATUS_UPDATED', has('TENANT_STATUS_UPDATED', l => l.tenantId === provA.json.tenant.id));
@@ -491,7 +597,7 @@ async function main() {
     check('audit: no secret material in details', !logs.some(l => /Nova#Senha42|Admin@123|scrypt\$/.test(l.details)));
     check('audit: newest first', logs.every((l, i) => i === 0 || new Date(logs[i - 1].timestamp) >= new Date(l.timestamp)));
     const tel = (await api('GET', '/api/master/telemetry', { token: adminToken })).json.telemetry;
-    check('telemetry covers all tenants with real numbers', tel.totalTenants >= 5 && tel.tenantBreakdowns.length === tel.totalTenants && tel.totalStorageUsedMb > 0, tel.totalTenants);
+    check('telemetry covers all tenants with real numbers', tel.totalTenants >= 5 && tel.tenantBreakdowns.length === Math.min(tel.totalTenants, 50) && tel.totalStorageUsedMb > 0, tel.totalTenants);
 
     // ---- Physical checks --------------------------------------------------------------------------------
     const { rows } = await getPool().query('select count(*)::int as n from public.candidates where tenant_id = $1', [provA.json.tenant.id]);

@@ -7,6 +7,7 @@ import {
 } from '../server/tenant/masterSeed.js';
 import { seedTenantData, TenantSeedData } from '../server/tenant/seedTenant.js';
 import { AuthService } from '../server/auth/AuthService.js';
+import { PLAN_ROUTINES } from '../src/access.js';
 import { closePool, getPool, withTransaction } from '../server/db/pool.js';
 
 config({ path: ['.env.local', '.env'], quiet: true });
@@ -33,12 +34,12 @@ async function main() {
 
       await tx.query(
         `insert into public.tenants
-           (id, slug, name, trading_name, document, contact_email, logo_url, status, plan, created_at, features)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+           (id, slug, name, trading_name, document, contact_email, logo_url, status, plan, created_at, features, enabled_routines)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [
           tenant.id, tenant.slug, tenant.name, tenant.tradingName, tenant.document, tenant.contactEmail,
           tenant.logoUrl ?? null, tenant.status, tenant.plan, tenant.createdAt,
-          JSON.stringify(tenant.features)
+          JSON.stringify(tenant.features), PLAN_ROUTINES[tenant.plan]
         ]
       );
       if (seedFactory) await seedTenantData(tx, tenant.id, seedFactory());

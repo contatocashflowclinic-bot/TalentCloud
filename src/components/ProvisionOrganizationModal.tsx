@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
 import { Building2, Database, X, CheckCircle2, Sparkles, KeyRound, Copy, Check, AlertTriangle } from 'lucide-react';
 import { MasterApi } from '../services/api.js';
-import { useTenant } from '../context/TenantContext.js';
 
 export const ProvisionOrganizationModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
-}> = ({ isOpen, onClose }) => {
-  const { refreshTenants } = useTenant();
+  onCreated?: () => void;
+}> = ({ isOpen, onClose, onCreated }) => {
 
   const [name, setName] = useState('');
   const [tradingName, setTradingName] = useState('');
@@ -59,7 +58,7 @@ export const ProvisionOrganizationModal: React.FC<{
         adminUserEmail: adminUserEmail || contactEmail
       });
 
-      await refreshTenants();
+      onCreated?.();
       setCreated({
         slug: res.tenant.slug,
         name: res.tenant.name,

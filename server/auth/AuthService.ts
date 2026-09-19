@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { AuthUser } from '../../src/types.js';
-import { ALL_PERMISSIONS, effectivePermissions, passwordPolicyError } from '../../src/access.js';
+import { ALL_PERMISSIONS, effectivePermissions, entitledPermissions, passwordPolicyError } from '../../src/access.js';
+import { sessionCache } from '../cache.js';
 import { logAudit } from '../audit.js';
 import { AccessService } from './AccessService.js';
 import { getPool, Queryable, withTransaction } from '../db/pool.js';
@@ -140,9 +141,11 @@ export class AuthService {
       const usable = identity.links.filter(l => l.active && l.tenantStatus !== 'suspended');
       if (!usable.length) {
         throw new ForbiddenError(
-          identity.links.some(l => l.active)
-            ? 'Organização suspensa. Procure o suporte.'
-            : 'Usuário desativado. Procure o administrador.'
+          identity.links.length === 0
+            ? 'Sua conta ainda não foi vinculada a nenhuma organização. Procure o administrador.'
+            : identity.links.some(l => l.active)
+              ? 'Organização suspensa. Procure o suporte.'
+              : 'Usuário desativado. Procure o administrador.'
         );
       }
       link = usable.sort((a, b) => b.lastLoginAt.localeCompare(a.lastLoginAt))[0];
@@ -197,6 +200,11 @@ export class AuthService {
   async authenticate(token: string): Promise<AuthenticatedSession | undefined> {
     if (!token) return undefined;
     const tokenHash = sha256(token);
+    const cached = sessionCache.get(tokenHash);
+    if (cached) {
+      this.touch(tokenHash);
+      return cached;
+    }
     const { rows } = await getPool().query(
       `select s.principal_type, s.principal_id, s.tenant_id,
               pa.name as pa_name, pa.email as pa_email, pa.active as pa_active,
@@ -204,7 +212,8 @@ export class AuthService {
               au.email as au_email, au.active as au_active, au.must_change_password as au_must,
               tu.id as tu_id, tu.name as tu_name, tu.active as tu_active,
               tu.granted_permissions, tu.revoked_permissions,
-              ap.id as ap_id, ap.name as ap_name, ap.is_admin as ap_admin, ap.permissions as ap_permissions
+              ap.id as ap_id, ap.name as ap_name, ap.is_admin as ap_admin, ap.permissions as ap_permissions,
+              t.enabled_routines
          from public.auth_sessions s
          left join public.platform_admins pa
                 on s.principal_type = 'super_admin' and pa.id = s.principal_id
@@ -214,6 +223,8 @@ export class AuthService {
                 on s.principal_type = 'tenant_user' and tu.tenant_id = s.tenant_id and tu.user_id = s.principal_id
          left join public.access_profiles ap
                 on ap.tenant_id = tu.tenant_id and ap.id = tu.profile_id
+         left join public.tenants t
+                on t.id = s.tenant_id
         where s.token_hash = $1 and s.expires_at > now()`,
       [tokenHash]
     );
@@ -224,7 +235,7 @@ export class AuthService {
 
     if (r.principal_type === 'super_admin') {
       if (!r.pa_active) return undefined;
-      return {
+      const superSession: AuthenticatedSession = {
         tokenHash,
         type: 'super_admin',
         id: r.principal_id,
@@ -234,10 +245,12 @@ export class AuthService {
         mustChangePassword: r.pa_must,
         usingDefaultPassword: r.pa_changed === null
       };
+      sessionCache.set(tokenHash, superSession);
+      return superSession;
     }
     // Identity, link with the active organization and profile must all be active/present.
     if (!r.au_active || !r.tu_active || !r.ap_id) return undefined;
-    return {
+    const session: AuthenticatedSession = {
       tokenHash,
       type: 'tenant_user',
       id: r.tu_id,
@@ -248,18 +261,25 @@ export class AuthService {
       profileId: r.ap_id,
       profileName: r.ap_name,
       isOrgAdmin: r.ap_admin,
-      permissions: effectivePermissions(
-        { isAdmin: r.ap_admin, permissions: r.ap_permissions },
-        r.granted_permissions,
-        r.revoked_permissions
+      // (profile + exceptions) ∩ what the organization's contract includes
+      permissions: entitledPermissions(
+        effectivePermissions(
+          { isAdmin: r.ap_admin, permissions: r.ap_permissions },
+          r.granted_permissions,
+          r.revoked_permissions
+        ),
+        r.enabled_routines ?? []
       ),
       mustChangePassword: r.au_must
     };
+    sessionCache.set(tokenHash, session);
+    return session;
   }
 
   /** Moves the current session to another organization the person is linked to (no new login). */
   async switchOrganization(session: AuthenticatedSession, tenantId: unknown, ip: string): Promise<void> {
     if (session.type !== 'tenant_user') throw new ValidationError('A Conta Mãe não pertence a organizações.');
+    sessionCache.clear();
     const target = typeof tenantId === 'string' ? tenantId : '';
     const allowed = (await AccessService.membershipsOf(getPool(), session.userId!)).find(m => m.tenantId === target);
     if (!allowed) throw new ForbiddenError('Você não tem acesso ativo a esta organização.');
@@ -286,6 +306,7 @@ export class AuthService {
   }
 
   async logout(tokenHash: string): Promise<void> {
+    sessionCache.clear();
     await getPool().query('delete from public.auth_sessions where token_hash = $1', [tokenHash]);
   }
 
@@ -310,6 +331,7 @@ export class AuthService {
     }
 
     const hash = await hashPassword(next);
+    sessionCache.clear();
     await withTransaction(async tx => {
       await tx.query(
         `update public.${isSuper ? 'platform_admins' : 'app_users'}
@@ -332,6 +354,7 @@ export class AuthService {
   async issueTempPassword(userId: string, db: Queryable = getPool()): Promise<string> {
     const temp = generateTempPassword();
     const hash = await hashPassword(temp);
+    sessionCache.clear();
     const { rowCount } = await db.query(
       `update public.app_users set password_hash = $2, must_change_password = true where id = $1`,
       [userId, hash]

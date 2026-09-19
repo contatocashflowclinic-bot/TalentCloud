@@ -96,6 +96,38 @@ export function canAccessModule(permissions: readonly string[], moduleId: number
 }
 
 // ---------------------------------------------------------------------
+// Module entitlements per organization (controlled by the Conta Mãe)
+// ---------------------------------------------------------------------
+/** Always enabled: an organization must be able to manage its own users and profiles. */
+export const CORE_ROUTINES = ['users', 'profiles'];
+
+export const ALL_ROUTINE_KEYS: string[] = ROUTINES.map(r => r.key);
+
+/** Routines included by default in each plan (the Conta Mãe can adjust them per organization). */
+export const PLAN_ROUTINES: Record<'Starter' | 'Scale' | 'Enterprise', string[]> = {
+  Starter: [
+    ...CORE_ROUTINES, 'dna', 'structure', 'positions', 'openings', 'candidates', 'selection', 'interviews', 'offers',
+    'onboarding'
+  ],
+  Scale: ALL_ROUTINE_KEYS,
+  Enterprise: ALL_ROUTINE_KEYS
+};
+
+/** Valid routine keys, core ones forced in, catalog order. Unknown keys are reported in `invalid`. */
+export function normalizeRoutines(input: unknown): { routines: string[]; invalid: string[] } {
+  const list = Array.isArray(input) ? input.map(v => String(v)) : [];
+  const invalid = [...new Set(list.filter(k => !ALL_ROUTINE_KEYS.includes(k)))];
+  const wanted = new Set([...list.filter(k => ALL_ROUTINE_KEYS.includes(k)), ...CORE_ROUTINES]);
+  return { routines: ALL_ROUTINE_KEYS.filter(k => wanted.has(k)), invalid };
+}
+
+/** Keeps only the permissions of routines the organization has enabled. */
+export function entitledPermissions(permissions: readonly string[], enabledRoutines: readonly string[]): string[] {
+  const enabled = new Set([...enabledRoutines, ...CORE_ROUTINES]);
+  return permissions.filter(p => enabled.has(p.split(':')[0]));
+}
+
+// ---------------------------------------------------------------------
 // Default profiles created for every organization (ids are stable per tenant)
 // ---------------------------------------------------------------------
 export const ADMIN_PROFILE_ID = 'admin';

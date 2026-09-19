@@ -12,8 +12,6 @@ import { useAuth } from './AuthContext.js';
 
 interface TenantContextValue {
   activeTenant: Tenant | null;
-  /** Only populated for the SuperAdmin (organization users never see other organizations). */
-  allTenants: Tenant[];
   isSuperAdmin: boolean;
   /** Effective permissions of the signed-in user in the active organization (from the server session). */
   permissions: string[];
@@ -24,7 +22,6 @@ interface TenantContextValue {
   routingResolution: TenantRoutingResolution | null;
   isLoading: boolean;
   error: string | null;
-  refreshTenants: () => Promise<Tenant[]>;
   refreshContext: () => Promise<void>;
 }
 
@@ -34,25 +31,11 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const { user } = useAuth();
   const isSuperAdmin = user?.type === 'super_admin';
 
-  const [allTenants, setAllTenants] = useState<Tenant[]>([]);
   const [activeTenant, setActiveTenant] = useState<Tenant | null>(null);
   const [telemetry, setTelemetry] = useState<TenantConnectionTelemetry | null>(null);
   const [routingResolution, setRoutingResolution] = useState<TenantRoutingResolution | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-
-  const refreshTenants = useCallback(async () => {
-    if (!isSuperAdmin) return [];
-    try {
-      const tenants = await MasterApi.getTenants();
-      setAllTenants(tenants);
-      return tenants;
-    } catch (err: any) {
-      console.error('Failed to load tenants:', err);
-      setError(err.message);
-      return [];
-    }
-  }, [isSuperAdmin]);
 
   const refreshContext = useCallback(async () => {
     try {
@@ -73,15 +56,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Bootstrap whenever the signed-in user changes (login / logout)
   useEffect(() => {
     setActiveTenant(null);
-    setAllTenants([]);
     setTelemetry(null);
     setRoutingResolution(null);
     setError(null);
 
     if (!user) return;
     if (user.type === 'super_admin') {
-      // Platform environment: only the organization catalog is loaded; no organization data is opened
-      refreshTenants();
+      // Platform environment: no organization data is ever loaded here
       return;
     }
     refreshContext();
@@ -92,7 +73,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     <TenantContext.Provider
       value={{
         activeTenant,
-        allTenants,
         isSuperAdmin,
         permissions: user?.permissions ?? [],
         profileLabel: isSuperAdmin ? 'SuperAdmin (Conta Mãe)' : user?.profileName ?? '',
@@ -101,7 +81,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         routingResolution,
         isLoading,
         error,
-        refreshTenants,
         refreshContext
       }}
     >

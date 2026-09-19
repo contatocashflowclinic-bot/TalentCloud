@@ -10,7 +10,9 @@ import { TenantConnectionRouter, TenantConnectionContext } from './server/tenant
 import { evaluateCandidateWithAI } from './server/gemini.js';
 import { closePool, getPool } from './server/db/pool.js';
 import { newId } from './server/ids.js';
-import { NotFoundError, ValidationError, toHttpError } from './server/errors.js';
+import { ConflictError, NotFoundError, ValidationError, toHttpError } from './server/errors.js';
+import { ALL_PERMISSIONS } from './src/access.js';
+import { sessionCache } from './server/cache.js';
 import { AuthService } from './server/auth/AuthService.js';
 import { can, authenticate, requirePasswordChanged, requireSuperAdmin } from './server/auth/middleware.js';
 import { AccessService } from './server/auth/AccessService.js';
@@ -145,12 +147,29 @@ async function startServer() {
 
   // List all tenants from the Master Catalog
   app.get('/api/master/tenants', h(async (req, res) => {
-    res.json({ success: true, tenants: await router.getAllTenants() });
+    const page = await router.getTenantsPage({
+      search: String(req.query.search ?? ''),
+      page: Number(req.query.page),
+      pageSize: Number(req.query.pageSize)
+    });
+    res.json({ success: true, ...page });
+  }));
+
+  app.get('/api/master/tenants/:id', h(async (req, res) => {
+    const tenant = await router.getTenantDetail(req.params.id);
+    if (!tenant) throw new NotFoundError('Organização não encontrada');
+    res.json({ success: true, tenant });
+  }));
+
+  // Edit registration data, plan and the modules (routines) the organization may use
+  app.patch('/api/master/tenants/:id', h(async (req, res) => {
+    const tenant = await router.updateOrganization(req.params.id, req.body ?? {}, actorOf(req.auth!, req.ip));
+    res.json({ success: true, tenant });
   }));
 
   // Provision a new organization (tenant + DNA + admin user, atomically)
   app.post('/api/master/tenants/provision', h(async (req, res) => {
-    const { name, tradingName, slug, document, contactEmail, plan, adminUserName, adminUserEmail } = req.body;
+    const { name, tradingName, slug, document, contactEmail, plan, adminUserName, adminUserEmail, enabledRoutines } = req.body;
     if (!name || !slug || !contactEmail) {
       throw new ValidationError('Campos obrigatórios: name, slug, contactEmail');
     }
@@ -164,7 +183,8 @@ async function startServer() {
         contactEmail,
         plan: plan || 'Scale',
         adminUserName: adminUserName || 'Administrador Org',
-        adminUserEmail: adminUserEmail || contactEmail
+        adminUserEmail: adminUserEmail || contactEmail,
+        enabledRoutines
       },
       actorOf(req.auth!, req.ip)
     );
@@ -184,6 +204,183 @@ async function startServer() {
     res.json({ success: true, ...result });
   }));
 
+  // ---------------------------------------------------------
+  // Conta Mãe: users, links and access of ANY organization.
+  // Only access-control metadata is exposed here (people, links, profiles). Business data (candidates, jobs...)
+  // is never reachable by the platform environment. Every query is scoped by the organization id in the URL.
+  // ---------------------------------------------------------
+  const superActor = (req: Request) => ({ id: req.auth!.id, permissions: [...ALL_PERMISSIONS] });
+  /** Access changes clear the session cache AFTER commit so no request can re-cache a pre-commit state. */
+  const accessTx = async <T,>(fn: (tx: PoolClient) => Promise<T>): Promise<T> => {
+    try {
+      return await withTransaction(fn);
+    } finally {
+      sessionCache.clear();
+    }
+  };
+  const orgOr404 = async (id: string) => {
+    const tenant = await router.getTenantById(id);
+    if (!tenant) throw new NotFoundError('Organização não encontrada');
+    return tenant;
+  };
+  const masterAudit = (req: Request, tenantId: string, action: string, details: string, tx?: PoolClient) =>
+    logAudit(
+      {
+        tenantId,
+        userId: req.auth!.id,
+        userName: req.auth!.name,
+        action,
+        category: 'ACCESS_CONTROL',
+        details,
+        ipAddress: req.ip || '127.0.0.1',
+        databaseAffected: tenantId ? 'tenant_users' : 'app_users'
+      },
+      tx
+    );
+
+  app.get('/api/master/tenants/:id/members', h(async (req, res) => {
+    await orgOr404(req.params.id);
+    const page = await AccessService.listMembersPage(getPool(), req.params.id, {
+      search: String(req.query.search ?? ''), page: Number(req.query.page), pageSize: Number(req.query.pageSize)
+    });
+    res.json({ success: true, users: page.items, total: page.total, page: page.page, pageSize: page.pageSize });
+  }));
+
+  app.post('/api/master/tenants/:id/members', h(async (req, res) => {
+    const tenant = await orgOr404(req.params.id);
+    const { name, email, profileId, jobTitle, departmentId, permissions } = req.body ?? {};
+    const result = await accessTx(async tx => {
+      const added = await AccessService.addMember(
+        tx, tenant.id,
+        { name: required(name, 'name'), email: required(email, 'email'), profileId, jobTitle, departmentId, permissions },
+        superActor(req)
+      );
+      const tempPassword = added.identityCreated ? await auth.issueTempPassword(added.identityId, tx) : undefined;
+      await masterAudit(req, tenant.id, added.identityCreated ? 'USER_CREATED' : 'USER_LINKED',
+        `${added.identityCreated ? 'Usuário criado' : 'Usuário existente vinculado'} pela Conta Mãe: ${added.member.email} (${added.member.profileName}) em '${tenant.name}'`, tx);
+      return { user: added.member, tempPassword, linkedExisting: !added.identityCreated };
+    });
+    res.status(201).json({ success: true, ...result });
+  }));
+
+  app.patch('/api/master/tenants/:id/members/:memberId', h(async (req, res) => {
+    const tenant = await orgOr404(req.params.id);
+    const { name, jobTitle, departmentId, profileId, active, permissions } = req.body ?? {};
+    const user = await accessTx(async tx => {
+      const updated = await AccessService.updateMember(
+        tx, tenant.id, req.params.memberId,
+        { name, jobTitle, departmentId, profileId, permissions, active: typeof active === 'boolean' ? active : undefined },
+        superActor(req)
+      );
+      await masterAudit(req, tenant.id, 'USER_ACCESS_UPDATED', `Acesso de ${updated.email} em '${tenant.name}' alterado pela Conta Mãe (perfil ${updated.profileName}, ${updated.active ? 'ativo' : 'inativo'})`, tx);
+      return updated;
+    });
+    res.json({ success: true, user });
+  }));
+
+  app.post('/api/master/tenants/:id/members/:memberId/reset-password', h(async (req, res) => {
+    const tenant = await orgOr404(req.params.id);
+    const out = await accessTx(async tx => {
+      const member = await AccessService.getMember(tx, tenant.id, req.params.memberId);
+      if (!member) throw new NotFoundError('Usuário não encontrado nesta organização.');
+      const tempPassword = await auth.issueTempPassword(member.userId, tx);
+      await masterAudit(req, tenant.id, 'PASSWORD_RESET_ISSUED', `Senha temporária emitida para ${member.email} pela Conta Mãe`, tx);
+      return { user: member, tempPassword };
+    });
+    res.json({ success: true, ...out });
+  }));
+
+  app.get('/api/master/tenants/:id/profiles', h(async (req, res) => {
+    await orgOr404(req.params.id);
+    res.json({ success: true, profiles: await AccessService.listProfiles(getPool(), req.params.id) });
+  }));
+
+  app.post('/api/master/tenants/:id/profiles', h(async (req, res) => {
+    const tenant = await orgOr404(req.params.id);
+    const profile = await accessTx(async tx => {
+      const created = await AccessService.createProfile(tx, tenant.id, req.body ?? {}, superActor(req));
+      await masterAudit(req, tenant.id, 'PROFILE_CREATED', `Perfil '${created.name}' criado pela Conta Mãe em '${tenant.name}'`, tx);
+      return created;
+    });
+    res.status(201).json({ success: true, profile });
+  }));
+
+  app.put('/api/master/tenants/:id/profiles/:profileId', h(async (req, res) => {
+    const tenant = await orgOr404(req.params.id);
+    const profile = await accessTx(async tx => {
+      const updated = await AccessService.updateProfile(tx, tenant.id, req.params.profileId, req.body ?? {}, superActor(req));
+      await masterAudit(req, tenant.id, 'PROFILE_UPDATED', `Perfil '${updated.name}' atualizado pela Conta Mãe em '${tenant.name}'`, tx);
+      return updated;
+    });
+    res.json({ success: true, profile });
+  }));
+
+  app.delete('/api/master/tenants/:id/profiles/:profileId', h(async (req, res) => {
+    const tenant = await orgOr404(req.params.id);
+    await accessTx(async tx => {
+      const removed = await AccessService.deleteProfile(tx, tenant.id, req.params.profileId);
+      await masterAudit(req, tenant.id, 'PROFILE_DELETED', `Perfil '${removed.name}' excluído pela Conta Mãe em '${tenant.name}'`, tx);
+    });
+    res.json({ success: true });
+  }));
+
+  // People across the platform (global identities + their links)
+  app.get('/api/master/users', h(async (req, res) => {
+    const page = await AccessService.listIdentities(getPool(), {
+      search: String(req.query.search ?? ''), page: Number(req.query.page), pageSize: Number(req.query.pageSize)
+    });
+    res.json({ success: true, users: page.items, total: page.total, page: page.page, pageSize: page.pageSize });
+  }));
+
+  // New person, optionally already linked to an organization with a profile. An e-mail that exists is a conflict
+  // (link it from the organization instead), so a password is never silently replaced.
+  app.post('/api/master/users', h(async (req, res) => {
+    const { name, email, link } = req.body ?? {};
+    const out = await accessTx(async tx => {
+      let identityId: string;
+      if (link && typeof link === 'object') {
+        const tenant = await orgOr404(String(link.tenantId ?? ''));
+        const added = await AccessService.addMember(
+          tx, tenant.id,
+          { name: required(name, 'name'), email: required(email, 'email'), profileId: link.profileId, jobTitle: link.jobTitle, permissions: link.permissions },
+          superActor(req)
+        );
+        if (!added.identityCreated) throw new ConflictError('Já existe um usuário com este e-mail. Vincule-o pela organização.');
+        identityId = added.identityId;
+      } else {
+        identityId = await AccessService.createIdentity(tx, { name: required(name, 'name'), email: required(email, 'email') });
+      }
+      const tempPassword = await auth.issueTempPassword(identityId, tx);
+      await masterAudit(req, '', 'USER_CREATED', `Usuário ${String(email).toLowerCase()} criado pela Conta Mãe${link ? ' com vínculo inicial' : ''}`, tx);
+      return { user: (await AccessService.listIdentities(tx, { onlyId: identityId, pageSize: 1 })).items[0], tempPassword };
+    });
+    res.status(201).json({ success: true, ...out });
+  }));
+
+  app.patch('/api/master/users/:userId', h(async (req, res) => {
+    const { active, name } = req.body ?? {};
+    const user = await accessTx(async tx => {
+      const current = (await AccessService.listIdentities(tx, { onlyId: req.params.userId, pageSize: 1 })).items[0];
+      if (!current) throw new NotFoundError('Usuário não encontrado.');
+      const next = typeof active === 'boolean' ? active : current.active;
+      const updated = await AccessService.setIdentityActive(tx, req.params.userId, next, name);
+      await masterAudit(req, '', 'USER_ACCESS_UPDATED', `Usuário ${updated.email} ${next === current.active ? 'atualizado' : next ? 'reativado' : 'desativado'} em toda a plataforma pela Conta Mãe`, tx);
+      return updated;
+    });
+    res.json({ success: true, user });
+  }));
+
+  app.post('/api/master/users/:userId/reset-password', h(async (req, res) => {
+    const out = await accessTx(async tx => {
+      const user = (await AccessService.listIdentities(tx, { onlyId: req.params.userId, pageSize: 1 })).items[0];
+      if (!user) throw new NotFoundError('Usuário não encontrado.');
+      const tempPassword = await auth.issueTempPassword(user.id, tx);
+      await masterAudit(req, '', 'PASSWORD_RESET_ISSUED', `Senha temporária emitida para ${user.email} pela Conta Mãe`, tx);
+      return { user, tempPassword };
+    });
+    res.json({ success: true, ...out });
+  }));
+
   // SuperAdmin Global Telemetry & Cross-Tenant Analytics
   app.get('/api/master/telemetry', h(async (req, res) => {
     res.json({ success: true, telemetry: await router.getGlobalTelemetry() });
@@ -191,7 +388,14 @@ async function startServer() {
 
   // Master Audit Logs (Isolation, Provisioning, Routing trace)
   app.get('/api/master/audit-logs', h(async (req, res) => {
-    res.json({ success: true, logs: await router.getMasterAuditLogs() });
+    const { logs, nextCursor } = await router.getMasterAuditLogs({
+      limit: Number(req.query.limit),
+      before: req.query.before ? String(req.query.before) : undefined,
+      category: req.query.category ? String(req.query.category) : undefined,
+      q: req.query.q ? String(req.query.q) : undefined,
+      tenantId: req.query.tenantId ? String(req.query.tenantId) : undefined
+    });
+    res.json({ success: true, logs, nextCursor });
   }));
 
   // =========================================================================
@@ -254,7 +458,15 @@ async function startServer() {
     );
 
   app.get('/api/v1/users', can('users:view'), h(async (req, res) => {
-    res.json({ success: true, users: await AccessService.listMembers(getPool(), ctx(req).tenant.id) });
+    const paged = req.query.page || req.query.pageSize || req.query.search;
+    if (!paged) {
+      res.json({ success: true, users: await AccessService.listMembers(getPool(), ctx(req).tenant.id) });
+      return;
+    }
+    const page = await AccessService.listMembersPage(getPool(), ctx(req).tenant.id, {
+      search: String(req.query.search ?? ''), page: Number(req.query.page), pageSize: Number(req.query.pageSize)
+    });
+    res.json({ success: true, users: page.items, total: page.total, page: page.page, pageSize: page.pageSize });
   }));
 
   // Links a person to this organization. An e-mail that already has an account is LINKED (its password is
@@ -262,7 +474,7 @@ async function startServer() {
   app.post('/api/v1/users', can('users:create'), h(async (req, res) => {
     const { tenant } = ctx(req);
     const { name, email, profileId, jobTitle, departmentId, permissions } = req.body ?? {};
-    const result = await withTransaction(async tx => {
+    const result = await accessTx(async tx => {
       const added = await AccessService.addMember(
         tx,
         tenant.id,
@@ -284,7 +496,7 @@ async function startServer() {
   app.patch('/api/v1/users/:id', can('users:edit'), h(async (req, res) => {
     const { tenant } = ctx(req);
     const { name, jobTitle, departmentId, profileId, active, permissions } = req.body ?? {};
-    const user = await withTransaction(async tx => {
+    const user = await accessTx(async tx => {
       const before = await AccessService.getMember(tx, tenant.id, req.params.id);
       const updated = await AccessService.updateMember(
         tx,
@@ -306,7 +518,7 @@ async function startServer() {
 
   app.post('/api/v1/users/:id/reset-password', can('users:edit'), h(async (req, res) => {
     const { tenant } = ctx(req);
-    const user = await withTransaction(async tx => {
+    const user = await accessTx(async tx => {
       const member = await AccessService.getMember(tx, tenant.id, req.params.id);
       if (!member) throw new NotFoundError('Usuário não encontrado');
       await AccessService.assertPasswordResettable(tx, tenant.id, member, actorAccess(req));
@@ -325,7 +537,7 @@ async function startServer() {
 
   app.post('/api/v1/profiles', can('profiles:create'), h(async (req, res) => {
     const { tenant } = ctx(req);
-    const profile = await withTransaction(async tx => {
+    const profile = await accessTx(async tx => {
       const created = await AccessService.createProfile(tx, tenant.id, req.body ?? {}, actorAccess(req));
       await audit(req, 'PROFILE_CREATED', `Perfil '${created.name}' criado (${created.permissions.length} permissões)`, tx);
       return created;
@@ -335,7 +547,7 @@ async function startServer() {
 
   app.put('/api/v1/profiles/:id', can('profiles:edit'), h(async (req, res) => {
     const { tenant } = ctx(req);
-    const profile = await withTransaction(async tx => {
+    const profile = await accessTx(async tx => {
       const updated = await AccessService.updateProfile(tx, tenant.id, req.params.id, req.body ?? {}, actorAccess(req));
       await audit(req, 'PROFILE_UPDATED', `Perfil '${updated.name}' atualizado (${updated.permissions.length} permissões)`, tx);
       return updated;
@@ -345,7 +557,7 @@ async function startServer() {
 
   app.delete('/api/v1/profiles/:id', can('profiles:delete'), h(async (req, res) => {
     const { tenant } = ctx(req);
-    await withTransaction(async tx => {
+    await accessTx(async tx => {
       const removed = await AccessService.deleteProfile(tx, tenant.id, req.params.id);
       await audit(req, 'PROFILE_DELETED', `Perfil '${removed.name}' excluído`, tx);
     });

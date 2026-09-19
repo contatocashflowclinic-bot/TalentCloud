@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
-import { Activity, Building2, Cpu, KeyRound, LogOut, ScrollText, ShieldCheck, ShieldAlert, UserCircle2, ChevronDown } from 'lucide-react';
+import { Activity, Building2, Cpu, KeyRound, LogOut, ScrollText, ShieldCheck, ShieldAlert, UserCircle2, ChevronDown, Users } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.js';
 import { SaoPauloClockBadge } from '../SaoPauloClockBadge.js';
 import { ChangePasswordModal } from '../auth/ChangePasswordModal.js';
 import { MultiTenantArchitectureModal } from '../MultiTenantArchitectureModal.js';
 import { ProvisionOrganizationModal } from '../ProvisionOrganizationModal.js';
 import { PlatformSection, SuperAdminConsole } from '../SuperAdminConsole.js';
+import { PlatformUsersPanel } from './PlatformUsersPanel.js';
 
 const SECTIONS: Array<{ id: PlatformSection; name: string; desc: string; icon: React.ElementType }> = [
   { id: 'overview', name: 'Visão geral', desc: 'Indicadores da plataforma', icon: Activity },
   { id: 'organizations', name: 'Organizações', desc: 'Clientes, planos e status', icon: Building2 },
+  { id: 'users', name: 'Usuários', desc: 'Pessoas, vínculos e acessos', icon: Users },
   { id: 'audit', name: 'Auditoria', desc: 'Segurança e governança', icon: ScrollText }
 ];
 
@@ -24,6 +26,7 @@ export const PlatformLayout: React.FC = () => {
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [provisionOpen, setProvisionOpen] = useState(false);
   const [architectureOpen, setArchitectureOpen] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans antialiased">
@@ -128,16 +131,21 @@ export const PlatformLayout: React.FC = () => {
         </aside>
 
         <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8">
-          <SuperAdminConsole
-            section={section}
-            onNavigate={setSection}
-            onOpenProvisionModal={() => setProvisionOpen(true)}
-          />
+          {section === 'users' ? (
+            <PlatformUsersPanel />
+          ) : (
+            <SuperAdminConsole
+              section={section}
+              reloadKey={reloadKey}
+              onNavigate={setSection}
+              onOpenProvisionModal={() => setProvisionOpen(true)}
+            />
+          )}
         </main>
       </div>
 
       <MultiTenantArchitectureModal isOpen={architectureOpen} onClose={() => setArchitectureOpen(false)} />
-      <ProvisionOrganizationModal isOpen={provisionOpen} onClose={() => setProvisionOpen(false)} />
+      <ProvisionOrganizationModal isOpen={provisionOpen} onClose={() => setProvisionOpen(false)} onCreated={() => setReloadKey(k => k + 1)} />
       {passwordOpen && <ChangePasswordModal onClose={() => setPasswordOpen(false)} />}
     </div>
   );

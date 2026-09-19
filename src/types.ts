@@ -51,6 +51,8 @@ export interface Tenant {
   status: TenantStatus;
   plan: 'Starter' | 'Scale' | 'Enterprise';
   createdAt: string;
+  /** Routines (modules) the organization's contract includes; controlled by the Conta Mãe. */
+  enabledRoutines: string[];
   dbConfig: DatabaseConfig;
   features: {
     aiEvaluationEnabled: boolean;
@@ -72,6 +74,32 @@ export interface AccessProfile {
   isSystem: boolean;
   permissions: string[];
   memberCount?: number;
+}
+
+/** Pessoa (identidade global) com seus vínculos, visão da Conta Mãe. */
+export interface PlatformUser {
+  id: string;
+  name: string;
+  email: string;
+  active: boolean;
+  createdAt: string;
+  lastLoginAt?: string;
+  links: Array<{
+    tenantId: string;
+    tenantName: string;
+    slug: string;
+    membershipId: string;
+    profileId: string;
+    profileName: string;
+    active: boolean;
+  }>;
+}
+
+export interface Page<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
 }
 
 /** Vínculo de um usuário (identidade global) com uma organização. */

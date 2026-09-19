@@ -15,7 +15,8 @@ import { seedTenantData } from './seedTenant.js';
 import { logAudit, AuditEntry } from '../audit.js';
 import { AuthService, AuthenticatedSession } from '../auth/AuthService.js';
 import { AccessService } from '../auth/AccessService.js';
-import { ADMIN_PROFILE_ID } from '../../src/access.js';
+import { ADMIN_PROFILE_ID, PLAN_ROUTINES, normalizeRoutines } from '../../src/access.js';
+import { TtlCache, sessionCache } from '../cache.js';
 import { invalidateStorageCache, withDbConfig } from './dbConfig.js';
 
 export interface TenantConnectionContext {
@@ -103,22 +104,76 @@ export class TenantConnectionRouter {
   // -------------------------------------------------------------------
   // Master catalog reads
   // -------------------------------------------------------------------
-  private async hydrate(rows: Record<string, unknown>[]): Promise<Tenant[]> {
-    return withDbConfig(rows.map(r => fromRow<Omit<Tenant, 'dbConfig'>>({}, r)));
+  private async hydrate(rows: Record<string, unknown>[], measure: 'none' | 'page' | 'all' = 'page'): Promise<Tenant[]> {
+    return withDbConfig(rows.map(r => fromRow<Omit<Tenant, 'dbConfig'>>({}, r)), measure);
   }
 
+  /** Request hot path: a tenant row per request would be a query per request, so it is cached for a few seconds. */
+  private tenantCache = new TtlCache<Tenant>(5_000, 2_000);
+  private slugCache = new TtlCache<Tenant>(5_000, 2_000);
+
+  /** Call after any write to the tenants table. */
+  public invalidateTenant(): void {
+    this.tenantCache.clear();
+    this.slugCache.clear();
+    sessionCache.clear();
+  }
+
+  /** Every organization with platform-wide storage totals (telemetry only; use getTenantsPage for lists). */
   public async getAllTenants(db: Queryable = getPool()): Promise<Tenant[]> {
     const { rows } = await db.query('select * from public.tenants order by created_at asc, id asc');
-    return this.hydrate(rows);
+    return this.hydrate(rows, 'all');
   }
 
-  public async getTenantById(id: string, db: Queryable = getPool()): Promise<Tenant | undefined> {
-    const { rows } = await db.query('select * from public.tenants where id = $1', [id]);
-    return (await this.hydrate(rows))[0];
+  /** Searchable, paginated catalog for the Conta Mãe; storage is measured only for the returned page. */
+  public async getTenantsPage(opts: { search?: string; page?: number; pageSize?: number }): Promise<{
+    tenants: Tenant[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }> {
+    const pageSize = Math.min(Math.max(Math.trunc(opts.pageSize || 25), 1), 100);
+    const page = Math.max(Math.trunc(opts.page || 1), 1);
+    const term = (opts.search ?? '').trim().toLowerCase().replace(/[\\%_]/g, m => '\\' + m);
+    const { rows } = await getPool().query(
+      `select *, count(*) over ()::int as total_rows
+         from public.tenants
+        where $1 = '' or lower(name) like '%' || $1 || '%' or slug like '%' || $1 || '%'
+              or lower(contact_email) like '%' || $1 || '%'
+        order by created_at asc, id asc
+        limit $2 offset $3`,
+      [term, pageSize, (page - 1) * pageSize]
+    );
+    const total = rows[0]?.total_rows ?? 0;
+    return { tenants: await this.hydrate(rows.map(({ total_rows: _t, ...r }) => r)), total, page, pageSize };
   }
 
-  public async getTenantBySlug(slug: string, db: Queryable = getPool()): Promise<Tenant | undefined> {
-    const { rows } = await db.query('select * from public.tenants where slug = $1', [slug.toLowerCase()]);
+  public async getTenantById(id: string, db?: Queryable): Promise<Tenant | undefined> {
+    if (!db) {
+      const hit = this.tenantCache.get(id);
+      if (hit) return hit;
+    }
+    const { rows } = await (db ?? getPool()).query('select * from public.tenants where id = $1', [id]);
+    const tenant = (await this.hydrate(rows, 'none'))[0];
+    if (tenant && !db) this.tenantCache.set(id, tenant);
+    return tenant;
+  }
+
+  public async getTenantBySlug(slug: string, db?: Queryable): Promise<Tenant | undefined> {
+    const key = slug.toLowerCase();
+    if (!db) {
+      const hit = this.slugCache.get(key);
+      if (hit) return hit;
+    }
+    const { rows } = await (db ?? getPool()).query('select * from public.tenants where slug = $1', [key]);
+    const tenant = (await this.hydrate(rows, 'none'))[0];
+    if (tenant && !db) this.slugCache.set(key, tenant);
+    return tenant;
+  }
+
+  /** Full facts (storage measured for this one organization) for the Conta Mãe screens. */
+  public async getTenantDetail(id: string): Promise<Tenant | undefined> {
+    const { rows } = await getPool().query('select * from public.tenants where id = $1', [id]);
     return (await this.hydrate(rows))[0];
   }
 
@@ -179,6 +234,8 @@ export class TenantConnectionRouter {
       plan: Tenant['plan'];
       adminUserName: string;
       adminUserEmail: string;
+      /** Defaults to the plan's routines. */
+      enabledRoutines?: string[];
     },
     actor: Actor
   ): Promise<{
@@ -202,12 +259,10 @@ export class TenantConnectionRouter {
 
     const tenantId = `tenant-${normalizedSlug}-${randomUUID().slice(0, 6)}`;
     const now = new Date().toISOString();
-    const features: Tenant['features'] = {
-      aiEvaluationEnabled: true,
-      onboardingChecklistEnabled: true,
-      retentionPredictorEnabled: plan !== 'Starter',
-      advancedIndicatorsEnabled: true
-    };
+    const routines = params.enabledRoutines ? normalizeRoutines(params.enabledRoutines) : { routines: PLAN_ROUTINES[plan], invalid: [] };
+    if (routines.invalid.length) throw new ValidationError(`Módulos desconhecidos: ${routines.invalid.join(', ')}`);
+    const enabledRoutines = routines.routines;
+    const features = featuresFor(enabledRoutines);
     const adminId = `usr-${tenantId}-admin`;
 
     let tempPassword = '';
@@ -216,11 +271,11 @@ export class TenantConnectionRouter {
       await withTransaction(async tx => {
         await tx.query(
           `insert into public.tenants
-             (id, slug, name, trading_name, document, contact_email, status, plan, created_at, features)
-           values ($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9)`,
+             (id, slug, name, trading_name, document, contact_email, status, plan, created_at, features, enabled_routines)
+           values ($1, $2, $3, $4, $5, $6, 'active', $7, $8, $9, $10)`,
           [
             tenantId, normalizedSlug, params.name, params.tradingName, params.document, params.contactEmail,
-            plan, now, JSON.stringify(features)
+            plan, now, JSON.stringify(features), enabledRoutines
           ]
         );
 
@@ -307,7 +362,8 @@ export class TenantConnectionRouter {
     }
 
     invalidateStorageCache();
-    const tenant = (await this.getTenantById(tenantId))!;
+    this.invalidateTenant();
+    const tenant = (await this.getTenantDetail(tenantId))!;
     return {
       tenant,
       databaseConfig: tenant.dbConfig,
@@ -334,7 +390,89 @@ export class TenantConnectionRouter {
         tx
       );
     });
-    return (await this.getTenantById(tenantId))!;
+    this.invalidateTenant();
+    return (await this.getTenantDetail(tenantId))!;
+  }
+
+  /** Edits registration data, plan and the modules (routines) the organization may use. */
+  public async updateOrganization(
+    tenantId: string,
+    patch: {
+      name?: unknown;
+      tradingName?: unknown;
+      document?: unknown;
+      contactEmail?: unknown;
+      logoUrl?: unknown;
+      plan?: unknown;
+      enabledRoutines?: unknown;
+    },
+    actor: Actor
+  ): Promise<Tenant> {
+    const str = (v: unknown, label: string, current: string) => {
+      if (v === undefined) return current;
+      if (typeof v !== 'string' || !v.trim()) throw new ValidationError(`Campo inválido: ${label}`);
+      return v.trim();
+    };
+    await withTransaction(async tx => {
+      const { rows } = await tx.query('select * from public.tenants where id = $1 for update', [tenantId]);
+      const cur = rows[0];
+      if (!cur) throw new NotFoundError('Organização não encontrada');
+
+      const name = str(patch.name, 'name', cur.name);
+      const tradingName = str(patch.tradingName, 'tradingName', cur.trading_name);
+      const document = str(patch.document, 'document', cur.document);
+      const contactEmail = str(patch.contactEmail, 'contactEmail', cur.contact_email);
+      if (!EMAIL_RE.test(contactEmail)) throw new ValidationError('E-mail de contato inválido.');
+      const plan = patch.plan === undefined ? (cur.plan as Tenant['plan']) : (patch.plan as Tenant['plan']);
+      if (!PLANS.includes(plan)) throw new ValidationError(`Plano inválido. Use: ${PLANS.join(', ')}.`);
+      const logoUrl = patch.logoUrl === undefined ? cur.logo_url : (typeof patch.logoUrl === 'string' && patch.logoUrl.trim() ? patch.logoUrl.trim() : null);
+      if (logoUrl && !/^https?:\/\//i.test(logoUrl)) throw new ValidationError('A URL do logo deve começar com http:// ou https://');
+
+      let routines: string[] = cur.enabled_routines;
+      if (patch.enabledRoutines !== undefined) {
+        const n = normalizeRoutines(patch.enabledRoutines);
+        if (n.invalid.length) throw new ValidationError(`Módulos desconhecidos: ${n.invalid.join(', ')}`);
+        routines = n.routines;
+      }
+
+      await tx.query(
+        `update public.tenants
+            set name = $2, trading_name = $3, document = $4, contact_email = $5, logo_url = $6, plan = $7,
+                enabled_routines = $8, features = $9
+          where id = $1`,
+        [tenantId, name, tradingName, document, contactEmail, logoUrl, plan, routines, JSON.stringify(featuresFor(routines))]
+      );
+
+      const changes: string[] = [];
+      if (cur.name !== name) changes.push('nome');
+      if (cur.trading_name !== tradingName) changes.push('nome fantasia');
+      if (cur.document !== document) changes.push('documento');
+      if (cur.contact_email !== contactEmail) changes.push('e-mail de contato');
+      if ((cur.logo_url ?? null) !== (logoUrl ?? null)) changes.push('logo');
+      if (cur.plan !== plan) changes.push(`plano ${cur.plan} → ${plan}`);
+      const before = new Set<string>(cur.enabled_routines);
+      const added = routines.filter(k => !before.has(k));
+      const removed = [...before].filter(k => !routines.includes(k));
+      if (added.length) changes.push(`módulos liberados: ${added.join(', ')}`);
+      if (removed.length) changes.push(`módulos bloqueados: ${removed.join(', ')}`);
+
+      await logAudit(
+        {
+          tenantId,
+          userId: actor.id,
+          userName: actor.name,
+          action: 'TENANT_UPDATED',
+          category: 'ACCESS_CONTROL',
+          details: `Organização '${cur.name}' atualizada${changes.length ? `: ${changes.join('; ')}` : ' (sem alterações)'}`,
+          ipAddress: actor.ip,
+          databaseAffected: `tenant:${cur.slug}`
+        },
+        tx
+      );
+    });
+    invalidateStorageCache();
+    this.invalidateTenant();
+    return (await this.getTenantDetail(tenantId))!;
   }
 
   /** SuperAdmin support action: new temporary password for an organization user (default: first ORG_ADMIN). */
@@ -378,12 +516,47 @@ export class TenantConnectionRouter {
   // -------------------------------------------------------------------
   // Audit & telemetry
   // -------------------------------------------------------------------
-  public async getMasterAuditLogs(limit = 500): Promise<SystemAuditLog[]> {
+  /**
+   * Audit trail, newest first, filtered and paginated in the database (keyset on timestamp + id, so deep pages
+   * stay cheap). `nextCursor` is passed back as `before` to load the next page.
+   */
+  public async getMasterAuditLogs(opts: {
+    limit?: number;
+    before?: string;
+    category?: string;
+    q?: string;
+    tenantId?: string;
+  } = {}): Promise<{ logs: SystemAuditLog[]; nextCursor: string | null }> {
+    const limit = Math.min(Math.max(Math.trunc(opts.limit || 50), 1), 200);
+    const where: string[] = [];
+    const args: unknown[] = [];
+    const add = (sql: string, value: unknown) => { args.push(value); where.push(sql.replace('?', `$${args.length}`)); };
+
+    if (opts.category) add('category = ?', opts.category);
+    if (opts.tenantId) add('tenant_id = ?', opts.tenantId);
+    if (opts.q?.trim()) {
+      const term = '%' + opts.q.trim().toLowerCase().replace(/[\\%_]/g, m => '\\' + m) + '%';
+      add('(lower(action) like ? or lower(user_name) like ? or lower(details) like ?)', term);
+      where[where.length - 1] = where[where.length - 1].replace(/\?/g, `$${args.length}`);
+    }
+    if (opts.before) {
+      const [ts, id] = opts.before.split('|');
+      if (!ts || !id || Number.isNaN(Date.parse(ts))) throw new ValidationError('Cursor de paginação inválido.');
+      args.push(ts, id);
+      where.push(`(timestamp, id) < ($${args.length - 1}::timestamptz, $${args.length})`);
+    }
+    args.push(limit + 1);
     const { rows } = await getPool().query(
-      'select * from public.platform_audit_logs order by timestamp desc, id desc limit $1',
-      [limit]
+      `select * from public.platform_audit_logs ${where.length ? 'where ' + where.join(' and ') : ''}
+        order by timestamp desc, id desc limit $${args.length}`,
+      args
     );
-    return rows.map(r => ({ ...fromRow<SystemAuditLog>({ exposeTenantId: true }, r), tenantId: (r.tenant_id as string | null) ?? '' }));
+    const page = rows.slice(0, limit);
+    const last = page[page.length - 1];
+    return {
+      logs: page.map(r => ({ ...fromRow<SystemAuditLog>({ exposeTenantId: true }, r), tenantId: (r.tenant_id as string | null) ?? '' })),
+      nextCursor: rows.length > limit && last ? `${new Date(last.timestamp).toISOString()}|${last.id}` : null
+    };
   }
 
   public async logMasterAudit(entry: AuditEntry, db: Queryable = getPool()): Promise<void> {
@@ -430,12 +603,25 @@ export class TenantConnectionRouter {
       averageLatencyMs: latencies.length
         ? Number((latencies.reduce((a, b) => a + b, 0) / latencies.length).toFixed(1))
         : 0,
-      tenantBreakdowns
+      // bounded: the busiest organizations first (the full list lives in the paginated catalog)
+      tenantBreakdowns: tenantBreakdowns
+        .sort((x, y) => y.telemetry.queriesPerMinute - x.telemetry.queriesPerMinute || x.tenantName.localeCompare(y.tenantName))
+        .slice(0, 50)
     };
   }
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Feature flags mirror the enabled routines (kept for compatibility with the tenant record). */
+function featuresFor(routines: readonly string[]): Tenant['features'] {
+  return {
+    aiEvaluationEnabled: routines.includes('ai_evaluation'),
+    onboardingChecklistEnabled: routines.includes('onboarding'),
+    retentionPredictorEnabled: routines.includes('retention'),
+    advancedIndicatorsEnabled: routines.includes('indicators')
+  };
+}
 
 /** e.g. '2026-Q3' */
 function currentPeriod(d = new Date()): string {

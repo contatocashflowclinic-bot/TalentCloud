@@ -1,3 +1,4 @@
+import { PLAN_ROUTINES } from '../../src/access.js';
 import { Tenant } from '../../src/types.js';
 
 export const INITIAL_TENANTS: Omit<Tenant, 'dbConfig'>[] = [
@@ -10,6 +11,7 @@ export const INITIAL_TENANTS: Omit<Tenant, 'dbConfig'>[] = [
     contactEmail: 'rh@techcorp.io',
     status: 'active',
     plan: 'Enterprise',
+    enabledRoutines: PLAN_ROUTINES['Enterprise'],
     createdAt: '2026-01-15T10:00:00Z',
     features: {
       aiEvaluationEnabled: true,
@@ -27,6 +29,7 @@ export const INITIAL_TENANTS: Omit<Tenant, 'dbConfig'>[] = [
     contactEmail: 'gente@varejobrasil.com.br',
     status: 'active',
     plan: 'Scale',
+    enabledRoutines: PLAN_ROUTINES['Scale'],
     createdAt: '2026-02-01T14:30:00Z',
     features: {
       aiEvaluationEnabled: true,
@@ -44,6 +47,7 @@ export const INITIAL_TENANTS: Omit<Tenant, 'dbConfig'>[] = [
     contactEmail: 'talentos@biosaude.med.br',
     status: 'active',
     plan: 'Enterprise',
+    enabledRoutines: PLAN_ROUTINES['Enterprise'],
     createdAt: '2026-02-18T09:15:00Z',
     features: {
       aiEvaluationEnabled: true,

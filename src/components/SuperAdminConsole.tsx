@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Building2,
   Database,
@@ -14,14 +14,19 @@ import {
   Copy,
   Check,
   X,
-  PlusCircle
+  PlusCircle,
+  Pencil,
+  Users,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
-import { useTenant } from '../context/TenantContext.js';
 import { MasterApi } from '../services/api.js';
 import { Tenant, SystemAuditLog } from '../types.js';
 import { formatDateTimeSP } from '../utils/dateUtils.js';
+import { OrganizationEditor } from './platform/OrganizationEditor.js';
+import { OrgAccessModal } from './platform/OrgAccessModal.js';
 
-export type PlatformSection = 'overview' | 'organizations' | 'audit';
+export type PlatformSection = 'overview' | 'organizations' | 'users' | 'audit';
 
 const STATUS_LABEL: Record<Tenant['status'], string> = {
   active: 'Ativo',
@@ -60,42 +65,84 @@ const AuditRow: React.FC<{ log: SystemAuditLog }> = ({ log }) => (
 );
 
 /** Platform (Conta Mãe) routines: overview, organization catalog and audit trail. No organization data lives here. */
+const TENANT_PAGE_SIZE = 20;
+
 export const SuperAdminConsole: React.FC<{
   section: PlatformSection;
   onOpenProvisionModal: () => void;
   onNavigate: (section: PlatformSection) => void;
-}> = ({ section, onOpenProvisionModal, onNavigate }) => {
-  const { allTenants, refreshTenants } = useTenant();
+  /** Bumped by the layout after an organization is created, to reload the catalog. */
+  reloadKey: number;
+}> = ({ section, onOpenProvisionModal, onNavigate, reloadKey }) => {
   const [telemetry, setTelemetry] = useState<any>(null);
   const [auditLogs, setAuditLogs] = useState<SystemAuditLog[]>([]);
+  const [auditCursor, setAuditCursor] = useState<string | null>(null);
+  const [tenants, setTenants] = useState<Tenant[]>([]);
+  const [tenantTotal, setTenantTotal] = useState(0);
+  const [tenantPage, setTenantPage] = useState(1);
   const [loading, setLoading] = useState(false);
   const [filterTerm, setFilterTerm] = useState('');
+  const [debouncedTerm, setDebouncedTerm] = useState('');
   const [auditTerm, setAuditTerm] = useState('');
+  const [debouncedAudit, setDebouncedAudit] = useState('');
   const [auditCategory, setAuditCategory] = useState('');
   const [statusUpdating, setStatusUpdating] = useState<string | null>(null);
   const [resetting, setResetting] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Tenant | null>(null);
+  const [managing, setManaging] = useState<Tenant | null>(null);
   const [resetResult, setResetResult] = useState<{ tenantName: string; slug: string; email: string; tempPassword: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const seq = useRef(0);
 
+  useEffect(() => {
+    const t = setTimeout(() => { setDebouncedTerm(filterTerm.trim()); setTenantPage(1); }, 300);
+    return () => clearTimeout(t);
+  }, [filterTerm]);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedAudit(auditTerm.trim()), 300);
+    return () => clearTimeout(t);
+  }, [auditTerm]);
+
+  // Each section loads only what it shows; lists are searched/paginated in the database
   const loadData = useCallback(async () => {
+    const mine = ++seq.current;
     try {
       setLoading(true);
-      const [tel, logs] = await Promise.all([MasterApi.getTelemetry(), MasterApi.getAuditLogs()]);
-      setTelemetry(tel);
-      setAuditLogs(logs);
-      await refreshTenants();
+      if (section === 'overview') {
+        const [tel, audit] = await Promise.all([MasterApi.getTelemetry(), MasterApi.getAuditLogs({ limit: 5 })]);
+        if (mine !== seq.current) return;
+        setTelemetry(tel);
+        setAuditLogs(audit.logs);
+      } else if (section === 'organizations') {
+        const page = await MasterApi.getTenantsPage({ search: debouncedTerm, page: tenantPage, pageSize: TENANT_PAGE_SIZE });
+        if (mine !== seq.current) return;
+        setTenants(page.items);
+        setTenantTotal(page.total);
+      } else if (section === 'audit') {
+        const audit = await MasterApi.getAuditLogs({ limit: 50, category: auditCategory, q: debouncedAudit });
+        if (mine !== seq.current) return;
+        setAuditLogs(audit.logs);
+        setAuditCursor(audit.nextCursor);
+      }
     } catch (err) {
       console.error('Failed to load platform data:', err);
     } finally {
-      setLoading(false);
+      if (mine === seq.current) setLoading(false);
     }
-  }, [refreshTenants]);
+  }, [section, debouncedTerm, tenantPage, auditCategory, debouncedAudit]);
 
-  useEffect(() => {
-    void loadData();
-    // Reload whenever the SuperAdmin returns to a section (e.g. after provisioning an organization)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [section]);
+  useEffect(() => { void loadData(); }, [loadData, reloadKey]);
+
+  const loadMoreAudit = async () => {
+    if (!auditCursor) return;
+    try {
+      const audit = await MasterApi.getAuditLogs({ limit: 50, category: auditCategory, q: debouncedAudit, before: auditCursor });
+      setAuditLogs(prev => [...prev, ...audit.logs]);
+      setAuditCursor(audit.nextCursor);
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
 
   const handleResetAdminPassword = async (tenant: Tenant) => {
     if (!confirm(`Gerar nova senha temporária para o administrador de "${tenant.name}"? A senha atual deixará de funcionar.`)) return;
@@ -125,17 +172,6 @@ export const SuperAdminConsole: React.FC<{
     }
   };
 
-  const term = filterTerm.toLowerCase();
-  const filteredTenants = allTenants.filter(
-    t => t.name.toLowerCase().includes(term) || t.slug.toLowerCase().includes(term) || t.contactEmail.toLowerCase().includes(term)
-  );
-  const aTerm = auditTerm.toLowerCase();
-  const filteredLogs = auditLogs.filter(
-    l =>
-      (!auditCategory || l.category === auditCategory) &&
-      (!aTerm || `${l.action} ${l.userName} ${l.details}`.toLowerCase().includes(aTerm))
-  );
-
   const refreshButton = (
     <button
       onClick={loadData}
@@ -159,8 +195,8 @@ export const SuperAdminConsole: React.FC<{
 
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {[
-              { icon: Building2, tone: 'text-indigo-600', label: 'Organizações', value: telemetry?.totalTenants ?? allTenants.length, sub: `${telemetry?.activeTenants ?? allTenants.filter(t => t.status === 'active').length} ativas` },
-              { icon: Database, tone: 'text-emerald-600', label: 'Isolamento lógico', value: telemetry?.activeIsolationEngines ?? allTenants.length, sub: 'Chaves compostas + RLS' },
+              { icon: Building2, tone: 'text-indigo-600', label: 'Organizações', value: telemetry?.totalTenants ?? 0, sub: `${telemetry?.activeTenants ?? 0} ativas` },
+              { icon: Database, tone: 'text-emerald-600', label: 'Isolamento lógico', value: telemetry?.activeIsolationEngines ?? 0, sub: 'Chaves compostas + RLS' },
               { icon: HardDrive, tone: 'text-cyan-600', label: 'Armazenamento (est.)', value: `${telemetry?.totalStorageUsedMb ?? 0} MB`, sub: `Cotas: ${((telemetry?.totalStorageMaxMb ?? 0) / 1024).toFixed(1)} GB` },
               { icon: Activity, tone: 'text-amber-600', label: 'Latência média', value: `${telemetry?.averageLatencyMs ?? 0} ms`, sub: `${telemetry?.totalQueriesPerMinute ?? 0} req/min` }
             ].map(card => (
@@ -262,13 +298,13 @@ export const SuperAdminConsole: React.FC<{
                 <tr>
                   <th className="px-5 py-3">Organização / Razão Social</th>
                   <th className="px-5 py-3">Identificador</th>
-                  <th className="px-5 py-3">Plano & Armazenamento</th>
+                  <th className="px-5 py-3">Plano, módulos & armazenamento</th>
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3 text-right">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredTenants.map((tenant) => {
+                {tenants.map((tenant) => {
                   const isSuspended = tenant.status === 'suspended';
                   return (
                     <tr key={tenant.id} className="hover:bg-slate-50/70 transition-colors">
@@ -290,7 +326,7 @@ export const SuperAdminConsole: React.FC<{
                           {tenant.plan}
                         </span>
                         <div className="text-[11px] text-slate-500 mt-1">
-                          {tenant.dbConfig.storageUsedMb.toFixed(2)} MB / {tenant.dbConfig.maxStorageMb} MB
+                          {tenant.enabledRoutines.length} módulos • {tenant.dbConfig.storageUsedMb.toFixed(2)} / {tenant.dbConfig.maxStorageMb} MB
                         </div>
                       </td>
                       <td className="px-5 py-3.5">
@@ -305,6 +341,20 @@ export const SuperAdminConsole: React.FC<{
                       </td>
                       <td className="px-5 py-3.5 text-right">
                         <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => setEditing(tenant)}
+                            className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:text-indigo-700 hover:bg-indigo-50 text-[11px] font-semibold flex items-center gap-1.5"
+                            title="Editar dados, plano, status e módulos liberados"
+                          >
+                            <Pencil className="w-3.5 h-3.5" /> Editar
+                          </button>
+                          <button
+                            onClick={() => setManaging(tenant)}
+                            className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:text-indigo-700 hover:bg-indigo-50 text-[11px] font-semibold flex items-center gap-1.5"
+                            title="Usuários, vínculos, perfis e permissões desta organização"
+                          >
+                            <Users className="w-3.5 h-3.5" /> Usuários
+                          </button>
                           <button
                             onClick={() => handleResetAdminPassword(tenant)}
                             disabled={resetting === tenant.id}
@@ -329,12 +379,21 @@ export const SuperAdminConsole: React.FC<{
                     </tr>
                   );
                 })}
-                {filteredTenants.length === 0 && (
+                {!loading && tenants.length === 0 && (
                   <tr><td colSpan={5} className="px-5 py-8 text-center text-xs text-slate-400">Nenhuma organização encontrada.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
+          {tenantTotal > TENANT_PAGE_SIZE && (
+            <div className="p-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+              <span>{tenantTotal} organizações • página {tenantPage} de {Math.ceil(tenantTotal / TENANT_PAGE_SIZE)}</span>
+              <div className="flex gap-2">
+                <button disabled={tenantPage <= 1} onClick={() => setTenantPage(p => p - 1)} className="p-1.5 rounded-lg border border-slate-200 disabled:opacity-40 hover:bg-slate-50" aria-label="Página anterior"><ChevronLeft className="w-4 h-4" /></button>
+                <button disabled={tenantPage >= Math.ceil(tenantTotal / TENANT_PAGE_SIZE)} onClick={() => setTenantPage(p => p + 1)} className="p-1.5 rounded-lg border border-slate-200 disabled:opacity-40 hover:bg-slate-50" aria-label="Próxima página"><ChevronRight className="w-4 h-4" /></button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -371,12 +430,20 @@ export const SuperAdminConsole: React.FC<{
               {refreshButton}
             </div>
           </div>
-          <div className="text-xs font-mono text-slate-400">{filteredLogs.length} de {auditLogs.length} eventos</div>
+          <div className="text-xs font-mono text-slate-400">{auditLogs.length} eventos carregados{auditCursor ? ' (há mais)' : ''}</div>
           <div className="space-y-2.5 max-h-[65vh] overflow-y-auto">
-            {filteredLogs.map(log => <AuditRow key={log.id} log={log} />)}
+            {auditLogs.map(log => <AuditRow key={log.id} log={log} />)}
+            {auditCursor && (
+              <button onClick={loadMoreAudit} className="w-full py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50">Carregar mais</button>
+            )}
           </div>
         </div>
       )}
+
+      {editing && (
+        <OrganizationEditor tenant={editing} onClose={() => setEditing(null)} onSaved={() => void loadData()} />
+      )}
+      {managing && <OrgAccessModal tenant={managing} onClose={() => setManaging(null)} />}
 
       {resetResult && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs">

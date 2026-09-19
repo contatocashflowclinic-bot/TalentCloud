@@ -1,4 +1,5 @@
 import type { DatabaseConfig, Tenant } from '../../src/types.js';
+import { TtlCache } from '../cache.js';
 import { getPool } from '../db/pool.js';
 import { TABLES } from '../db/tables.js';
 
@@ -8,20 +9,48 @@ const QUOTA_MB: Record<Tenant['plan'], number> = { Starter: 1024, Scale: 2048, E
 const CACHE_TTL_MS = 60_000;
 const TENANT_TABLES = [...Object.values(TABLES).map(t => t.table), 'organizational_dna', 'tenant_indicators'];
 
-let storageCache: { at: number; mb: Map<string, number> } | null = null;
+const perTenantStorage = new TtlCache<number>(CACHE_TTL_MS, 20_000);
+let allStorageCache: { at: number; mb: Map<string, number> } | null = null;
 let schemaCache: { at: number; version: string } | null = null;
 
-/** Estimated size of each tenant's rows (pg_column_size), cached for 60s. */
-async function storageByTenant(): Promise<Map<string, number>> {
-  if (storageCache && Date.now() - storageCache.at < CACHE_TTL_MS) return storageCache.mb;
-  const union = TENANT_TABLES
-    .map(t => `select tenant_id, pg_column_size(x.*) as bytes from public."${t}" x`)
-    .join(' union all ');
+const sizeUnion = (where: string) =>
+  TENANT_TABLES.map(t => `select tenant_id, pg_column_size(x.*) as bytes from public."${t}" x ${where}`).join(' union all ');
+
+/**
+ * Estimated size (pg_column_size) of ONLY the given tenants' rows. Every table is filtered by tenant_id
+ * (leading column of the primary keys), so the cost follows the page size, not the number of tenants.
+ */
+async function storageFor(ids: string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  const missing: string[] = [];
+  for (const id of ids) {
+    const hit = perTenantStorage.get(id);
+    if (hit === undefined) missing.push(id);
+    else out.set(id, hit);
+  }
+  if (missing.length) {
+    const { rows } = await getPool().query(
+      `select tenant_id, sum(bytes)::float8 as bytes from (${sizeUnion('where tenant_id = any($1)')}) s group by tenant_id`,
+      [missing]
+    );
+    const found = new Map<string, number>(rows.map(r => [r.tenant_id as string, Number(r.bytes) / (1024 * 1024)]));
+    for (const id of missing) {
+      const mb = found.get(id) ?? 0;
+      perTenantStorage.set(id, mb);
+      out.set(id, mb);
+    }
+  }
+  return out;
+}
+
+/** Platform-wide totals (overview only, never on a request hot path): full scan, cached for 60s. */
+export async function storageByTenant(): Promise<Map<string, number>> {
+  if (allStorageCache && Date.now() - allStorageCache.at < CACHE_TTL_MS) return allStorageCache.mb;
   const { rows } = await getPool().query(
-    `select tenant_id, sum(bytes)::float8 as bytes from (${union}) s group by tenant_id`
+    `select tenant_id, sum(bytes)::float8 as bytes from (${sizeUnion('')}) s group by tenant_id`
   );
   const mb = new Map<string, number>(rows.map(r => [r.tenant_id as string, Number(r.bytes) / (1024 * 1024)]));
-  storageCache = { at: Date.now(), mb };
+  allStorageCache = { at: Date.now(), mb };
   return mb;
 }
 
@@ -34,16 +63,25 @@ async function schemaVersion(): Promise<string> {
 }
 
 export function invalidateStorageCache() {
-  storageCache = null;
+  perTenantStorage.clear();
+  allStorageCache = null;
 }
 
 /**
  * Builds the (read-only) database facts for tenants. Nothing here is stored or invented:
  * storage, pool size and schema version are measured; quota comes from the plan.
+ * `measure: 'none'` (request hot path) skips the storage measurement and reports 0 for it; 'page' measures just
+ * these tenants; 'all' reuses the platform-wide scan (telemetry).
  */
-export async function withDbConfig<T extends Omit<Tenant, 'dbConfig'>>(tenants: T[]): Promise<(T & { dbConfig: DatabaseConfig })[]> {
+export async function withDbConfig<T extends Omit<Tenant, 'dbConfig'>>(
+  tenants: T[],
+  measure: 'none' | 'page' | 'all' = 'page'
+): Promise<(T & { dbConfig: DatabaseConfig })[]> {
   if (tenants.length === 0) return [];
-  const [storage, version] = await Promise.all([storageByTenant(), schemaVersion()]);
+  const [storage, version] = await Promise.all([
+    measure === 'none' ? Promise.resolve(new Map<string, number>()) : measure === 'all' ? storageByTenant() : storageFor(tenants.map(t => t.id)),
+    schemaVersion()
+  ]);
   return tenants.map(t => ({
     ...t,
     dbConfig: {

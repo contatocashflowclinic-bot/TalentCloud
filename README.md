@@ -50,8 +50,16 @@ and provisions client organizations through `/api/master/*`.
 - The SuperAdmin creates client organizations (`Criar Organização`); the initial organization admin receives a
   **one-time temporary password** and must replace it on first access. Org admins create users the same way.
   The SuperAdmin can also issue a new temporary password to an organization admin (key icon in the console).
+- **Conta Mãe controls** (routines: Visão geral, Organizações, Usuários, Auditoria): edit organizations (data, plan, status)
+  and the **modules each organization may use** (`tenants.enabled_routines`; plan presets in `src/access.ts`; a member's
+  effective permission = (profile + exceptions) ∩ enabled modules, so a blocked module neither shows nor answers); create
+  people, link them to organizations and set profiles/exceptions. Only access metadata is exposed, never business data.
+- **Scale**: sessions and tenant rows are cached for a few seconds on the request hot path (cleared after every
+  access/tenant write, so changes are immediate on the instance); storage is measured only for the tenants on the page
+  being shown; every platform list (organizations, people, members, audit) is searched and paginated in the database
+  (prefix indexes, keyset cursor for the audit trail, page size capped at 100).
 - The **Conta Mãe has its own environment** (Visão geral, Organizações, Auditoria) and no route into organization
-  data: `/api/v1/*` refuses it. Manual validation guide: `docs/validacao-rbac-e-ambiente-superadmin.md`.
+  data: `/api/v1/*` refuses it. Manual validation guides: `docs/validacao-*.md`.
 - Login: e-mail + password (organization identifier is optional). Passwords are stored as scrypt
   hashes, sessions are random tokens stored only as SHA-256 (revocable, 12h), repeated failures lock for 15 min.
 - **Users, organizations and permissions (RBAC)**:
