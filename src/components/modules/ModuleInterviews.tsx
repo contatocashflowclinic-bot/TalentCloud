@@ -1,0 +1,249 @@
+import React, { useState, useEffect } from 'react';
+import { Calendar, Plus, Clock, Video, CheckCircle2, Star, User, MessageSquare } from 'lucide-react';
+import { useTenant } from '../../context/TenantContext.js';
+import { TenantApi } from '../../services/api.js';
+import { InterviewSession, Candidate, JobOpening } from '../../types.js';
+import { formatDateTimeSP } from '../../utils/dateUtils.js';
+
+export const ModuleInterviews: React.FC = () => {
+  const { activeTenant } = useTenant();
+  const [interviews, setInterviews] = useState<InterviewSession[]>([]);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [openings, setOpenings] = useState<JobOpening[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeSession, setActiveSession] = useState<InterviewSession | null>(null);
+
+  // Scorecard filling state
+  const [scorecardScores, setScorecardScores] = useState<Record<string, number>>({});
+  const [feedbackNotes, setFeedbackNotes] = useState('');
+  const [recommendation, setRecommendation] = useState('STRONG_HIRE');
+  const [isSaving, setIsSaving] = useState(false);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const [ints, cands, ops] = await Promise.all([
+        TenantApi.getInterviews(),
+        TenantApi.getCandidates(),
+        TenantApi.getOpenings()
+      ]);
+      setInterviews(ints);
+      setCandidates(cands);
+      setOpenings(ops);
+      if (ints.length > 0 && !activeSession) {
+        setActiveSession(ints[0]);
+      }
+    } catch (err) {
+      console.error('Failed to load interviews:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, [activeTenant?.id]);
+
+  const handleSaveScorecard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeSession) return;
+    try {
+      setIsSaving(true);
+      const updatedScorecard = activeSession.scorecard.map(item => ({
+        ...item,
+        score: scorecardScores[item.competency] ?? item.score
+      }));
+
+      const res = await TenantApi.completeInterviewScorecard(
+        activeSession.id,
+        updatedScorecard,
+        recommendation,
+        feedbackNotes
+      );
+      setActiveSession(res);
+      await loadData();
+      alert('Scorecard e feedback registrados com sucesso na base do tenant!');
+    } catch (err: any) {
+      alert(`Erro ao salvar scorecard: ${err.message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 10</span>
+            <span className="text-slate-300">•</span>
+            <span className="text-xs font-mono text-slate-500">Partição: {activeTenant?.dbConfig?.dbName}</span>
+          </div>
+          <h1 className="text-xl font-bold text-slate-900 mt-1">Entrevistas & Scorecards Estruturados</h1>
+          <p className="text-xs text-slate-500">
+            Agenda de entrevistas, roteiros baseados em competências e avaliação humana imparcial.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* Left Col: Interview list */}
+        <div className="space-y-3">
+          <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+            Sessões Agendadas ({interviews.length})
+          </span>
+          {interviews.map((item) => {
+            const cand = candidates.find(c => c.id === item.candidateId);
+            const job = openings.find(j => j.id === item.jobOpeningId);
+            const isSelected = activeSession?.id === item.id;
+
+            return (
+              <div
+                key={item.id}
+                onClick={() => setActiveSession(item)}
+                className={`p-4 rounded-2xl border cursor-pointer transition-all space-y-2 text-xs ${
+                  isSelected
+                    ? 'bg-indigo-50/70 border-indigo-300 shadow-sm'
+                    : 'bg-white border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">{cand?.name || 'Candidato'}</h3>
+                    <div className="text-[11px] text-slate-500">{job?.title || 'Vaga'}</div>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                    item.status === 'completed' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
+                  }`}>
+                    {item.status === 'completed' ? 'Concluída' : 'Agendada'}
+                  </span>
+                </div>
+
+                <div className="text-slate-500 flex items-center gap-3 pt-1">
+                  <span className="flex items-center gap-1 font-mono text-[11px]" title="Horário de São Paulo - SP">
+                    <Clock className="w-3 h-3 text-indigo-600" /> {formatDateTimeSP(item.scheduledFor)} ({item.durationMinutes} min)
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Right 2 Cols: Active Session Detail & Scorecard */}
+        {activeSession ? (
+          <div className="lg:col-span-2 space-y-5">
+            <div className="p-6 bg-white rounded-2xl border border-slate-200 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                <div>
+                  <span className="text-[11px] font-bold text-indigo-600 uppercase tracking-wider">
+                    {activeSession.stageName}
+                  </span>
+                  <h2 className="text-lg font-bold text-slate-900">
+                    {candidates.find(c => c.id === activeSession.candidateId)?.name}
+                  </h2>
+                </div>
+                {activeSession.meetLink && (
+                  <a
+                    href={activeSession.meetLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold flex items-center gap-1.5 self-start"
+                  >
+                    <Video className="w-3.5 h-3.5" />
+                    Sala Virtual
+                  </a>
+                )}
+              </div>
+
+              {/* Structured Script Questions */}
+              <div className="space-y-2">
+                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                  Roteiro de Perguntas Estruturadas
+                </h3>
+                <div className="space-y-1.5">
+                  {activeSession.structuredScript.map((script, idx) => (
+                    <div key={idx} className="p-3 rounded-xl bg-slate-50 border border-slate-100 text-xs text-slate-700 flex items-start gap-2">
+                      <span className="font-bold text-indigo-600">{idx + 1}.</span>
+                      <span>{script}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Scorecard Form */}
+              <form onSubmit={handleSaveScorecard} className="space-y-4 pt-4 border-t border-slate-100 text-xs">
+                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                  Scorecard de Avaliação por Competência
+                </h3>
+
+                <div className="space-y-3">
+                  {activeSession.scorecard.map((item, idx) => (
+                    <div key={idx} className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                      <span className="font-semibold text-slate-900">{item.competency}</span>
+                      <div className="flex items-center gap-2">
+                        {[1, 2, 3, 4, 5].map(rating => (
+                          <button
+                            key={rating}
+                            type="button"
+                            onClick={() => setScorecardScores({ ...scorecardScores, [item.competency]: rating })}
+                            className={`w-7 h-7 rounded-lg font-bold text-xs flex items-center justify-center transition-colors ${
+                              (scorecardScores[item.competency] ?? item.score) === rating
+                                ? 'bg-indigo-600 text-white'
+                                : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            {rating}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Recomendação do Entrevistador</label>
+                  <select
+                    value={recommendation}
+                    onChange={(e) => setRecommendation(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white font-medium"
+                  >
+                    <option value="STRONG_HIRE">Forte Recomendação de Contratação (Aprovado com Destaque)</option>
+                    <option value="HIRE">Recomendar Contratação (Aprovado)</option>
+                    <option value="NEUTRAL">Neutro (Avaliar com segundo parecer)</option>
+                    <option value="DO_NOT_HIRE">Não Recomendar Contratação (Reprovado)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Feedback Detalhado</label>
+                  <textarea
+                    rows={2}
+                    value={feedbackNotes}
+                    onChange={(e) => setFeedbackNotes(e.target.value)}
+                    placeholder="Evidências concretas observadas, síntese das respostas e impressão geral..."
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-hidden focus:border-indigo-500"
+                  />
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="submit"
+                    disabled={isSaving}
+                    className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs transition-colors"
+                  >
+                    {isSaving ? 'Salvando...' : 'Concluir & Salvar Scorecard'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        ) : (
+          <div className="p-8 text-center text-slate-400 text-xs">Selecione uma entrevista</div>
+        )}
+
+      </div>
+    </div>
+  );
+};
