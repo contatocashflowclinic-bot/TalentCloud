@@ -320,14 +320,16 @@ export const AccessService = {
   },
 
   /**
-   * Links a person to the organization. The identity is found by e-mail or created (without password:
-   * the caller issues the temporary one when `identityCreated`). Never touches an existing identity's credentials.
+   * Links a person to the organization. The identity is created (without password: the caller issues the temporary
+   * one when `identityCreated`), or — only with `opts.linkExisting`, i.e. from the Conta Mãe — an existing one is found
+   * by e-mail. Never touches an existing identity's credentials.
    */
   async addMember(
     db: Queryable,
     tenantId: string,
     input: MemberInput,
-    actor?: AccessActor
+    actor?: AccessActor,
+    opts: { linkExisting?: boolean } = {}
   ): Promise<{ member: TenantUser; identityId: string; identityCreated: boolean }> {
     const name = text(input.name);
     const email = text(input.email).toLowerCase();
@@ -353,6 +355,15 @@ export const AccessService = {
       [newId('acc'), name, email]
     );
     const identityCreated = !!created.rowCount;
+    // One person in several organizations is a platform decision: only the Conta Mãe (linkExisting) may attach an
+    // account that already exists. Organization admins can only register e-mails that are new to the platform.
+    // (Checked after the insert, so two simultaneous registrations of the same e-mail cannot slip through.)
+    if (!identityCreated && !opts.linkExisting) {
+      throw new ForbiddenError(
+        'Este e-mail não pode ser cadastrado por aqui. Para dar acesso a uma pessoa que já possui conta na plataforma ' +
+        '(por exemplo, em outra organização), solicite à Conta Mãe.'
+      );
+    }
     const identityId: string =
       created.rows[0]?.id ??
       (await db.query('select id from public.app_users where lower(email) = $1', [email])).rows[0].id;

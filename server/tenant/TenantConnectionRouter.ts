@@ -331,7 +331,7 @@ export class TenantConnectionRouter {
           email: adminEmail,
           profileId: ADMIN_PROFILE_ID,
           jobTitle: 'Administrador da Organização'
-        });
+        }, undefined, { linkExisting: true }); // provisioning is a Conta Mãe action
         linkedExistingAdmin = !admin.identityCreated;
         if (admin.identityCreated) {
           tempPassword = await AuthService.getInstance().issueTempPassword(admin.identityId, tx);

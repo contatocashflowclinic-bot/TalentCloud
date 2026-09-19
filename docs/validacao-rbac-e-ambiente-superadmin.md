@@ -64,8 +64,10 @@ Faça na **janela 1** (normal).
 | # | O que fazer | O que deve acontecer |
 |---|---|---|
 | C1 | Conta Mãe: crie uma segunda organização `Validação Dois` (identificador `validacao2`, admin `admin.dois@exemplo.com`). | Criada com senha temporária. |
-| C2 | Entre como admin da `validacao2` (troque a senha) → **Usuários → Vincular Usuário** com o e-mail `ana.vagas@exemplo.com`, perfil **Colaborador**. | Mensagem verde: "**já possuía conta e foi vinculado** a esta organização (a senha atual foi mantida)". Nenhuma senha nova é gerada. |
-| C3 | Ainda como admin da `validacao2`, tente **Senha** na linha da Ana. | Recusado: usuário vinculado a outras organizações (a senha é da pessoa). |
+| C2 | Entre como admin da `validacao2` (troque a senha) → **Usuários → Cadastrar Usuário** com o e-mail `ana.vagas@exemplo.com` (que já existe em outra organização). | **Recusado**: "Este e-mail não pode ser cadastrado por aqui... solicite à Conta Mãe". Nada é criado. O texto do formulário já avisa que o e-mail precisa ser novo na plataforma. |
+| C3 | Como admin da `validacao2`, cadastre um e-mail **novo** (ex.: `novo.dois@exemplo.com`). | Funciona normalmente, com senha temporária (única vez). |
+| C3b | **Conta Mãe** → menu **Usuários** → na linha da Ana clique **Vincular** → escolha `Validação Dois` e o perfil **Colaborador**. (Ou: Organizações → ⋯ → Usuários e acessos → **Vincular Usuário** com o e-mail da Ana.) | Mensagem verde "vinculado (a senha atual foi mantida)". **Só a Conta Mãe** faz esse vínculo. |
+| C3c | Como admin da `validacao2`, tente **Senha** na linha da Ana. | Recusado: usuário vinculado a outras organizações (a senha é da pessoa). |
 | C4 | Na janela 2, saia e entre como Ana (sem informar organização). | Entra na organização usada por último e o **nome da empresa no cabeçalho vira um menu** com as duas organizações. |
 | C5 | Clique no menu e escolha a outra organização. | A tela recarrega **na outra empresa, sem pedir login**, já com o perfil dela lá (menus diferentes). |
 | C6 | (Opcional) Desative Ana só na `validacao2`. | Ela continua entrando na `validacao`; na `validacao2` o acesso é recusado. |

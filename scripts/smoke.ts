@@ -343,8 +343,13 @@ async function main() {
     const multiA = await A('POST', '/api/v1/users', { name: 'Multi', email: multi, profileId: 'recruiter' });
     check('multi: created in org A with a temp password', multiA.status === 201 && multiA.json.linkedExisting === false && !!multiA.json.tempPassword, multiA.json);
     await activateUser(slugA, multi, multiA.json.tempPassword, 'Senha#Multi9');
-    const multiB = await B('POST', '/api/v1/users', { name: 'Multi (B)', email: multi.toUpperCase(), profileId: 'collaborator' });
-    check('multi: same e-mail in org B is LINKED (no new password, case-insensitive)', multiB.status === 201 && multiB.json.linkedExisting === true && multiB.json.tempPassword === undefined, multiB.json);
+    // Only the Conta Mãe (master) can give one person access to a second organization
+    const refused = await B('POST', '/api/v1/users', { name: 'Multi (B)', email: multi.toUpperCase(), profileId: 'collaborator' });
+    check('multi: an ORGANIZATION admin cannot link an account that already exists (403, case-insensitive)', refused.status === 403 && /Conta Mãe/.test(refused.json.error), refused.json);
+    check('multi: the refusal created nothing (still one link, one identity)', (await getPool().query('select (select count(*)::int from public.tenant_users where lower(email) = $1) l, (select count(*)::int from public.app_users where lower(email) = $1) i', [multi])).rows[0].l === 1);
+    check('multi: a brand-new e-mail is still fine for an organization admin', (await B('POST', '/api/v1/users', { name: 'Novo B', email: `novob.${suffix}@smoke.test`, profileId: 'collaborator' })).status === 201);
+    const multiB = await api('POST', `/api/master/tenants/${provB.json.tenant.id}/members`, { token: adminToken, body: { name: 'Multi (B)', email: multi.toUpperCase(), profileId: 'collaborator' } });
+    check('multi: the Conta Mãe links the same person to org B (no new password, case-insensitive)', multiB.status === 201 && multiB.json.linkedExisting === true && multiB.json.tempPassword === undefined, multiB.json);
     check('multi: one identity, two links', (await getPool().query('select (select count(*)::int from public.app_users where lower(email) = $1) i, (select count(*)::int from public.tenant_users where lower(email) = $1) l', [multi])).rows[0].l === 2);
     const multiLogin = await login(multi, 'Senha#Multi9');
     check('multi: login lists both organizations', multiLogin.status === 200 && multiLogin.json.user?.memberships?.length === 2, multiLogin.json.user?.memberships);

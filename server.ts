@@ -253,7 +253,8 @@ async function startServer() {
       const added = await AccessService.addMember(
         tx, tenant.id,
         { name: required(name, 'name'), email: required(email, 'email'), profileId, jobTitle, departmentId, permissions },
-        superActor(req)
+        superActor(req),
+        { linkExisting: true }
       );
       const tempPassword = added.identityCreated ? await auth.issueTempPassword(added.identityId, tx) : undefined;
       await masterAudit(req, tenant.id, added.identityCreated ? 'USER_CREATED' : 'USER_LINKED',
@@ -343,7 +344,8 @@ async function startServer() {
         const added = await AccessService.addMember(
           tx, tenant.id,
           { name: required(name, 'name'), email: required(email, 'email'), profileId: link.profileId, jobTitle: link.jobTitle, permissions: link.permissions },
-          superActor(req)
+          superActor(req),
+          { linkExisting: true }
         );
         if (!added.identityCreated) throw new ConflictError('Já existe um usuário com este e-mail. Vincule-o pela organização.');
         identityId = added.identityId;
@@ -469,8 +471,9 @@ async function startServer() {
     res.json({ success: true, users: page.items, total: page.total, page: page.page, pageSize: page.pageSize });
   }));
 
-  // Links a person to this organization. An e-mail that already has an account is LINKED (its password is
-  // never touched); a new e-mail gets an identity plus a one-time temporary password.
+  // Registers a person in this organization: a NEW e-mail gets an identity plus a one-time temporary password.
+  // An e-mail that already has an account on the platform is refused here: giving one person access to several
+  // organizations is done only by the Conta Mãe (/api/master).
   app.post('/api/v1/users', can('users:create'), h(async (req, res) => {
     const { tenant } = ctx(req);
     const { name, email, profileId, jobTitle, departmentId, permissions } = req.body ?? {};

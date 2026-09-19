@@ -35,6 +35,7 @@ export const OrgAccessModal: React.FC<{
           orgSlug={tenant.slug}
           limit={limit}
           initialSearch={initialSearch}
+          canLinkExisting
           caps={{ create: true, edit: true, viewProfiles: true, profiles: { create: true, edit: true, delete: true } }}
         />
       </div>

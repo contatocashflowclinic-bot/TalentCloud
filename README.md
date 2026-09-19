@@ -64,7 +64,9 @@ and provisions client organizations through `/api/master/*`.
   hashes, sessions are random tokens stored only as SHA-256 (revocable, 12h), repeated failures lock for 15 min.
 - **Users, organizations and permissions (RBAC)**:
   - A person is ONE global identity (`app_users`: e-mail + password) **linked** to one or more organizations
-    (`tenant_users`, one row per link). Linking an e-mail that already has an account never touches its password;
+    (`tenant_users`, one row per link). Giving one person access to a SECOND organization is a Conta Mãe-only action
+    (an organization admin can only register e-mails that are new to the platform; the server answers 403 otherwise).
+    Linking an existing account never touches its password;
     the person switches organization from the header without logging in again.
   - Each organization has **access profiles** (`access_profiles`): sets of `routine:action` permissions
     (`view`, `create`, `edit`, `delete` per routine, catalog in `src/access.ts`). Five default profiles are created with

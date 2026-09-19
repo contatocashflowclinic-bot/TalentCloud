@@ -43,7 +43,9 @@ export const MembersManager: React.FC<{
   selfId?: string;
   /** Pre-filled search (e.g. opening the manager on one person). */
   initialSearch?: string;
-}> = ({ api, orgName, orgSlug, caps, limit, selfId, initialSearch }) => {
+  /** Only the Conta Mãe may attach an account that already exists (one person in several organizations). */
+  canLinkExisting?: boolean;
+}> = ({ api, orgName, orgSlug, caps, limit, selfId, initialSearch, canLinkExisting = false }) => {
   const [tab, setTab] = useState<'users' | 'profiles'>('users');
   const [users, setUsers] = useState<TenantUser[]>([]);
   const [total, setTotal] = useState(0);
@@ -213,7 +215,7 @@ export const MembersManager: React.FC<{
             className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold text-xs shadow-xs transition-colors flex items-center gap-2"
           >
             <UserPlus className="w-4 h-4" />
-            Vincular Usuário
+            {canLinkExisting ? 'Vincular Usuário' : 'Cadastrar Usuário'}
           </button>
         )}
       </div>
@@ -320,17 +322,24 @@ export const MembersManager: React.FC<{
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <form onSubmit={save} className="bg-white rounded-2xl p-6 w-full max-w-2xl max-h-[92vh] overflow-y-auto border border-slate-200 shadow-xl space-y-4 text-xs">
             <div>
-              <h3 className="text-base font-bold text-slate-900">{draft.id ? 'Acesso do usuário' : 'Vincular usuário'}</h3>
+              <h3 className="text-base font-bold text-slate-900">{draft.id ? 'Acesso do usuário' : canLinkExisting ? 'Vincular usuário' : 'Cadastrar usuário'}</h3>
               <p className="text-slate-500 mt-1 flex items-start gap-1.5">
                 {!draft.id && <Link2 className="w-3.5 h-3.5 shrink-0 mt-0.5" />}
                 <span>
                   {draft.id ? (
                     <>Organização <span className="font-semibold">{orgName}</span></>
                   ) : (
-                    <>
-                      Vincula a pessoa à organização <span className="font-semibold">{orgName}</span>. Se o e-mail já tiver conta
-                      (em outra organização), ela é apenas vinculada; senão, uma senha temporária é gerada e exibida uma única vez.
-                    </>
+                    canLinkExisting ? (
+                      <>
+                        Vincula a pessoa à organização <span className="font-semibold">{orgName}</span>. Se o e-mail já tiver conta
+                        (em outra organização), ela é apenas vinculada e mantém a senha; senão, uma senha temporária é gerada e exibida uma única vez.
+                      </>
+                    ) : (
+                      <>
+                        Cadastra a pessoa na organização <span className="font-semibold">{orgName}</span> com uma senha temporária, exibida uma única vez.
+                        O e-mail precisa ser novo na plataforma: para dar acesso a quem já atua em outra organização, solicite à Conta Mãe.
+                      </>
+                    )
                   )}
                 </span>
               </p>
@@ -403,7 +412,7 @@ export const MembersManager: React.FC<{
             <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
               <button type="button" onClick={() => setDraft(null)} className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-medium">Cancelar</button>
               <button type="submit" disabled={saving} className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-semibold shadow-xs">
-                {saving ? 'Salvando...' : draft.id ? 'Salvar acesso' : 'Vincular usuário'}
+                {saving ? 'Salvando...' : draft.id ? 'Salvar acesso' : canLinkExisting ? 'Vincular usuário' : 'Cadastrar usuário'}
               </button>
             </div>
           </form>
