@@ -74,7 +74,7 @@ const toMember = (r: Record<string, any>): TenantUser => ({
   jobTitle: r.job_title,
   ...(r.avatar_url ? { avatarUrl: r.avatar_url } : {}),
   active: r.active,
-  lastLoginAt: r.last_login_at,
+  ...(r.last_login_at ? { lastLoginAt: r.last_login_at } : {}),
   grantedPermissions: r.granted_permissions,
   revokedPermissions: r.revoked_permissions,
   permissions: effectivePermissions(
@@ -380,7 +380,7 @@ export const AccessService = {
         jobTitle: text(input.jobTitle) || 'Colaborador',
         avatarUrl: input.avatarUrl,
         active: input.active ?? true,
-        lastLoginAt: input.lastLoginAt ?? new Date().toISOString(),
+        lastLoginAt: input.lastLoginAt, // never used yet = no last access (does not count as "most recently used")
         grantedPermissions: granted,
         revokedPermissions: revoked
       },

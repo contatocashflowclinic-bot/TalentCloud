@@ -115,7 +115,8 @@ export interface TenantUser {
   jobTitle: string;
   avatarUrl?: string;
   active: boolean;
-  lastLoginAt: string;
+  /** Ausente enquanto o vínculo nunca foi usado. */
+  lastLoginAt?: string;
   /** Exceções individuais sobre o perfil. */
   grantedPermissions: string[];
   revokedPermissions: string[];

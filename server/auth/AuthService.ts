@@ -148,7 +148,8 @@ export class AuthService {
               : 'Usuário desativado. Procure o administrador.'
         );
       }
-      link = usable.sort((a, b) => b.lastLoginAt.localeCompare(a.lastLoginAt))[0];
+      // most recently used first; links never used (no last access) come last
+      link = usable.sort((a, b) => (b.lastLoginAt ?? '').localeCompare(a.lastLoginAt ?? ''))[0];
     }
 
     this.limiter.reset(key);
@@ -439,6 +440,6 @@ interface OrgLink {
   membershipId: string;
   tenantStatus: string;
   active: boolean;
-  lastLoginAt: string;
+  lastLoginAt: string | null;
   profileName: string;
 }
