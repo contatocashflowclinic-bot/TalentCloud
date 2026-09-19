@@ -4,6 +4,7 @@ import {
   TenantConnectionTelemetry,
   TenantRoutingResolution,
   TenantUser,
+  AccessProfile,
   OrganizationalDNA,
   CulturePillar,
   Department,
@@ -39,23 +40,17 @@ export function setAuthToken(token: string | null) {
 /** Fired when the server rejects the session (expired / revoked) so the UI can return to login. */
 export const SESSION_EXPIRED_EVENT = 'talentcloud:session-expired';
 
+/** Fired on a permission denial so the UI can re-read the (possibly changed) permissions. */
+export const PERMISSION_DENIED_EVENT = 'talentcloud:permission-denied';
+
 export class ApiError extends Error {
   constructor(message: string, public status: number, public code?: string) {
     super(message);
   }
 }
 
-let currentTenantSlug: string = '';
 let lastRoutingResolution: TenantRoutingResolution | null = null;
 let lastTelemetry: TenantConnectionTelemetry | null = null;
-
-export function setActiveTenantSlug(slug: string) {
-  currentTenantSlug = slug;
-}
-
-export function getActiveTenantSlug() {
-  return currentTenantSlug;
-}
 
 export function getLastRoutingResolution() {
   return lastRoutingResolution;
@@ -72,10 +67,6 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   if (authToken) {
     headers.set('Authorization', `Bearer ${authToken}`);
   }
-  // Only meaningful for the SuperAdmin (organization users are pinned to their own organization by the server)
-  if (currentTenantSlug) {
-    headers.set('X-Tenant-Slug', currentTenantSlug);
-  }
 
   const response = await fetch(endpoint, {
     ...options,
@@ -91,7 +82,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   if (resolvedId && isolatedDb && strategy) {
     lastRoutingResolution = {
       strategy,
-      sourceValue: `X-Tenant-Slug: ${currentTenantSlug}`,
+      sourceValue: 'session',
       resolvedTenantId: resolvedId,
       targetDatabase: isolatedDb,
       timestamp: new Date().toISOString(),
@@ -103,6 +94,9 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   if (response.status === 401 && authToken && !endpoint.startsWith('/api/auth/login')) {
     setAuthToken(null);
     window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+  }
+  if (response.status === 403 && authToken && data.code !== 'PASSWORD_CHANGE_REQUIRED') {
+    window.dispatchEvent(new Event(PERMISSION_DENIED_EVENT));
   }
   if (!response.ok || !data.success) {
     throw new ApiError(data.error || 'Erro na requisição ao servidor', response.status, data.code);
@@ -130,7 +124,7 @@ export const MasterApi = {
     return await request<{
       success: boolean;
       tenant: Tenant;
-      adminCredentials: { email: string; tempPassword: string };
+      adminCredentials: { email: string; tempPassword: string; linkedExisting: boolean };
     }>('/api/master/tenants/provision', {
       method: 'POST',
       body: JSON.stringify(payload)
@@ -167,6 +161,11 @@ export const AuthApi = {
     });
   },
   me: async () => (await request<{ success: boolean; user: AuthUser }>('/api/auth/me')).user,
+  switchOrganization: async (tenantId: string) =>
+    (await request<{ success: boolean; user: AuthUser }>('/api/auth/switch-organization', {
+      method: 'POST',
+      body: JSON.stringify({ tenantId })
+    })).user,
   logout: async () => { await request<{ success: boolean }>('/api/auth/logout', { method: 'POST' }); },
   changePassword: async (currentPassword: string, newPassword: string) => {
     await request<{ success: boolean }>('/api/auth/change-password', {
@@ -217,18 +216,46 @@ export const TenantApi = {
 
   // 2. Usuários e Permissões
   getUsers: async () => (await request<{ success: boolean; users: TenantUser[] }>('/api/v1/users')).users,
-  createUser: async (payload: Partial<TenantUser>) => {
-    const res = await request<{ success: boolean; user: TenantUser; tempPassword: string }>('/api/v1/users', {
+  createUser: async (payload: {
+    name: string;
+    email: string;
+    profileId: string;
+    jobTitle?: string;
+    departmentId?: string;
+    permissions?: string[];
+  }) => {
+    const res = await request<{ success: boolean; user: TenantUser; tempPassword?: string; linkedExisting: boolean }>('/api/v1/users', {
       method: 'POST',
       body: JSON.stringify(payload)
     });
-    return { user: res.user, tempPassword: res.tempPassword };
+    return { user: res.user, tempPassword: res.tempPassword, linkedExisting: res.linkedExisting };
   },
+  updateUser: async (
+    userId: string,
+    payload: { name?: string; jobTitle?: string; profileId?: string; active?: boolean; permissions?: string[] }
+  ) => (await request<{ success: boolean; user: TenantUser }>(`/api/v1/users/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).user,
   resetUserPassword: async (userId: string) => {
     const res = await request<{ success: boolean; user: TenantUser; tempPassword: string }>(`/api/v1/users/${userId}/reset-password`, {
       method: 'POST'
     });
     return { user: res.user, tempPassword: res.tempPassword };
+  },
+  getProfiles: async () => (await request<{ success: boolean; profiles: AccessProfile[] }>('/api/v1/profiles')).profiles,
+  createProfile: async (payload: { name: string; description?: string; permissions: string[] }) =>
+    (await request<{ success: boolean; profile: AccessProfile }>('/api/v1/profiles', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    })).profile,
+  updateProfile: async (id: string, payload: { name?: string; description?: string; permissions?: string[] }) =>
+    (await request<{ success: boolean; profile: AccessProfile }>(`/api/v1/profiles/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    })).profile,
+  deleteProfile: async (id: string) => {
+    await request<{ success: boolean }>(`/api/v1/profiles/${id}`, { method: 'DELETE' });
   },
 
   // 3. DNA Organizacional

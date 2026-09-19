@@ -14,6 +14,8 @@ import { TenantRepository } from './TenantRepository.js';
 import { seedTenantData } from './seedTenant.js';
 import { logAudit, AuditEntry } from '../audit.js';
 import { AuthService, AuthenticatedSession } from '../auth/AuthService.js';
+import { AccessService } from '../auth/AccessService.js';
+import { ADMIN_PROFILE_ID } from '../../src/access.js';
 import { invalidateStorageCache, withDbConfig } from './dbConfig.js';
 
 export interface TenantConnectionContext {
@@ -74,9 +76,9 @@ class TelemetryTracker {
 
 /**
  * TenantConnectionRouter
- * 1. Dynamic tenant identification (header, query, subdomain)
+ * 1. Organization users pinned to the active organization of their session
  * 2. Tenant-scoped data access (TenantRepository) over the shared Supabase Postgres
- * 3. SuperAdmin "Conta Mãe": tenant catalog, provisioning, status, audit and telemetry
+ * 3. SuperAdmin "Conta Mãe" (no access to organization data): tenant catalog, provisioning, status, audit and telemetry
  */
 export class TenantConnectionRouter {
   private static instance: TenantConnectionRouter;
@@ -121,80 +123,19 @@ export class TenantConnectionRouter {
   }
 
   /**
-   * Dynamic Tenant Identification Strategy:
-   * 1. HTTP header 'x-tenant-id' or 'x-tenant-slug'
-   * 2. Query parameter '?tenant=slug' / '?tenantId=id'
-   * 3. Host subdomain (e.g. techcorp.talentcloud.app)
-   * 4. Only when NO identifier was supplied at all: first active tenant (preview convenience)
-   *
-   * An identifier that was supplied but does not match any organization is rejected:
-   * silently serving another tenant's data would defeat isolation.
-   */
-  public async resolveTenantFromRequest(req: Request): Promise<{
-    strategy: TenantRoutingResolution['strategy'];
-    sourceValue: string;
-    tenant: Tenant;
-  }> {
-    const headerTenantId = req.headers['x-tenant-id'] as string | undefined;
-    if (headerTenantId) {
-      const tenant = await this.getTenantById(headerTenantId);
-      if (!tenant) throw new NotFoundError(`Organização '${headerTenantId}' não encontrada.`);
-      return { strategy: 'HEADER_INJECTION', sourceValue: `x-tenant-id: ${headerTenantId}`, tenant };
-    }
-
-    const headerTenantSlug = req.headers['x-tenant-slug'] as string | undefined;
-    if (headerTenantSlug) {
-      const tenant = await this.getTenantBySlug(headerTenantSlug);
-      if (!tenant) throw new NotFoundError(`Organização '${headerTenantSlug}' não encontrada.`);
-      return { strategy: 'HEADER_INJECTION', sourceValue: `x-tenant-slug: ${headerTenantSlug}`, tenant };
-    }
-
-    const queryTenant = (req.query.tenant as string) || (req.query.tenantId as string);
-    if (queryTenant) {
-      const tenant = (await this.getTenantById(queryTenant)) || (await this.getTenantBySlug(queryTenant));
-      if (!tenant) throw new NotFoundError(`Organização '${queryTenant}' não encontrada.`);
-      return { strategy: 'TOKEN_SESSION', sourceValue: `query: ${queryTenant}`, tenant };
-    }
-
-    const hostParts = (req.headers.host || '').split(':')[0].split('.');
-    if (hostParts.length > 2 && hostParts[0] !== 'www') {
-      const subdomain = hostParts[0].toLowerCase();
-      const tenant = await this.getTenantBySlug(subdomain);
-      if (tenant) {
-        return { strategy: 'SUBDOMAIN_DYNAMIC', sourceValue: `subdomain: ${subdomain}`, tenant };
-      }
-    }
-
-    const { rows } = await getPool().query(
-      `select * from public.tenants where status = 'active' order by created_at asc, id asc limit 1`
-    );
-    if (!rows[0]) {
-      throw new NotFoundError('Nenhuma organização ativa. Crie uma organização pelo painel SuperAdmin.');
-    }
-    return {
-      strategy: 'SUPERADMIN_IMPERSONATION',
-      sourceValue: 'system_default_route',
-      tenant: (await this.hydrate(rows))[0]
-    };
-  }
-
-  /**
    * Resolves the tenant and returns a repository hard-scoped to it.
-   * - Organization users are PINNED to the organization of their session (headers are ignored).
-   * - SuperAdmin picks the organization via header/query (support & impersonation).
+   * Organization users are PINNED to the active organization of their session (headers are ignored).
+   * The SuperAdmin (Conta Mãe) has no route into organization data at all: it only reaches /api/master/*.
    */
   public async routeConnection(req: Request, principal: AuthenticatedSession): Promise<TenantConnectionContext> {
     const startTime = Date.now();
 
-    let resolved: { strategy: TenantRoutingResolution['strategy']; sourceValue: string; tenant: Tenant };
-    if (principal.type === 'tenant_user') {
-      const own = await this.getTenantById(principal.tenantId!);
-      if (!own) throw new NotFoundError('Organização da sessão não encontrada.');
-      resolved = { strategy: 'TOKEN_SESSION', sourceValue: `session: ${principal.email}`, tenant: own };
-    } else {
-      resolved = await this.resolveTenantFromRequest(req);
+    if (principal.type !== 'tenant_user') {
+      throw new ForbiddenError('A Conta Mãe não acessa dados de organizações. Use o ambiente da plataforma.');
     }
-    const tenant = resolved.tenant;
+    const tenant = await this.getTenantById(principal.tenantId!);
+    if (!tenant) throw new NotFoundError('Organização da sessão não encontrada.');
+    const resolved = { strategy: 'TOKEN_SESSION' as const, sourceValue: `session: ${principal.email}` };
 
     if (tenant.status === 'suspended') {
       throw new ForbiddenError(`Tenant '${tenant.name}' is currently suspended. Access denied.`);
@@ -240,7 +181,12 @@ export class TenantConnectionRouter {
       adminUserEmail: string;
     },
     actor: Actor
-  ): Promise<{ tenant: Tenant; databaseConfig: DatabaseConfig; adminCredentials: { email: string; tempPassword: string } }> {
+  ): Promise<{
+    tenant: Tenant;
+    databaseConfig: DatabaseConfig;
+    /** `tempPassword` is empty when the e-mail already had an account (it was linked, password unchanged). */
+    adminCredentials: { email: string; tempPassword: string; linkedExisting: boolean };
+  }> {
     const normalizedSlug = params.slug
       .toLowerCase()
       .trim()
@@ -265,6 +211,7 @@ export class TenantConnectionRouter {
     const adminId = `usr-${tenantId}-admin`;
 
     let tempPassword = '';
+    let linkedExistingAdmin = false;
     try {
       await withTransaction(async tx => {
         await tx.query(
@@ -306,18 +253,6 @@ export class TenantConnectionRouter {
             culturalFitThreshold: 75,
             updatedAt: now
           },
-          users: [
-            {
-              id: adminId,
-              name: params.adminUserName,
-              email: adminEmail,
-              role: 'ORG_ADMIN',
-              jobTitle: 'Administrador da Organização',
-              active: true,
-              lastLoginAt: now,
-              permissions: ['ALL_ORG_PERMISSIONS']
-            }
-          ],
           // A new organization starts with no history: real zeros, not invented benchmarks.
           indicators: {
             tenantId,
@@ -334,7 +269,18 @@ export class TenantConnectionRouter {
           }
         });
 
-        tempPassword = await AuthService.getInstance().issueTempPassword(tenantId, adminId, tx);
+        // First administrator: links an existing person (keeps their password) or creates a new identity
+        const admin = await AccessService.addMember(tx, tenantId, {
+          id: adminId,
+          name: params.adminUserName,
+          email: adminEmail,
+          profileId: ADMIN_PROFILE_ID,
+          jobTitle: 'Administrador da Organização'
+        });
+        linkedExistingAdmin = !admin.identityCreated;
+        if (admin.identityCreated) {
+          tempPassword = await AuthService.getInstance().issueTempPassword(admin.identityId, tx);
+        }
 
         await logAudit(
           {
@@ -362,7 +308,11 @@ export class TenantConnectionRouter {
 
     invalidateStorageCache();
     const tenant = (await this.getTenantById(tenantId))!;
-    return { tenant, databaseConfig: tenant.dbConfig, adminCredentials: { email: adminEmail, tempPassword } };
+    return {
+      tenant,
+      databaseConfig: tenant.dbConfig,
+      adminCredentials: { email: adminEmail, tempPassword, linkedExisting: linkedExistingAdmin }
+    };
   }
 
   public async updateOrganizationStatus(tenantId: string, status: Tenant['status'], actor: Actor): Promise<Tenant> {
@@ -396,15 +346,18 @@ export class TenantConnectionRouter {
     return withTransaction(async tx => {
       const tenant = await this.getTenantById(tenantId, tx);
       if (!tenant) throw new NotFoundError('Organização não encontrada');
-      const { rows } = userId
-        ? await tx.query('select id, name, email from public.tenant_users where tenant_id = $1 and id = $2', [tenantId, userId])
-        : await tx.query(
-            `select id, name, email from public.tenant_users where tenant_id = $1 and role = 'ORG_ADMIN' and active order by seq limit 1`,
-            [tenantId]
-          );
-      const user = rows[0];
-      if (!user) throw new NotFoundError('Usuário administrador não encontrado nesta organização.');
-      const tempPassword = await AuthService.getInstance().issueTempPassword(tenantId, user.id, tx);
+      const { rows } = await tx.query(
+        `select tu.id, tu.name, tu.email, tu.user_id
+           from public.tenant_users tu
+           join public.access_profiles ap on ap.tenant_id = tu.tenant_id and ap.id = tu.profile_id
+          where tu.tenant_id = $1 and ($2::text is null or tu.id = $2) and ($2::text is not null or (ap.is_admin and tu.active))
+          order by tu.seq limit 1`,
+        [tenantId, userId ?? null]
+      );
+      const member = rows[0];
+      if (!member) throw new NotFoundError('Usuário administrador não encontrado nesta organização.');
+      const user = { id: member.id as string, name: member.name as string, email: member.email as string };
+      const tempPassword = await AuthService.getInstance().issueTempPassword(member.user_id, tx);
       await logAudit(
         {
           tenantId,

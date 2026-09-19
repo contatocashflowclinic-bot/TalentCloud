@@ -1,5 +1,5 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
-import type { UserRole } from '../../src/types.js';
+import { isValidPermission } from '../../src/access.js';
 import { ForbiddenError, UnauthorizedError } from '../errors.js';
 import { AuthenticatedSession, AuthService } from './AuthService.js';
 
@@ -43,12 +43,15 @@ export const requireSuperAdmin: RequestHandler = (req, _res, next) => {
   next();
 };
 
-/** Route guard: SuperAdmin always passes; organization users need one of `roles`. */
-export const allow = (...roles: UserRole[][]): RequestHandler => {
-  const allowed = new Set(roles.flat());
+/**
+ * Route guard by routine permission (e.g. `can('openings:create')`; several arguments = any of them). The session carries the effective
+ * permissions (profile + individual exceptions), read fresh on every request, so changes apply immediately.
+ * SuperAdmin holds every permission.
+ */
+export const can = (...anyOf: string[]): RequestHandler => {
+  for (const p of anyOf) if (!isValidPermission(p)) throw new Error(`Permissão desconhecida no guard de rota: ${p}`);
   return (req: Request, _res: Response, next: NextFunction) => {
-    const role = req.auth?.role;
-    if (role === 'SUPER_ADMIN' || (role && allowed.has(role))) return next();
+    if (anyOf.some(p => req.auth?.permissions.includes(p))) return next();
     next(new ForbiddenError('Seu perfil não tem permissão para esta ação.'));
   };
 };

@@ -18,6 +18,8 @@ import {
   getBioSaudeSeedData
 } from '../server/tenant/masterSeed.js';
 import { closePool, getPool } from '../server/db/pool.js';
+import { TenantRepository } from '../server/tenant/TenantRepository.js';
+import { AccessService } from '../server/auth/AccessService.js';
 
 config({ path: ['.env.local', '.env'], quiet: true });
 
@@ -81,32 +83,32 @@ async function activateUser(slug: string, email: string, tempPassword: string, f
   return { token: change.status === 200 ? (first.json.token as string) : '', first, change };
 }
 
-async function seedFidelity(adminToken: string) {
+async function seedFidelity() {
   const seeds: Array<[string, any]> = [
     ['techcorp', getTechCorpSeedData()],
     ['varejobr', getVarejoBrSeedData()],
     ['biosaude', getBioSaudeSeedData()]
   ];
   for (const [slug, seed] of seeds) {
-    const get = async (p: string) => (await api('GET', p, { token: adminToken, tenant: slug })).json;
-    const users = (await get('/api/v1/users')).users;
-    check(`[${slug}] users`, sameData(users, seed.users));
+    const repo = new TenantRepository(`tenant-${slug}`);
+    const users = await AccessService.listMembers(getPool(), `tenant-${slug}`);
+    const linkFields = ({ userId: _u, profileName: _n, permissions: _p, grantedPermissions: _g, revokedPermissions: _r, ...rest }: any) => rest;
+    check(`[${slug}] users`, sameData(users.map(linkFields), seed.users), users.map(linkFields));
     check(`[${slug}] users expose no credential fields`, users.every((u: any) => !('passwordHash' in u) && !('password_hash' in u) && !('mustChangePassword' in u)));
-    check(`[${slug}] dna`, sameData((await get('/api/v1/dna')).dna, seed.dna));
-    check(`[${slug}] departments`, sameData((await get('/api/v1/departments')).departments, seed.departments));
-    check(`[${slug}] positions`, sameData((await get('/api/v1/positions')).positions, seed.positions));
-    check(`[${slug}] openings`, sameData((await get('/api/v1/openings')).openings, seed.openings));
-    check(`[${slug}] candidates`, sameData((await get('/api/v1/candidates')).candidates, seed.candidates));
-    check(`[${slug}] applications`, sameData((await get('/api/v1/applications')).applications, seed.applications));
-    check(`[${slug}] aiEvaluations`, sameData((await get('/api/v1/ai/evaluations')).evaluations, [...(seed.aiEvaluations ?? [])].reverse()));
-    check(`[${slug}] interviews`, sameData((await get('/api/v1/interviews')).interviews, seed.interviews ?? []));
-    check(`[${slug}] offers`, sameData((await get('/api/v1/offers')).offers, seed.offers ?? []));
-    check(`[${slug}] onboardings`, sameData((await get('/api/v1/onboardings')).onboardings, seed.onboardings ?? []));
-    check(`[${slug}] development`, sameData((await get('/api/v1/development')).developmentRecords, seed.developmentRecords ?? []));
-    const retention = await get('/api/v1/retention');
-    check(`[${slug}] climateSurveys`, sameData(retention.climateSurveys, seed.climateSurveys ?? []));
-    check(`[${slug}] turnoverAlerts`, sameData(retention.turnoverAlerts, seed.turnoverAlerts ?? []));
-    check(`[${slug}] indicators`, sameData((await get('/api/v1/indicators')).indicators, seed.indicators));
+    check(`[${slug}] dna`, sameData(await repo.getDna(), seed.dna));
+    check(`[${slug}] departments`, sameData(await repo.departments.list(), seed.departments));
+    check(`[${slug}] positions`, sameData(await repo.positions.list(), seed.positions));
+    check(`[${slug}] openings`, sameData(await repo.openings.list(), seed.openings));
+    check(`[${slug}] candidates`, sameData(await repo.candidates.list(), seed.candidates));
+    check(`[${slug}] applications`, sameData(await repo.applications.list(), seed.applications));
+    check(`[${slug}] aiEvaluations`, sameData(await repo.aiEvaluations.list(), [...(seed.aiEvaluations ?? [])].reverse()));
+    check(`[${slug}] interviews`, sameData(await repo.interviews.list(), seed.interviews ?? []));
+    check(`[${slug}] offers`, sameData(await repo.offers.list(), seed.offers ?? []));
+    check(`[${slug}] onboardings`, sameData(await repo.onboardings.list(), seed.onboardings ?? []));
+    check(`[${slug}] development`, sameData(await repo.development.list(), seed.developmentRecords ?? []));
+    check(`[${slug}] climateSurveys`, sameData(await repo.climateSurveys.list(), seed.climateSurveys ?? []));
+    check(`[${slug}] turnoverAlerts`, sameData(await repo.turnoverAlerts.list(), seed.turnoverAlerts ?? []));
+    check(`[${slug}] indicators`, sameData(await repo.getIndicators(), seed.indicators));
   }
 }
 
@@ -129,7 +131,7 @@ async function main() {
   check('login without fields -> 400', (await api('POST', '/api/auth/login', { body: {} })).status === 400);
 
   const adminLogin = await login(ADMIN_EMAIL, ADMIN_PASSWORD);
-  check('SuperAdmin default login works', adminLogin.status === 200 && adminLogin.json.user?.role === 'SUPER_ADMIN', adminLogin.json);
+  check('SuperAdmin default login works', adminLogin.status === 200 && adminLogin.json.user?.type === 'super_admin' && adminLogin.json.user.permissions?.length > 0, adminLogin.json);
   const adminToken: string = adminLogin.json.token;
   if (!adminToken) throw new Error('SuperAdmin login failed; set SMOKE_ADMIN_EMAIL / SMOKE_ADMIN_PASSWORD');
   const me = await api('GET', '/api/auth/me', { token: adminToken });
@@ -147,7 +149,7 @@ async function main() {
     check('raw session token is NOT stored (only its hash)', rows.length === 0);
   }
 
-  await seedFidelity(adminToken);
+  await seedFidelity();
 
   // Real (non-invented) DB facts
   const catalog = (await api('GET', '/api/master/tenants', { token: adminToken })).json.tenants as any[];
@@ -188,13 +190,14 @@ async function main() {
 
     // ---- Temporary password flow -------------------------------------------
     const tempA: string = provA.json.adminCredentials.tempPassword;
-    const stored = await getPool().query('select password_hash, must_change_password from public.tenant_users where tenant_id = $1', [provA.json.tenant.id]);
+    const stored = await getPool().query('select password_hash, must_change_password from public.app_users where lower(email) = $1', [emailA]);
+    check('no credentials left on the organization link table', !(await getPool().query("select 1 from information_schema.columns where table_name = 'tenant_users' and column_name in ('password_hash','must_change_password')")).rowCount);
     check('temp password stored only as scrypt hash', stored.rows[0].password_hash?.startsWith('scrypt$') && !stored.rows[0].password_hash.includes(tempA) && stored.rows[0].must_change_password === true, stored.rows[0]);
 
-    check('org login needs the organization identifier', (await login(emailA, tempA)).status === 401);
+    check('org login works without the organization identifier (single link)', (await login(emailA, tempA)).json.user?.tenantId === provA.json.tenant.id);
     check('org login with WRONG organization -> 401', (await login(emailA, tempA, slugB)).status === 401);
     const first = await login(emailA, tempA, slugA);
-    check('org admin logs in with temp password', first.status === 200 && first.json.user?.mustChangePassword === true && first.json.user?.role === 'ORG_ADMIN', first.json);
+    check('org admin logs in with temp password', first.status === 200 && first.json.user?.mustChangePassword === true && first.json.user?.profileId === 'admin' && first.json.user.permissions?.includes('users:create'), first.json);
     const firstToken: string = first.json.token;
 
     const blocked = await api('GET', '/api/v1/users', { token: firstToken });
@@ -223,7 +226,7 @@ async function main() {
 
     // New org starts with a clean slate (real zeros, no invented benchmarks)
     const usersA = await api('GET', '/api/v1/users', { token: adminA });
-    check('new org has only its admin', usersA.json.users?.length === 1 && usersA.json.users[0].role === 'ORG_ADMIN', usersA.json);
+    check('new org has only its admin', usersA.json.users?.length === 1 && usersA.json.users[0].profileId === 'admin', usersA.json);
     const indA = (await api('GET', '/api/v1/indicators', { token: adminA })).json.indicators;
     check('new org indicators are real zeros', indA?.timeToHireDays === 0 && indA.costPerHire === 0 && indA.recruitmentFunnel.applied === 0, indA);
 
@@ -235,14 +238,15 @@ async function main() {
     const tokens: Record<string, string> = {};
     for (const role of roles) {
       const email = `${role.toLowerCase()}-${suffix}@smoke.test`;
-      const created = await A('POST', '/api/v1/users', { name: `U ${role}`, email, role, jobTitle: role });
+      const created = await A('POST', '/api/v1/users', { name: `U ${role}`, email, profileId: role.toLowerCase(), jobTitle: role });
       check(`create ${role} user returns a one-time temp password`, created.status === 201 && created.json.tempPassword?.length >= 12 && !('passwordHash' in created.json.user), created.json);
       const act = await activateUser(slugA, email, created.json.tempPassword, `Senha#${role}9`);
       tokens[role] = act.token;
       check(`${role} can activate the account`, !!act.token, act.first?.json);
     }
-    check('duplicate user email -> 409', (await A('POST', '/api/v1/users', { name: 'Dup', email: `recruiter-${suffix}@smoke.test` })).status === 409);
-    check('SUPER_ADMIN role rejected in tenant', (await A('POST', '/api/v1/users', { name: 'Evil', email: `evil-${suffix}@smoke.test`, role: 'SUPER_ADMIN' })).status === 400);
+    check('duplicate user email -> 409', (await A('POST', '/api/v1/users', { name: 'Dup', email: `recruiter-${suffix}@smoke.test`, profileId: 'recruiter' })).status === 409);
+    check('unknown profile rejected', (await A('POST', '/api/v1/users', { name: 'Evil', email: `evil-${suffix}@smoke.test`, profileId: 'SUPER_ADMIN' })).status === 400);
+    check('profile of another org rejected', (await B('POST', '/api/v1/users', { name: 'Evil', email: `evil2-${suffix}@smoke.test`, profileId: 'prf-nope' })).status === 400);
     check('user requires name -> 400', (await A('POST', '/api/v1/users', { email: 'x@y.z' })).status === 400);
 
     const R = (role: string, method: string, path: string, body?: unknown) => api(method, path, { token: tokens[role], body });
@@ -253,6 +257,8 @@ async function main() {
     check('RBAC: HIRING_MANAGER cannot create candidates', (await R('HIRING_MANAGER', 'POST', '/api/v1/candidates', { name: 'x', email: 'x@smoke.test' })).status === 403);
     check('RBAC: HIRING_MANAGER can read offers', (await R('HIRING_MANAGER', 'GET', '/api/v1/offers')).status === 200);
     check('RBAC: INTERVIEWER can read candidates + interviews', (await R('INTERVIEWER', 'GET', '/api/v1/candidates')).status === 200 && (await R('INTERVIEWER', 'GET', '/api/v1/interviews')).status === 200);
+    check('RBAC: INTERVIEWER keeps supporting reads (applications, AI evaluations) but has no Processo Seletivo / Avaliação IA routine', (await R('INTERVIEWER', 'GET', '/api/v1/applications')).status === 200 && (await R('INTERVIEWER', 'GET', '/api/v1/ai/evaluations')).status === 200 && !(await api('GET', '/api/auth/me', { token: tokens.INTERVIEWER })).json.user.permissions.some((p: string) => p.startsWith('selection:') || p.startsWith('ai_evaluation:')));
+    check('RBAC: INTERVIEWER cannot move applications or decide AI evaluations', (await R('INTERVIEWER', 'PATCH', '/api/v1/applications/x/stage', { stageId: 'stg-2' })).status === 403 && (await R('INTERVIEWER', 'PATCH', '/api/v1/ai/evaluations/x/human-decision', { decision: 'APPROVED' })).status === 403);
     check('RBAC: INTERVIEWER cannot read offers', (await R('INTERVIEWER', 'GET', '/api/v1/offers')).status === 403);
     check('RBAC: INTERVIEWER cannot read indicators', (await R('INTERVIEWER', 'GET', '/api/v1/indicators')).status === 403);
     check('RBAC: INTERVIEWER cannot create candidates', (await R('INTERVIEWER', 'POST', '/api/v1/candidates', { name: 'x', email: 'x@smoke.test' })).status === 403);
@@ -262,7 +268,7 @@ async function main() {
     check('RBAC: COLLABORATOR can read DNA + context + openings', (await R('COLLABORATOR', 'GET', '/api/v1/dna')).status === 200 && (await R('COLLABORATOR', 'GET', '/api/v1/context')).status === 200 && (await R('COLLABORATOR', 'GET', '/api/v1/openings')).status === 200);
 
     // ---- Password reset by ORG_ADMIN -------------------------------------------
-    const recruiterUser = (usersA.json.users, (await A('GET', '/api/v1/users')).json.users.find((u: any) => u.role === 'RECRUITER'));
+    const recruiterUser = (usersA.json.users, (await A('GET', '/api/v1/users')).json.users.find((u: any) => u.profileId === 'recruiter'));
     const reset = await A('POST', `/api/v1/users/${recruiterUser.id}/reset-password`);
     check('ORG_ADMIN can issue a temp password', reset.status === 200 && reset.json.tempPassword?.length >= 12, reset.json);
     check('reset kills the user\'s existing sessions', (await R('RECRUITER', 'GET', '/api/v1/candidates')).status === 401);
@@ -270,6 +276,92 @@ async function main() {
     check('temp password works and forces change', (await login(recruiterUser.email, reset.json.tempPassword, slugA)).json.user?.mustChangePassword === true);
     check('non-admin cannot reset passwords', (await R('HIRING_MANAGER', 'POST', `/api/v1/users/${recruiterUser.id}/reset-password`)).status === 403);
     check('reset of unknown user -> 404', (await A('POST', '/api/v1/users/usr-nope/reset-password')).status === 404);
+
+    // ---- Access profiles, per-user exceptions, privilege-escalation guards ----------
+    const profilesA = await A('GET', '/api/v1/profiles');
+    check('org has the 5 default profiles (admin is total)', profilesA.json.profiles?.length === 5 && profilesA.json.profiles.find((p: any) => p.id === 'admin')?.isAdmin === true, profilesA.json);
+    check('RBAC: HIRING_MANAGER cannot even list profiles', (await R('HIRING_MANAGER', 'GET', '/api/v1/profiles')).status === 403);
+    check('RBAC: HIRING_MANAGER cannot create profiles', (await R('HIRING_MANAGER', 'POST', '/api/v1/profiles', { name: 'x', permissions: [] })).status === 403);
+    check('unknown permission key -> 400', (await A('POST', '/api/v1/profiles', { name: 'Ruim', permissions: ['openings:fly'] })).status === 400);
+    check('profile requires a name -> 400', (await A('POST', '/api/v1/profiles', { permissions: [] })).status === 400);
+    const onlyJobs = await A('POST', '/api/v1/profiles', { name: 'Só Vagas', description: 'teste', permissions: ['openings:create'] });
+    check('custom profile created; "view" is implied by "create"', onlyJobs.status === 201 && onlyJobs.json.profile.permissions.includes('openings:view'), onlyJobs.json);
+    check('duplicate profile name -> 409', (await A('POST', '/api/v1/profiles', { name: 'só vagas', permissions: [] })).status === 409);
+    check('admin profile is immutable', (await A('PUT', '/api/v1/profiles/admin', { permissions: [] })).status === 403);
+    check('system profile cannot be deleted', (await A('DELETE', '/api/v1/profiles/recruiter')).status === 403);
+
+    const jobsEmail = `jobs-${suffix}@smoke.test`;
+    const jobsUser = await A('POST', '/api/v1/users', { name: 'Só Vagas', email: jobsEmail, profileId: onlyJobs.json.profile.id });
+    check('user linked to the custom profile', jobsUser.status === 201 && jobsUser.json.user.permissions.includes('openings:create'), jobsUser.json);
+    check('profile in use cannot be deleted -> 409', (await A('DELETE', `/api/v1/profiles/${onlyJobs.json.profile.id}`)).status === 409);
+    const jobsTok = (await activateUser(slugA, jobsEmail, jobsUser.json.tempPassword, 'Senha#Vagas9')).token;
+    const J = (method: string, path: string, body?: unknown) => api(method, path, { token: jobsTok, body });
+    check('custom profile: allowed routine works', (await J('GET', '/api/v1/openings')).status === 200);
+    check('custom profile: everything else is denied', (await J('GET', '/api/v1/candidates')).status === 403 && (await J('GET', '/api/v1/dna')).status === 403);
+    check('/me exposes effective permissions + profile', (await api('GET', '/api/auth/me', { token: jobsTok })).json.user?.profileName === 'Só Vagas');
+
+    // Editing a profile applies immediately to the SAME session
+    await A('PUT', `/api/v1/profiles/${onlyJobs.json.profile.id}`, { permissions: ['openings:create', 'dna:view'] });
+    check('profile edit applies immediately (no re-login)', (await J('GET', '/api/v1/dna')).status === 200);
+
+    // Individual exceptions on top of a profile
+    const collab = (await A('GET', '/api/v1/users')).json.users.find((u: any) => u.profileId === 'collaborator');
+    check('COLLABORATOR starts without candidates access', (await R('COLLABORATOR', 'GET', '/api/v1/candidates')).status === 403);
+    const granted = await A('PATCH', `/api/v1/users/${collab.id}`, { permissions: [...collab.permissions, 'candidates:view'] });
+    check('exception stored as a grant on top of the profile', granted.json.user?.grantedPermissions?.join() === 'candidates:view', granted.json);
+    check('exception applies immediately', (await R('COLLABORATOR', 'GET', '/api/v1/candidates')).status === 200);
+    const revoked = await A('PATCH', `/api/v1/users/${collab.id}`, { permissions: collab.permissions.filter((p: string) => p !== 'openings:view') });
+    check('exception can also revoke a profile permission', revoked.json.user?.revokedPermissions?.join() === 'openings:view' && (await R('COLLABORATOR', 'GET', '/api/v1/openings')).status === 403, revoked.json);
+    const toInterviewer = await A('PATCH', `/api/v1/users/${collab.id}`, { profileId: 'interviewer' });
+    check('changing profile clears the exceptions', toInterviewer.json.user?.grantedPermissions?.length === 0 && toInterviewer.json.user.revokedPermissions.length === 0 && (await R('COLLABORATOR', 'GET', '/api/v1/interviews')).status === 200, toInterviewer.json);
+    await A('PATCH', `/api/v1/users/${collab.id}`, { profileId: 'collaborator' });
+
+    // Deactivating a link cuts access at once; the person can be reactivated
+    const off = await A('PATCH', `/api/v1/users/${collab.id}`, { active: false });
+    check('deactivated member loses the session', off.json.user?.active === false && (await R('COLLABORATOR', 'GET', '/api/v1/dna')).status === 401);
+    check('deactivated member cannot log in', (await login(collab.email, 'Senha#COLLABORATOR9', slugA)).status === 403);
+    check('reactivated member logs in again', ((await A('PATCH', `/api/v1/users/${collab.id}`, { active: true })).json.user?.active === true) && (await login(collab.email, 'Senha#COLLABORATOR9', slugA)).status === 200);
+
+    // Nobody can grant what they do not hold, nor manage someone stronger, nor edit themselves
+    const gmEmail = `gm-${suffix}@smoke.test`;
+    const gmProfile = await A('POST', '/api/v1/profiles', { name: 'Gestor de Acesso', permissions: ['profiles:create', 'profiles:edit', 'users:create', 'users:edit', 'dna:view'] });
+    const gm = await A('POST', '/api/v1/users', { name: 'GM', email: gmEmail, profileId: gmProfile.json.profile.id });
+    const gmTok = (await activateUser(slugA, gmEmail, gm.json.tempPassword, 'Senha#GM99xx')).token;
+    const G = (method: string, path: string, body?: unknown) => api(method, path, { token: gmTok, body });
+    check('escalation: cannot create a profile with permissions you lack', (await G('POST', '/api/v1/profiles', { name: 'Poderoso', permissions: ['offers:edit'] })).status === 403);
+    check('escalation: can create a profile within your own permissions', (await G('POST', '/api/v1/profiles', { name: 'Modesto', permissions: ['dna:view'] })).status === 201);
+    check('escalation: cannot link a user to the admin profile', (await G('POST', '/api/v1/users', { name: 'Adm', email: `adm2-${suffix}@smoke.test`, profileId: 'admin' })).status === 403);
+    check('escalation: cannot grant extra permissions through exceptions', (await G('POST', '/api/v1/users', { name: 'Ex', email: `ex-${suffix}@smoke.test`, profileId: 'collaborator', permissions: ['offers:edit'] })).status === 403);
+    const adminMember = (await A('GET', '/api/v1/users')).json.users.find((u: any) => u.profileId === 'admin');
+    check('escalation: cannot edit or reset an administrator', (await G('PATCH', `/api/v1/users/${adminMember.id}`, { active: false })).status === 403 && (await G('POST', `/api/v1/users/${adminMember.id}/reset-password`)).status === 403);
+    check('cannot change your own access', (await A('PATCH', `/api/v1/users/${adminMember.id}`, { active: false })).status === 403);
+    check('unknown user patch -> 404', (await A('PATCH', '/api/v1/users/usr-nope', { active: false })).status === 404);
+
+    // ---- One person, several organizations ---------------------------------------------
+    const multi = `multi.${suffix}@smoke.test`;
+    const multiA = await A('POST', '/api/v1/users', { name: 'Multi', email: multi, profileId: 'recruiter' });
+    check('multi: created in org A with a temp password', multiA.status === 201 && multiA.json.linkedExisting === false && !!multiA.json.tempPassword, multiA.json);
+    await activateUser(slugA, multi, multiA.json.tempPassword, 'Senha#Multi9');
+    const multiB = await B('POST', '/api/v1/users', { name: 'Multi (B)', email: multi.toUpperCase(), profileId: 'collaborator' });
+    check('multi: same e-mail in org B is LINKED (no new password, case-insensitive)', multiB.status === 201 && multiB.json.linkedExisting === true && multiB.json.tempPassword === undefined, multiB.json);
+    check('multi: one identity, two links', (await getPool().query('select (select count(*)::int from public.app_users where lower(email) = $1) i, (select count(*)::int from public.tenant_users where lower(email) = $1) l', [multi])).rows[0].l === 2);
+    const multiLogin = await login(multi, 'Senha#Multi9');
+    check('multi: login lists both organizations', multiLogin.status === 200 && multiLogin.json.user?.memberships?.length === 2, multiLogin.json.user?.memberships);
+    const multiTok: string = multiLogin.json.token;
+    const M = (method: string, path: string, body?: unknown) => api(method, path, { token: multiTok, body });
+    check('multi: enters the most recently used org (A) with the recruiter profile', multiLogin.json.user?.profileId === 'recruiter' && (await M('GET', '/api/v1/candidates')).status === 200);
+    check('multi: login pinned to org B picks the B link (collaborator)', (await login(multi, 'Senha#Multi9', slugB)).json.user?.profileId === 'collaborator');
+    const sw = await M('POST', '/api/auth/switch-organization', { tenantId: provB.json.tenant.id });
+    check('multi: switching organization keeps the session and changes profile', sw.json.user?.tenantId === provB.json.tenant.id && sw.json.user.profileId === 'collaborator', sw.json);
+    check("multi: after switching, data and permissions are org B's", (await M('GET', '/api/v1/context')).json.tenant?.slug === slugB && (await M('GET', '/api/v1/candidates')).status === 403 && (await M('GET', '/api/v1/dna')).status === 200);
+    check('multi: cannot switch to an org without a link', (await M('POST', '/api/auth/switch-organization', { tenantId: 'tenant-techcorp' })).status === 403);
+    const swBack = await M('POST', '/api/auth/switch-organization', { tenantId: provA.json.tenant.id });
+    check('multi: can switch back', swBack.json.user?.profileId === 'recruiter');
+    const multiMember = (await A('GET', '/api/v1/users')).json.users.find((u: any) => u.email === multi);
+    check('multi: an org admin cannot reset the password of a shared identity -> 409', (await A('POST', `/api/v1/users/${multiMember.id}/reset-password`)).status === 409);
+    const multiInB = (await B('GET', '/api/v1/users')).json.users.find((u: any) => u.email === multi);
+    check('multi: org A cannot edit the link that belongs to org B', (await A('PATCH', `/api/v1/users/${multiInB.id}`, { active: true })).status === 404);
+    check('multi: deactivating the link in B leaves access to A intact', (await B('PATCH', `/api/v1/users/${multiInB.id}`, { active: false })).status === 200 && (await login(multi, 'Senha#Multi9')).json.user?.tenantId === provA.json.tenant.id && (await login(multi, 'Senha#Multi9', slugB)).status === 403);
 
     // ---- Tenant module flow on org A ---------------------------------------------
     const dna = await A('PUT', '/api/v1/dna', { mission: 'Missão atualizada', culturalFitThreshold: 66 });
@@ -361,9 +453,11 @@ async function main() {
     check('org B saw nothing of the public application', (await B('GET', '/api/v1/candidates')).json.candidates.length === 0);
 
     // ---- SuperAdmin: impersonation, status, reset ------------------------------------------
-    const imp = await api('GET', '/api/v1/context', { token: adminToken, tenant: slugA });
-    check('SuperAdmin can open an org via header', imp.json.tenant?.slug === slugA && imp.json.routingResolution.strategy === 'HEADER_INJECTION', imp.json);
-    check('unknown tenant -> 404 (no fallback to another org)', (await api('GET', '/api/v1/users', { token: adminToken, tenant: 'does-not-exist' })).status === 404);
+    // The Conta Mãe has no route into organization data (header, query or session): only /api/master/*
+    check('Conta Mãe is refused on organization data (session)', (await api('GET', '/api/v1/context', { token: adminToken })).status === 403);
+    check('Conta Mãe is refused even when naming an organization (header)', (await api('GET', '/api/v1/users', { token: adminToken, tenant: slugA })).status === 403 && (await api('GET', '/api/v1/context', { token: adminToken, tenant: 'does-not-exist' })).status === 403);
+    check('Conta Mãe cannot switch organization', (await api('POST', '/api/auth/switch-organization', { token: adminToken, body: { tenantId: provA.json.tenant.id } })).status === 400);
+    check('Conta Mãe still has the platform routines', (await api('GET', '/api/master/tenants', { token: adminToken })).status === 200 && (await api('GET', '/api/master/telemetry', { token: adminToken })).status === 200);
 
     const susp = await api('PATCH', `/api/master/tenants/${provA.json.tenant.id}/status`, { token: adminToken, body: { status: 'suspended' } });
     check('suspend tenant', susp.json.tenant?.status === 'suspended', susp.json);
@@ -390,7 +484,7 @@ async function main() {
     check('audit: ORGANIZATION_CREATED by the real actor', has('ORGANIZATION_CREATED', l => l.tenantId === provA.json.tenant.id && l.userId === 'super-01' && l.userName === 'SuperAdmin Root'));
     check('audit: TENANT_STATUS_UPDATED', has('TENANT_STATUS_UPDATED', l => l.tenantId === provA.json.tenant.id));
     check('audit: AI_EVALUATION_COMPLETED attributed to the real user', has('AI_EVALUATION_COMPLETED', l => l.tenantId === provA.json.tenant.id && l.userName === 'Admin A'));
-    check('audit: SUPERADMIN_TENANT_ACCESS recorded', has('SUPERADMIN_TENANT_ACCESS', l => l.tenantId === provA.json.tenant.id));
+    check('audit: user/profile changes recorded', has('USER_CREATED', l => l.tenantId === provA.json.tenant.id) && has('PROFILE_CREATED') && has('USER_ACCESS_UPDATED') && has('ORGANIZATION_SWITCHED'));
     check('audit: PASSWORD_RESET_ISSUED recorded', has('PASSWORD_RESET_ISSUED', l => l.tenantId === provA.json.tenant.id) && has('PASSWORD_RESET_ISSUED', l => l.tenantId === provB.json.tenant.id));
     check('audit: LOGIN_SUCCEEDED + LOGIN_FAILED recorded', has('LOGIN_SUCCEEDED') && has('LOGIN_FAILED'));
     check('audit: PUBLIC_APPLICATION_RECEIVED recorded', has('PUBLIC_APPLICATION_RECEIVED', l => l.tenantId === provA.json.tenant.id));
@@ -405,7 +499,7 @@ async function main() {
 
     if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
       const anon = { apikey: process.env.SUPABASE_ANON_KEY, Authorization: `Bearer ${process.env.SUPABASE_ANON_KEY}` };
-      for (const table of ['tenants', 'tenant_users', 'auth_sessions', 'platform_admins']) {
+      for (const table of ['tenants', 'tenant_users', 'auth_sessions', 'platform_admins', 'app_users', 'access_profiles']) {
         const rest = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${table}?select=*`, { headers: anon });
         const body: any = await rest.json().catch(() => null);
         check(`RLS: anon key gets no rows from ${table}`, rest.status >= 400 || (Array.isArray(body) && body.length === 0), { status: rest.status });
@@ -418,6 +512,8 @@ async function main() {
     if (ids.length) {
       await getPool().query('delete from public.platform_audit_logs where tenant_id = any($1)', [ids]);
       await getPool().query('delete from public.tenants where id = any($1)', [ids]);
+      // identities are global (not cascaded by the tenant): remove the ones the test created
+      await getPool().query(`delete from public.app_users where email like '%@smoke.test'`);
       const left = await getPool().query('select (select count(*)::int from public.candidates where tenant_id = any($1)) c, (select count(*)::int from public.tenant_users where tenant_id = any($1)) u, (select count(*)::int from public.auth_sessions where tenant_id = any($1)) s', [ids]);
       check('cleanup cascade removed tenant data, users and sessions', left.rows[0].c === 0 && left.rows[0].u === 0 && left.rows[0].s === 0, left.rows[0]);
     }

@@ -4,7 +4,10 @@ export const TABLES = {
   users: {
     table: 'tenant_users',
     exposeTenantId: true,
-    columns: ['id', 'name', 'email', 'role', 'departmentId', 'jobTitle', 'avatarUrl', 'active', 'lastLoginAt', 'permissions']
+    columns: [
+      'id', 'userId', 'name', 'email', 'profileId', 'departmentId', 'jobTitle', 'avatarUrl', 'active', 'lastLoginAt',
+      'grantedPermissions', 'revokedPermissions'
+    ]
   },
   departments: {
     table: 'departments',

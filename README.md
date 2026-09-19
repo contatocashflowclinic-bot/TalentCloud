@@ -50,11 +50,26 @@ and provisions client organizations through `/api/master/*`.
 - The SuperAdmin creates client organizations (`Criar Organização`); the initial organization admin receives a
   **one-time temporary password** and must replace it on first access. Org admins create users the same way.
   The SuperAdmin can also issue a new temporary password to an organization admin (key icon in the console).
-- Login: e-mail + password (+ organization identifier for organization users). Passwords are stored as scrypt
+- The **Conta Mãe has its own environment** (Visão geral, Organizações, Auditoria) and no route into organization
+  data: `/api/v1/*` refuses it. Manual validation guide: `docs/validacao-rbac-e-ambiente-superadmin.md`.
+- Login: e-mail + password (organization identifier is optional). Passwords are stored as scrypt
   hashes, sessions are random tokens stored only as SHA-256 (revocable, 12h), repeated failures lock for 15 min.
-- Organization users are **pinned to their organization by the server session**: headers/query params cannot switch
-  organizations. Roles (`src/access.ts`) are enforced on every route: ORG_ADMIN, RECRUITER, HIRING_MANAGER,
-  INTERVIEWER, COLLABORATOR. Only the SuperAdmin reaches `/api/master/*`.
+- **Users, organizations and permissions (RBAC)**:
+  - A person is ONE global identity (`app_users`: e-mail + password) **linked** to one or more organizations
+    (`tenant_users`, one row per link). Linking an e-mail that already has an account never touches its password;
+    the person switches organization from the header without logging in again.
+  - Each organization has **access profiles** (`access_profiles`): sets of `routine:action` permissions
+    (`view`, `create`, `edit`, `delete` per routine, catalog in `src/access.ts`). Five default profiles are created with
+    every organization (Administrador, Recrutador, Gestor da Vaga, Entrevistador, Colaborador); admins can edit them
+    (except Administrador, which always holds everything) and create new ones under Usuários e Permissões > Perfis.
+  - A link has one profile plus optional **individual exceptions** (granted/revoked permissions).
+  - Every route is guarded by `can('<routine>:<action>')`; permissions are read fresh on each request, so profile and
+    exception changes apply immediately. Guards: nobody can hand out (or manage someone who holds) permissions they
+    do not hold, nobody edits their own access, the last active administrator is protected, and an org admin cannot
+    reset the password of a person who is also linked to other organizations (the password is per person).
+- Organization users are **pinned to the active organization of their session** (headers/query params cannot switch
+  organizations; only `POST /api/auth/switch-organization` to an organization they are linked to). Only the SuperAdmin
+  reaches `/api/master/*`.
 - The public careers page (`/?view=careers&tenant=<slug>`) needs no login and only exposes open jobs; applications
   are rate limited and validated. Sensitive actions (logins, provisioning, status changes, password resets,
   SuperAdmin access to an organization, AI evaluations, public applications) are written to the audit trail.

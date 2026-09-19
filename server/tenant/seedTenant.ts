@@ -1,5 +1,6 @@
 import type { PoolClient } from 'pg';
 import { TenantRepository } from './TenantRepository.js';
+import { AccessService, MemberInput } from '../auth/AccessService.js';
 import type { OrganizationalDNA, TenantIndicators } from '../../src/types.js';
 
 type Rows = Record<string, unknown>[];
@@ -34,7 +35,9 @@ export async function seedTenantData(tx: PoolClient, tenantId: string, data: Ten
     const { tenantId: _ignored, ...dna } = data.dna;
     await repo.upsertDna(dna, tx);
   }
-  for (const row of data.users ?? []) await repo.users.insert(row, tx);
+  // Default access profiles first; users are links to (found-or-created) global identities without a password
+  await AccessService.ensureSystemProfiles(tx, tenantId);
+  for (const row of data.users ?? []) await AccessService.addMember(tx, tenantId, row as unknown as MemberInput);
   for (const row of data.departments ?? []) await repo.departments.insert(row, tx);
   for (const row of data.positions ?? []) await repo.positions.insert(row, tx);
   for (const row of data.openings ?? []) await repo.openings.insert(row, tx);

@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
-import type { AuthUser, UserRole } from '../../src/types.js';
-import { passwordPolicyError } from '../../src/access.js';
+import type { AuthUser } from '../../src/types.js';
+import { ALL_PERMISSIONS, effectivePermissions, passwordPolicyError } from '../../src/access.js';
 import { logAudit } from '../audit.js';
+import { AccessService } from './AccessService.js';
 import { getPool, Queryable, withTransaction } from '../db/pool.js';
 import { ForbiddenError, NotFoundError, TooManyRequestsError, UnauthorizedError, ValidationError } from '../errors.js';
 import { dummyVerify, generateTempPassword, hashPassword, verifyPassword } from './password.js';
@@ -110,14 +111,16 @@ export class AuthService {
     const key = `${ip}|${slug}|${email}`;
     this.limiter.assertAllowed(key);
 
-    const found = slug ? await this.findTenantUser(slug, email) : await this.findSuperAdmin(email);
+    const superAdmin = slug ? undefined : await this.findSuperAdmin(email);
+    const identity = superAdmin ? undefined : await this.findIdentity(email, slug);
+    const found = superAdmin ?? identity;
     const valid = found ? await verifyPassword(password, found.passwordHash) : (await dummyVerify(), false);
 
     if (!found || !valid) {
       this.limiter.fail(key);
       await logAudit({
-        tenantId: found?.tenantId ?? '',
-        userId: found?.user.id ?? 'unknown',
+        tenantId: '',
+        userId: found?.id ?? 'unknown',
         userName: email,
         action: 'LOGIN_FAILED',
         category: 'ACCESS_CONTROL',
@@ -130,7 +133,20 @@ export class AuthService {
 
     // Credentials are right; now enforce account / organization state.
     if (!found.active) throw new ForbiddenError('Usuário desativado. Procure o administrador.');
-    if (found.tenantStatus === 'suspended') throw new ForbiddenError('Organização suspensa. Procure o suporte.');
+
+    // SuperAdmin has no organization; a person may be linked to several: enter the most recently used usable one.
+    let link: OrgLink | undefined;
+    if (identity) {
+      const usable = identity.links.filter(l => l.active && l.tenantStatus !== 'suspended');
+      if (!usable.length) {
+        throw new ForbiddenError(
+          identity.links.some(l => l.active)
+            ? 'Organização suspensa. Procure o suporte.'
+            : 'Usuário desativado. Procure o administrador.'
+        );
+      }
+      link = usable.sort((a, b) => b.lastLoginAt.localeCompare(a.lastLoginAt))[0];
+    }
 
     this.limiter.reset(key);
     const token = randomBytes(32).toString('base64url');
@@ -140,23 +156,24 @@ export class AuthService {
       await tx.query(
         `insert into public.auth_sessions (token_hash, principal_type, principal_id, tenant_id, expires_at)
          values ($1, $2, $3, $4, $5)`,
-        [sha256(token), found.user.type, found.user.id, found.user.tenantId ?? null, expiresAt]
+        [sha256(token), superAdmin ? 'super_admin' : 'tenant_user', found.id, link?.tenantId ?? null, expiresAt]
       );
-      if (found.user.type === 'super_admin') {
-        await tx.query('update public.platform_admins set last_login_at = now() where id = $1', [found.user.id]);
+      if (superAdmin) {
+        await tx.query('update public.platform_admins set last_login_at = now() where id = $1', [superAdmin.id]);
       } else {
+        await tx.query('update public.app_users set last_login_at = now() where id = $1', [found.id]);
         await tx.query('update public.tenant_users set last_login_at = now() where tenant_id = $1 and id = $2', [
-          found.user.tenantId, found.user.id
+          link!.tenantId, link!.membershipId
         ]);
       }
       await logAudit(
         {
-          tenantId: found.user.tenantId ?? '',
-          userId: found.user.id,
-          userName: found.user.name,
+          tenantId: link?.tenantId ?? '',
+          userId: link?.membershipId ?? found.id,
+          userName: found.name,
           action: 'LOGIN_SUCCEEDED',
           category: 'ACCESS_CONTROL',
-          details: `Login realizado (${found.user.role})`,
+          details: `Login realizado (${superAdmin ? 'SUPER_ADMIN' : link!.profileName})`,
           ipAddress: ip,
           databaseAffected: 'auth'
         },
@@ -164,7 +181,17 @@ export class AuthService {
       );
     });
 
-    return { token, expiresAt: expiresAt.toISOString(), user: found.user };
+    const session = (await this.authenticate(token))!;
+    return { token, expiresAt: expiresAt.toISOString(), user: await this.describe(session) };
+  }
+
+  /** Public shape of a session (no token hash) plus the organizations the person can switch to. */
+  async describe(session: AuthenticatedSession): Promise<AuthUser> {
+    const { tokenHash: _t, ...user } = session;
+    if (session.type === 'tenant_user') {
+      user.memberships = await AccessService.membershipsOf(getPool(), session.userId!);
+    }
+    return user;
   }
 
   async authenticate(token: string): Promise<AuthenticatedSession | undefined> {
@@ -174,13 +201,19 @@ export class AuthService {
       `select s.principal_type, s.principal_id, s.tenant_id,
               pa.name as pa_name, pa.email as pa_email, pa.active as pa_active,
               pa.must_change_password as pa_must, pa.password_changed_at as pa_changed,
-              tu.name as tu_name, tu.email as tu_email, tu.role as tu_role,
-              tu.active as tu_active, tu.must_change_password as tu_must
+              au.email as au_email, au.active as au_active, au.must_change_password as au_must,
+              tu.id as tu_id, tu.name as tu_name, tu.active as tu_active,
+              tu.granted_permissions, tu.revoked_permissions,
+              ap.id as ap_id, ap.name as ap_name, ap.is_admin as ap_admin, ap.permissions as ap_permissions
          from public.auth_sessions s
          left join public.platform_admins pa
                 on s.principal_type = 'super_admin' and pa.id = s.principal_id
+         left join public.app_users au
+                on s.principal_type = 'tenant_user' and au.id = s.principal_id
          left join public.tenant_users tu
-                on s.principal_type = 'tenant_user' and tu.tenant_id = s.tenant_id and tu.id = s.principal_id
+                on s.principal_type = 'tenant_user' and tu.tenant_id = s.tenant_id and tu.user_id = s.principal_id
+         left join public.access_profiles ap
+                on ap.tenant_id = tu.tenant_id and ap.id = tu.profile_id
         where s.token_hash = $1 and s.expires_at > now()`,
       [tokenHash]
     );
@@ -197,22 +230,59 @@ export class AuthService {
         id: r.principal_id,
         name: r.pa_name,
         email: r.pa_email,
-        role: 'SUPER_ADMIN',
+        permissions: [...ALL_PERMISSIONS],
         mustChangePassword: r.pa_must,
         usingDefaultPassword: r.pa_changed === null
       };
     }
-    if (!r.tu_active) return undefined;
+    // Identity, link with the active organization and profile must all be active/present.
+    if (!r.au_active || !r.tu_active || !r.ap_id) return undefined;
     return {
       tokenHash,
       type: 'tenant_user',
-      id: r.principal_id,
+      id: r.tu_id,
+      userId: r.principal_id,
       name: r.tu_name,
-      email: r.tu_email,
-      role: r.tu_role as UserRole,
+      email: r.au_email,
       tenantId: r.tenant_id,
-      mustChangePassword: r.tu_must
+      profileId: r.ap_id,
+      profileName: r.ap_name,
+      isOrgAdmin: r.ap_admin,
+      permissions: effectivePermissions(
+        { isAdmin: r.ap_admin, permissions: r.ap_permissions },
+        r.granted_permissions,
+        r.revoked_permissions
+      ),
+      mustChangePassword: r.au_must
     };
+  }
+
+  /** Moves the current session to another organization the person is linked to (no new login). */
+  async switchOrganization(session: AuthenticatedSession, tenantId: unknown, ip: string): Promise<void> {
+    if (session.type !== 'tenant_user') throw new ValidationError('A Conta Mãe não pertence a organizações.');
+    const target = typeof tenantId === 'string' ? tenantId : '';
+    const allowed = (await AccessService.membershipsOf(getPool(), session.userId!)).find(m => m.tenantId === target);
+    if (!allowed) throw new ForbiddenError('Você não tem acesso ativo a esta organização.');
+    await withTransaction(async tx => {
+      await tx.query('update public.auth_sessions set tenant_id = $2 where token_hash = $1', [session.tokenHash, target]);
+      const { rows } = await tx.query(
+        'update public.tenant_users set last_login_at = now() where tenant_id = $1 and user_id = $2 returning id',
+        [target, session.userId]
+      );
+      await logAudit(
+        {
+          tenantId: target,
+          userId: rows[0].id,
+          userName: session.name,
+          action: 'ORGANIZATION_SWITCHED',
+          category: 'ACCESS_CONTROL',
+          details: `${session.email} passou a operar a organização '${allowed.name}'`,
+          ipAddress: ip,
+          databaseAffected: `tenant:${allowed.slug}`
+        },
+        tx
+      );
+    });
   }
 
   async logout(tokenHash: string): Promise<void> {
@@ -230,54 +300,46 @@ export class AuthService {
     if (next === current) throw new ValidationError('A nova senha deve ser diferente da atual.');
 
     const isSuper = session.type === 'super_admin';
-    const { rows } = isSuper
-      ? await getPool().query('select password_hash from public.platform_admins where id = $1', [session.id])
-      : await getPool().query('select password_hash from public.tenant_users where tenant_id = $1 and id = $2', [
-          session.tenantId, session.id
-        ]);
+    const principalId = isSuper ? session.id : session.userId!;
+    const { rows } = await getPool().query(
+      `select password_hash from public.${isSuper ? 'platform_admins' : 'app_users'} where id = $1`,
+      [principalId]
+    );
     if (!(await verifyPassword(current, rows[0]?.password_hash))) {
       throw new UnauthorizedError('Senha atual incorreta.');
     }
 
     const hash = await hashPassword(next);
     await withTransaction(async tx => {
-      if (isSuper) {
-        await tx.query(
-          `update public.platform_admins
-              set password_hash = $2, must_change_password = false, password_changed_at = now() where id = $1`,
-          [session.id, hash]
-        );
-      } else {
-        await tx.query(
-          `update public.tenant_users set password_hash = $3, must_change_password = false
-            where tenant_id = $1 and id = $2`,
-          [session.tenantId, session.id, hash]
-        );
-      }
+      await tx.query(
+        `update public.${isSuper ? 'platform_admins' : 'app_users'}
+            set password_hash = $2, must_change_password = false, password_changed_at = now() where id = $1`,
+        [principalId, hash]
+      );
       // Sign out every other device
       await tx.query(
         'delete from public.auth_sessions where principal_type = $1 and principal_id = $2 and token_hash <> $3',
-        [session.type, session.id, session.tokenHash]
+        [session.type, principalId, session.tokenHash]
       );
     });
   }
 
   /**
-   * Sets a generated temporary password on an organization user (must change on next login)
-   * and signs that user out everywhere. Returns the clear text ONCE for the caller to hand over.
+   * Sets a generated temporary password on a person (must change on next login) and signs them out of
+   * every organization. Returns the clear text ONCE for the caller to hand over.
+   * `userId` is the global identity (app_users.id), not the link with an organization.
    */
-  async issueTempPassword(tenantId: string, userId: string, db: Queryable = getPool()): Promise<string> {
+  async issueTempPassword(userId: string, db: Queryable = getPool()): Promise<string> {
     const temp = generateTempPassword();
     const hash = await hashPassword(temp);
     const { rowCount } = await db.query(
-      `update public.tenant_users set password_hash = $3, must_change_password = true
-        where tenant_id = $1 and id = $2`,
-      [tenantId, userId, hash]
+      `update public.app_users set password_hash = $2, must_change_password = true where id = $1`,
+      [userId, hash]
     );
-    if (!rowCount) throw new NotFoundError('Usuário não encontrado nesta organização.');
+    if (!rowCount) throw new NotFoundError('Usuário não encontrado.');
     await db.query(
-      `delete from public.auth_sessions where principal_type = 'tenant_user' and tenant_id = $1 and principal_id = $2`,
-      [tenantId, userId]
+      `delete from public.auth_sessions where principal_type = 'tenant_user' and principal_id = $1`,
+      [userId]
     );
     return temp;
   }
@@ -304,47 +366,56 @@ export class AuthService {
     const r = rows[0];
     if (!r) return undefined;
     return {
+      id: r.id as string,
+      name: r.name as string,
       passwordHash: r.password_hash as string | null,
-      active: r.active as boolean,
-      tenantId: undefined as string | undefined,
-      tenantStatus: undefined as string | undefined,
-      user: {
-        type: 'super_admin',
-        id: r.id,
-        name: r.name,
-        email: r.email,
-        role: 'SUPER_ADMIN',
-        mustChangePassword: r.must_change_password,
-        usingDefaultPassword: r.password_changed_at === null
-      } as AuthUser
+      active: r.active as boolean
     };
   }
 
-  private async findTenantUser(slug: string, email: string) {
+  /**
+   * Global identity by e-mail together with its organization links. With `slug`, only the link with that
+   * organization counts (a person who is not linked to it is treated as unknown).
+   */
+  private async findIdentity(email: string, slug: string) {
     const { rows } = await getPool().query(
-      `select u.id, u.name, u.email, u.role, u.active, u.password_hash, u.must_change_password,
-              t.id as tenant_id, t.status as tenant_status
-         from public.tenant_users u
-         join public.tenants t on t.id = u.tenant_id
-        where t.slug = $1 and lower(u.email) = $2`,
-      [slug, email]
+      `select u.id, u.name, u.password_hash, u.active,
+              t.id as tenant_id, t.slug, t.status as tenant_status,
+              tu.id as membership_id, tu.active as link_active, tu.last_login_at, ap.name as profile_name
+         from public.app_users u
+         left join public.tenant_users tu on tu.user_id = u.id
+         left join public.tenants t on t.id = tu.tenant_id
+         left join public.access_profiles ap on ap.tenant_id = tu.tenant_id and ap.id = tu.profile_id
+        where lower(u.email) = $1 and ($2 = '' or t.slug = $2)`,
+      [email, slug]
     );
-    const r = rows[0];
-    if (!r) return undefined;
-    return {
-      passwordHash: r.password_hash as string | null,
-      active: r.active as boolean,
-      tenantId: r.tenant_id as string,
-      tenantStatus: r.tenant_status as string,
-      user: {
-        type: 'tenant_user',
-        id: r.id,
-        name: r.name,
-        email: r.email,
-        role: r.role as UserRole,
+    const first = rows[0];
+    if (!first) return undefined;
+    const links: OrgLink[] = rows
+      .filter(r => r.tenant_id)
+      .map(r => ({
         tenantId: r.tenant_id,
-        mustChangePassword: r.must_change_password
-      } as AuthUser
+        membershipId: r.membership_id,
+        tenantStatus: r.tenant_status,
+        active: r.link_active,
+        lastLoginAt: r.last_login_at,
+        profileName: r.profile_name
+      }));
+    return {
+      id: first.id as string,
+      name: first.name as string,
+      passwordHash: first.password_hash as string | null,
+      active: first.active as boolean,
+      links
     };
   }
+}
+
+interface OrgLink {
+  tenantId: string;
+  membershipId: string;
+  tenantStatus: string;
+  active: boolean;
+  lastLoginAt: string;
+  profileName: string;
 }

@@ -2,9 +2,7 @@ import React, { useState } from 'react';
 import {
   Building2,
   Database,
-  Shield,
   ChevronDown,
-  PlusCircle,
   Activity,
   Layers,
   Sparkles,
@@ -19,14 +17,11 @@ import {
 } from 'lucide-react';
 import { useTenant } from '../context/TenantContext.js';
 import { useAuth } from '../context/AuthContext.js';
-import { UserRole } from '../types.js';
-import { HIRING_TEAM } from '../access.js';
 import { SaoPauloClockBadge } from './SaoPauloClockBadge.js';
 import { GlobalCandidateSearchBar } from './search/GlobalCandidateSearchBar.js';
 
 export const Header: React.FC<{
   onOpenArchitectureModal: () => void;
-  onOpenProvisionModal: () => void;
   onOpenCareersPortal?: () => void;
   onNavigateToCandidate?: (candidateId: string, searchTerm?: string) => void;
   onNavigateToProcess?: (jobId: string, candidateId?: string) => void;
@@ -36,7 +31,6 @@ export const Header: React.FC<{
   onOpenChangePassword?: () => void;
 }> = ({
   onOpenArchitectureModal,
-  onOpenProvisionModal,
   onOpenCareersPortal,
   onNavigateToCandidate,
   onNavigateToProcess,
@@ -47,28 +41,17 @@ export const Header: React.FC<{
 }) => {
   const {
     activeTenant,
-    allTenants,
-    isSuperAdmin,
-    isSuperAdminMode,
-    currentRole,
+    profileLabel,
+    can,
     telemetry,
-    routingResolution,
-    switchTenant,
-    setSuperAdminMode
+    routingResolution
   } = useTenant();
-  const { user, logout } = useAuth();
+  const { user, logout, switchOrganization } = useAuth();
+  const memberships = user?.memberships ?? [];
+  const canSwitchOrg = memberships.length > 1;
 
   const [isTenantMenuOpen, setIsTenantMenuOpen] = useState(false);
   const [isRoleMenuOpen, setIsRoleMenuOpen] = useState(false);
-
-  const roleLabels: Record<UserRole, string> = {
-    SUPER_ADMIN: 'SuperAdmin (Conta Mãe)',
-    ORG_ADMIN: 'Admin da Organização',
-    RECRUITER: 'Recrutador / RH',
-    HIRING_MANAGER: 'Gestor da Vaga',
-    INTERVIEWER: 'Entrevistador',
-    COLLABORATOR: 'Colaborador'
-  };
 
   return (
     <header className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-xs">
@@ -108,7 +91,7 @@ export const Header: React.FC<{
           </div>
 
           {/* Global Intelligent Candidate Search Bar */}
-          {!isSuperAdminMode && (currentRole === 'SUPER_ADMIN' || HIRING_TEAM.includes(currentRole)) && (
+          {can('candidates:view') && (
             <div className="flex-1 min-w-0 max-w-xs xl:max-w-[250px] 2xl:max-w-md w-full mx-1 sm:mx-2">
               <GlobalCandidateSearchBar
                 onNavigateToCandidate={onNavigateToCandidate}
@@ -128,7 +111,7 @@ export const Header: React.FC<{
             <div className="text-xs">
               <span className="text-slate-500 font-medium">Partição:</span>{' '}
               <span className="font-mono font-semibold text-slate-800 group-hover:text-indigo-600">
-                {isSuperAdminMode ? 'catálogo mestre' : (activeTenant?.dbConfig?.dbName || '—')}
+                {activeTenant?.dbConfig?.dbName || '—'}
               </span>
             </div>
             <div className="h-3 w-px bg-slate-300"></div>
@@ -161,106 +144,54 @@ export const Header: React.FC<{
             {/* Tenant Selector Dropdown */}
             <div className="relative">
               <button
-                disabled={!isSuperAdmin}
+                disabled={!canSwitchOrg}
                 onClick={() => {
                   setIsTenantMenuOpen(!isTenantMenuOpen);
                   setIsRoleMenuOpen(false);
                 }}
-                className={`flex items-center gap-2.5 px-3.5 py-2 rounded-xl border text-sm font-medium transition-all ${
-                  isSuperAdminMode
-                    ? 'bg-amber-50 border-amber-200 text-amber-900 shadow-xs'
-                    : 'bg-white border-slate-200 text-slate-800 hover:border-slate-300 shadow-xs'
-                }`}
+                className="flex items-center gap-2.5 px-3.5 py-2 rounded-xl border text-sm font-medium transition-all bg-white border-slate-200 text-slate-800 hover:border-slate-300 shadow-xs"
               >
-                {isSuperAdminMode ? (
-                  <Shield className="w-4 h-4 text-amber-600" />
-                ) : (
-                  <Building2 className="w-4 h-4 text-indigo-600" />
-                )}
+                <Building2 className="w-4 h-4 text-indigo-600" />
                 <div className="text-left max-w-[120px] sm:max-w-[170px] truncate">
                   <span className="block text-[10px] uppercase font-bold text-slate-400 leading-none">
-                    {isSuperAdminMode ? 'Conta Mãe' : 'Empresa Ativa'}
+                    Empresa Ativa
                   </span>
                   <span className="font-semibold text-slate-900 text-xs sm:text-sm truncate block">
-                    {isSuperAdminMode ? 'SuperAdmin Global' : (activeTenant?.name || 'Selecione')}
+                    {activeTenant?.name || 'Selecione'}
                   </span>
                 </div>
-                {isSuperAdmin && <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />}
+                {canSwitchOrg && <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />}
               </button>
 
-              {isSuperAdmin && isTenantMenuOpen && (
+              {canSwitchOrg && isTenantMenuOpen && (
                 <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
                   <div className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
-                    Ambiente & Organizações
+                    Minhas organizações
                   </div>
-
-                  {/* Option: SuperAdmin Conta Mãe */}
-                  <button
-                    onClick={() => {
-                      setSuperAdminMode(true);
-                      setIsTenantMenuOpen(false);
-                    }}
-                    className={`w-full px-3.5 py-2.5 flex items-center justify-between text-left hover:bg-amber-50 transition-colors ${
-                      isSuperAdminMode ? 'bg-amber-50/80 font-semibold' : ''
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center font-bold">
-                        <Shield className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <div className="text-sm font-semibold text-slate-900">Conta Mãe (SuperAdmin)</div>
-                        <div className="text-[11px] text-slate-500">Configuração & Criação de Organizações</div>
-                      </div>
-                    </div>
-                    {isSuperAdminMode && <Check className="w-4 h-4 text-amber-600" />}
-                  </button>
-
-                  <div className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 mt-1 border-t border-slate-100">
-                    Organizações (clientes)
-                  </div>
-
-                  {/* List of Tenants */}
-                  <div className="max-h-56 overflow-y-auto">
-                    {allTenants.map((t) => (
+                  <div className="max-h-64 overflow-y-auto">
+                    {memberships.map((m) => (
                       <button
-                        key={t.id}
+                        key={m.tenantId}
                         onClick={() => {
-                          switchTenant(t.slug);
                           setIsTenantMenuOpen(false);
+                          if (m.tenantId !== activeTenant?.id) void switchOrganization(m.tenantId);
                         }}
                         className={`w-full px-3.5 py-2 flex items-center justify-between text-left hover:bg-slate-50 transition-colors ${
-                          !isSuperAdminMode && activeTenant?.id === t.id ? 'bg-indigo-50/70 font-semibold' : ''
+                          activeTenant?.id === m.tenantId ? 'bg-indigo-50/70 font-semibold' : ''
                         }`}
                       >
                         <div className="flex items-center gap-2.5 truncate">
                           <div className="w-7 h-7 rounded-lg bg-slate-100 text-slate-700 flex items-center justify-center font-bold text-xs uppercase">
-                            {t.slug.slice(0, 2)}
+                            {m.slug.slice(0, 2)}
                           </div>
                           <div className="truncate">
-                            <div className="text-sm text-slate-900 truncate">{t.tradingName || t.name}</div>
-                            <div className="text-[11px] text-slate-400 font-mono truncate">{t.slug}</div>
+                            <div className="text-sm text-slate-900 truncate">{m.name}</div>
+                            <div className="text-[11px] text-slate-400 truncate">{m.profileName}</div>
                           </div>
                         </div>
-                        {!isSuperAdminMode && activeTenant?.id === t.id && (
-                          <Check className="w-4 h-4 text-indigo-600 shrink-0" />
-                        )}
+                        {activeTenant?.id === m.tenantId && <Check className="w-4 h-4 text-indigo-600 shrink-0" />}
                       </button>
                     ))}
-                  </div>
-
-                  {/* Provision New Organization Button */}
-                  <div className="p-2 border-t border-slate-100 mt-1">
-                    <button
-                      onClick={() => {
-                        setIsTenantMenuOpen(false);
-                        onOpenProvisionModal();
-                      }}
-                      className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition-colors"
-                    >
-                      <PlusCircle className="w-3.5 h-3.5" />
-                      Criar Nova Organização
-                    </button>
                   </div>
                 </div>
               )}
@@ -279,7 +210,7 @@ export const Header: React.FC<{
                 <UserCircle2 className="w-4 h-4 text-slate-500" />
                 <span className="hidden sm:block text-left leading-tight max-w-[150px]">
                   <span className="block font-semibold text-slate-900 truncate">{user?.name}</span>
-                  <span className="block text-[10px] text-slate-400 truncate">{roleLabels[currentRole]}</span>
+                  <span className="block text-[10px] text-slate-400 truncate">{profileLabel}</span>
                 </span>
                 <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
               </button>
@@ -289,7 +220,7 @@ export const Header: React.FC<{
                   <div className="px-3.5 py-2 border-b border-slate-100">
                     <div className="text-sm font-semibold text-slate-900 truncate">{user?.name}</div>
                     <div className="text-[11px] text-slate-500 truncate">{user?.email}</div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 mt-1">{roleLabels[currentRole]}</div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 mt-1">{profileLabel}</div>
                   </div>
                   <button
                     onClick={() => {

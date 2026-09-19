@@ -12,11 +12,13 @@ import { closePool, getPool } from './server/db/pool.js';
 import { newId } from './server/ids.js';
 import { NotFoundError, ValidationError, toHttpError } from './server/errors.js';
 import { AuthService } from './server/auth/AuthService.js';
-import { allow, authenticate, requirePasswordChanged, requireSuperAdmin } from './server/auth/middleware.js';
+import { can, authenticate, requirePasswordChanged, requireSuperAdmin } from './server/auth/middleware.js';
+import { AccessService } from './server/auth/AccessService.js';
+import { logAudit } from './server/audit.js';
+import type { PoolClient } from 'pg';
 import { registerPublicApi } from './server/publicApi.js';
 import { actorOf } from './server/tenant/TenantConnectionRouter.js';
 import { withTransaction } from './server/db/pool.js';
-import { ADMIN, RECRUITING, HR_STAFF, HIRING_TEAM, EVERYONE } from './src/access.js';
 
 // Augment Express Request interface with tenantContext
 declare global {
@@ -116,8 +118,14 @@ async function startServer() {
   }));
 
   app.get('/api/auth/me', authenticate, h(async (req, res) => {
-    const { tokenHash: _t, ...user } = req.auth!;
-    res.json({ success: true, user });
+    res.json({ success: true, user: await auth.describe(req.auth!) });
+  }));
+
+  // A person linked to several organizations moves between them without a new login
+  app.post('/api/auth/switch-organization', authenticate, requirePasswordChanged, h(async (req, res) => {
+    await auth.switchOrganization(req.auth!, req.body?.tenantId, req.ip || '127.0.0.1');
+    const token = (req.headers.authorization ?? '').slice(7).trim();
+    res.json({ success: true, user: await auth.describe((await auth.authenticate(token))!) });
   }));
 
   app.post('/api/auth/logout', authenticate, h(async (req, res) => {
@@ -208,7 +216,7 @@ async function startServer() {
         success: false,
         error: message,
         code,
-        tip: 'Verifique se a organização está ativa e se o cabeçalho X-Tenant-Slug ou X-Tenant-Id é válido.'
+        tip: 'Verifique se a organização da sua sessão está ativa.'
       });
     }
   };
@@ -223,77 +231,137 @@ async function startServer() {
   // ---------------------------------------------------------
   app.get('/api/v1/context', h(async (req, res) => {
     const { tenant, telemetry, resolution } = ctx(req);
-    if (req.auth!.type === 'super_admin') {
-      await router.logMasterAudit({
-        tenantId: tenant.id,
-        userId: req.auth!.id,
-        userName: req.auth!.name,
-        action: 'SUPERADMIN_TENANT_ACCESS',
-        category: 'TENANT_ROUTING',
-        details: `SuperAdmin acessou os dados da organização '${tenant.name}'`,
-        ipAddress: req.ip || '127.0.0.1',
-        databaseAffected: tenant.dbConfig.dbName
-      });
-    }
     res.json({ success: true, tenant, telemetry, routingResolution: resolution });
   }));
 
   // ---------------------------------------------------------
   // MÓDULO 2: Usuários e Permissões (RBAC)
   // ---------------------------------------------------------
-  app.get('/api/v1/users', allow(HIRING_TEAM), h(async (req, res) => {
-    res.json({ success: true, users: await ctx(req).db.users.list() });
+  const actorAccess = (req: Request) => ({ id: req.auth!.id, permissions: req.auth!.permissions });
+  const audit = (req: Request, action: string, details: string, tx?: PoolClient) =>
+    logAudit(
+      {
+        tenantId: ctx(req).tenant.id,
+        userId: req.auth!.id,
+        userName: req.auth!.name,
+        action,
+        category: 'ACCESS_CONTROL',
+        details,
+        ipAddress: req.ip || '127.0.0.1',
+        databaseAffected: ctx(req).tenant.dbConfig.dbName
+      },
+      tx
+    );
+
+  app.get('/api/v1/users', can('users:view'), h(async (req, res) => {
+    res.json({ success: true, users: await AccessService.listMembers(getPool(), ctx(req).tenant.id) });
   }));
 
-  app.post('/api/v1/users', allow(ADMIN), h(async (req, res) => {
-    const { db, tenant } = ctx(req);
-    const { name, email, role, jobTitle, departmentId } = req.body;
-    // The user and the temporary password are created together or not at all
-    const { user, tempPassword } = await withTransaction(async tx => {
-      const created = await db.users.insert({
-        id: newId('usr'),
-        name: required(name, 'name'),
-        email: required(email, 'email').toLowerCase(),
-        role: role || 'RECRUITER',
-        jobTitle: jobTitle || 'Analista de RH',
-        departmentId,
-        active: true,
-        lastLoginAt: new Date().toISOString(),
-        permissions: ['JOBS_VIEW', 'CANDIDATES_VIEW']
-      }, tx);
-      return { user: created, tempPassword: await auth.issueTempPassword(tenant.id, created.id, tx) };
+  // Links a person to this organization. An e-mail that already has an account is LINKED (its password is
+  // never touched); a new e-mail gets an identity plus a one-time temporary password.
+  app.post('/api/v1/users', can('users:create'), h(async (req, res) => {
+    const { tenant } = ctx(req);
+    const { name, email, profileId, jobTitle, departmentId, permissions } = req.body ?? {};
+    const result = await withTransaction(async tx => {
+      const added = await AccessService.addMember(
+        tx,
+        tenant.id,
+        { name: required(name, 'name'), email: required(email, 'email'), profileId, jobTitle, departmentId, permissions },
+        actorAccess(req)
+      );
+      const tempPassword = added.identityCreated ? await auth.issueTempPassword(added.identityId, tx) : undefined;
+      await audit(
+        req,
+        added.identityCreated ? 'USER_CREATED' : 'USER_LINKED',
+        `${added.identityCreated ? 'Usuário criado' : 'Usuário existente vinculado'}: ${added.member.email} (${added.member.profileName})`,
+        tx
+      );
+      return { user: added.member, tempPassword, linkedExisting: !added.identityCreated };
     });
-    res.status(201).json({ success: true, user, tempPassword });
+    res.status(201).json({ success: true, ...result });
   }));
 
-  app.post('/api/v1/users/:id/reset-password', allow(ADMIN), h(async (req, res) => {
-    const { db, tenant } = ctx(req);
-    const user = await db.users.get(req.params.id);
-    if (!user) throw new NotFoundError('Usuário não encontrado');
-    const tempPassword = await auth.issueTempPassword(tenant.id, user.id);
-    await router.logMasterAudit({
-      tenantId: tenant.id,
-      userId: req.auth!.id,
-      userName: req.auth!.name,
-      action: 'PASSWORD_RESET_ISSUED',
-      category: 'ACCESS_CONTROL',
-      details: `Senha temporária emitida para ${user.email}`,
-      ipAddress: req.ip || '127.0.0.1',
-      databaseAffected: tenant.dbConfig.dbName
+  app.patch('/api/v1/users/:id', can('users:edit'), h(async (req, res) => {
+    const { tenant } = ctx(req);
+    const { name, jobTitle, departmentId, profileId, active, permissions } = req.body ?? {};
+    const user = await withTransaction(async tx => {
+      const before = await AccessService.getMember(tx, tenant.id, req.params.id);
+      const updated = await AccessService.updateMember(
+        tx,
+        tenant.id,
+        req.params.id,
+        { name, jobTitle, departmentId, profileId, permissions, active: typeof active === 'boolean' ? active : undefined },
+        actorAccess(req)
+      );
+      const changes = [
+        before && before.profileId !== updated.profileId ? `perfil ${before.profileName} → ${updated.profileName}` : '',
+        before && before.active !== updated.active ? (updated.active ? 'reativado' : 'desativado') : '',
+        permissions !== undefined ? 'permissões individuais ajustadas' : ''
+      ].filter(Boolean);
+      await audit(req, 'USER_ACCESS_UPDATED', `Acesso de ${updated.email} alterado${changes.length ? `: ${changes.join('; ')}` : ''}`, tx);
+      return updated;
     });
-    res.json({ success: true, user, tempPassword });
+    res.json({ success: true, user });
+  }));
+
+  app.post('/api/v1/users/:id/reset-password', can('users:edit'), h(async (req, res) => {
+    const { tenant } = ctx(req);
+    const user = await withTransaction(async tx => {
+      const member = await AccessService.getMember(tx, tenant.id, req.params.id);
+      if (!member) throw new NotFoundError('Usuário não encontrado');
+      await AccessService.assertPasswordResettable(tx, tenant.id, member, actorAccess(req));
+      const tempPassword = await auth.issueTempPassword(member.userId, tx);
+      await audit(req, 'PASSWORD_RESET_ISSUED', `Senha temporária emitida para ${member.email}`, tx);
+      return { member, tempPassword };
+    });
+    res.json({ success: true, user: user.member, tempPassword: user.tempPassword });
+  }));
+
+  // Access profiles: sets of permissions per routine
+  // (also needed by whoever assigns profiles to users)
+  app.get('/api/v1/profiles', can('profiles:view', 'users:create', 'users:edit'), h(async (req, res) => {
+    res.json({ success: true, profiles: await AccessService.listProfiles(getPool(), ctx(req).tenant.id) });
+  }));
+
+  app.post('/api/v1/profiles', can('profiles:create'), h(async (req, res) => {
+    const { tenant } = ctx(req);
+    const profile = await withTransaction(async tx => {
+      const created = await AccessService.createProfile(tx, tenant.id, req.body ?? {}, actorAccess(req));
+      await audit(req, 'PROFILE_CREATED', `Perfil '${created.name}' criado (${created.permissions.length} permissões)`, tx);
+      return created;
+    });
+    res.status(201).json({ success: true, profile });
+  }));
+
+  app.put('/api/v1/profiles/:id', can('profiles:edit'), h(async (req, res) => {
+    const { tenant } = ctx(req);
+    const profile = await withTransaction(async tx => {
+      const updated = await AccessService.updateProfile(tx, tenant.id, req.params.id, req.body ?? {}, actorAccess(req));
+      await audit(req, 'PROFILE_UPDATED', `Perfil '${updated.name}' atualizado (${updated.permissions.length} permissões)`, tx);
+      return updated;
+    });
+    res.json({ success: true, profile });
+  }));
+
+  app.delete('/api/v1/profiles/:id', can('profiles:delete'), h(async (req, res) => {
+    const { tenant } = ctx(req);
+    await withTransaction(async tx => {
+      const removed = await AccessService.deleteProfile(tx, tenant.id, req.params.id);
+      await audit(req, 'PROFILE_DELETED', `Perfil '${removed.name}' excluído`, tx);
+    });
+    res.json({ success: true });
   }));
 
   // ---------------------------------------------------------
   // MÓDULO 3: DNA Organizacional
   // ---------------------------------------------------------
-  app.get('/api/v1/dna', allow(EVERYONE), h(async (req, res) => {
+  app.get('/api/v1/dna', can('dna:view'), h(async (req, res) => {
     const dna = await ctx(req).db.getDna();
     if (!dna) throw new NotFoundError('DNA organizacional não configurado.');
     res.json({ success: true, dna });
   }));
 
-  app.put('/api/v1/dna', allow(ADMIN), h(async (req, res) => {
+  app.put('/api/v1/dna', can('dna:edit'), h(async (req, res) => {
     const { db } = ctx(req);
     const current = await db.getDna();
     if (!current) throw new NotFoundError('DNA organizacional não configurado.');
@@ -316,11 +384,11 @@ async function startServer() {
   // ---------------------------------------------------------
   // MÓDULO 4: Estrutura Organizacional
   // ---------------------------------------------------------
-  app.get('/api/v1/departments', allow(EVERYONE), h(async (req, res) => {
+  app.get('/api/v1/departments', can('structure:view'), h(async (req, res) => {
     res.json({ success: true, departments: await ctx(req).db.departments.list() });
   }));
 
-  app.post('/api/v1/departments', allow(ADMIN), h(async (req, res) => {
+  app.post('/api/v1/departments', can('structure:create'), h(async (req, res) => {
     const { db } = ctx(req);
     const { name, code, costCenter, headcountTarget, managerId } = req.body;
     const deptName = required(name, 'name');
@@ -340,11 +408,11 @@ async function startServer() {
   // ---------------------------------------------------------
   // MÓDULO 5: Cargos
   // ---------------------------------------------------------
-  app.get('/api/v1/positions', allow(EVERYONE), h(async (req, res) => {
+  app.get('/api/v1/positions', can('positions:view'), h(async (req, res) => {
     res.json({ success: true, positions: await ctx(req).db.positions.list() });
   }));
 
-  app.post('/api/v1/positions', allow(ADMIN), h(async (req, res) => {
+  app.post('/api/v1/positions', can('positions:create'), h(async (req, res) => {
     const { db } = ctx(req);
     const { title, departmentId, level, description, technicalRequirements, behavioralCompetencies, minSalary, maxSalary, careerTrack } = req.body;
     const position = await db.positions.insert({
@@ -367,11 +435,11 @@ async function startServer() {
   // ---------------------------------------------------------
   // MÓDULO 6: Vagas
   // ---------------------------------------------------------
-  app.get('/api/v1/openings', allow(EVERYONE), h(async (req, res) => {
+  app.get('/api/v1/openings', can('openings:view'), h(async (req, res) => {
     res.json({ success: true, openings: await ctx(req).db.openings.list() });
   }));
 
-  app.post('/api/v1/openings', allow(RECRUITING), h(async (req, res) => {
+  app.post('/api/v1/openings', can('openings:create'), h(async (req, res) => {
     const { db } = ctx(req);
     const { title, positionId, departmentId, workModel, location, slaDays, openingsCount, salaryOfferedMin, salaryOfferedMax } = req.body;
     const [users, positions, departments] = await Promise.all([db.users.list(), db.positions.list(), db.departments.list()]);
@@ -387,8 +455,8 @@ async function startServer() {
       title: required(title, 'title'),
       positionId: resolvedPositionId,
       departmentId: resolvedDepartmentId,
-      hiringManagerId: users.find(u => u.role === 'HIRING_MANAGER')?.id || users[0]?.id,
-      recruiterId: users.find(u => u.role === 'RECRUITER')?.id || users[0]?.id,
+      hiringManagerId: users.find(u => u.profileId === 'hiring_manager')?.id || users[0]?.id,
+      recruiterId: users.find(u => u.profileId === 'recruiter')?.id || users[0]?.id,
       status: 'open',
       openingsCount: Number(openingsCount) || 1,
       filledCount: 0,
@@ -413,11 +481,11 @@ async function startServer() {
   // ---------------------------------------------------------
   // MÓDULO 7: Candidatos
   // ---------------------------------------------------------
-  app.get('/api/v1/candidates', allow(HIRING_TEAM), h(async (req, res) => {
+  app.get('/api/v1/candidates', can('candidates:view'), h(async (req, res) => {
     res.json({ success: true, candidates: await ctx(req).db.candidates.list() });
   }));
 
-  app.post('/api/v1/candidates', allow(RECRUITING), h(async (req, res) => {
+  app.post('/api/v1/candidates', can('candidates:create'), h(async (req, res) => {
     const { db } = ctx(req);
     const { name, email, phone, location, currentRole, yearsOfExperience, education, resumeSummary, skills, languages, tags, linkedinUrl } = req.body;
     const candidate = await db.candidates.insert({
@@ -442,11 +510,12 @@ async function startServer() {
   // ---------------------------------------------------------
   // MÓDULO 8: Processo Seletivo (Inscrições / Kanban Pipeline)
   // ---------------------------------------------------------
-  app.get('/api/v1/applications', allow(HIRING_TEAM), h(async (req, res) => {
+  // (also read as supporting data by candidates / interviews, which is all an Entrevistador needs)
+  app.get('/api/v1/applications', can('selection:view', 'candidates:view', 'interviews:view'), h(async (req, res) => {
     res.json({ success: true, applications: await ctx(req).db.applications.list() });
   }));
 
-  app.post('/api/v1/applications', allow(RECRUITING), h(async (req, res) => {
+  app.post('/api/v1/applications', can('selection:create'), h(async (req, res) => {
     const { db } = ctx(req);
     const candidateId = required(req.body.candidateId, 'candidateId');
     const jobOpeningId = required(req.body.jobOpeningId, 'jobOpeningId');
@@ -454,7 +523,7 @@ async function startServer() {
     res.status(201).json({ success: true, application });
   }));
 
-  app.patch('/api/v1/applications/:id/stage', allow(HR_STAFF), h(async (req, res) => {
+  app.patch('/api/v1/applications/:id/stage', can('selection:edit'), h(async (req, res) => {
     const { stageId, note, status } = req.body;
     const application = await ctx(req).db.moveApplication(req.params.id, { stageId, status, note });
     res.json({ success: true, application });
@@ -464,11 +533,11 @@ async function startServer() {
   // MÓDULO 9: Avaliação Assistida por IA
   // (Princípios: IA como apoio, Decisão humana, Explicação)
   // ---------------------------------------------------------
-  app.get('/api/v1/ai/evaluations', allow(HIRING_TEAM), h(async (req, res) => {
+  app.get('/api/v1/ai/evaluations', can('ai_evaluation:view', 'candidates:view', 'interviews:view'), h(async (req, res) => {
     res.json({ success: true, evaluations: await ctx(req).db.aiEvaluations.list() });
   }));
 
-  app.post('/api/v1/ai/evaluate-candidate', allow(RECRUITING), h(async (req, res) => {
+  app.post('/api/v1/ai/evaluate-candidate', can('ai_evaluation:create'), h(async (req, res) => {
     const { db, tenant } = ctx(req);
     const candidateId = required(req.body.candidateId, 'candidateId');
     const jobOpeningId = required(req.body.jobOpeningId, 'jobOpeningId');
@@ -506,7 +575,7 @@ async function startServer() {
   }));
 
   // Human Review & Override (Princípio: Decisão Humana)
-  app.patch('/api/v1/ai/evaluations/:id/human-decision', allow(HR_STAFF), h(async (req, res) => {
+  app.patch('/api/v1/ai/evaluations/:id/human-decision', can('ai_evaluation:edit'), h(async (req, res) => {
     const { db } = ctx(req);
     const { decision, humanNotes, reviewerName } = req.body;
     const evaluation = await db.aiEvaluations.update(req.params.id, {
@@ -522,11 +591,11 @@ async function startServer() {
   // ---------------------------------------------------------
   // MÓDULO 10: Entrevistas
   // ---------------------------------------------------------
-  app.get('/api/v1/interviews', allow(HIRING_TEAM), h(async (req, res) => {
+  app.get('/api/v1/interviews', can('interviews:view'), h(async (req, res) => {
     res.json({ success: true, interviews: await ctx(req).db.interviews.list() });
   }));
 
-  app.post('/api/v1/interviews', allow(RECRUITING), h(async (req, res) => {
+  app.post('/api/v1/interviews', can('interviews:create'), h(async (req, res) => {
     const { db } = ctx(req);
     const { jobOpeningId, candidateId, stageName, scheduledFor, interviewerIds, durationMinutes, meetLink, structuredScript } = req.body;
     const users = await db.users.list();
@@ -553,7 +622,7 @@ async function startServer() {
     res.status(201).json({ success: true, interview });
   }));
 
-  app.patch('/api/v1/interviews/:id/scorecard', allow(HIRING_TEAM), h(async (req, res) => {
+  app.patch('/api/v1/interviews/:id/scorecard', can('interviews:edit'), h(async (req, res) => {
     const { scorecard, recommendation, overallFeedback } = req.body;
     const interview = await ctx(req).db.interviews.update(req.params.id, {
       scorecard,
@@ -568,11 +637,11 @@ async function startServer() {
   // ---------------------------------------------------------
   // MÓDULO 11: Proposta
   // ---------------------------------------------------------
-  app.get('/api/v1/offers', allow(HR_STAFF), h(async (req, res) => {
+  app.get('/api/v1/offers', can('offers:view'), h(async (req, res) => {
     res.json({ success: true, offers: await ctx(req).db.offers.list() });
   }));
 
-  app.post('/api/v1/offers', allow(RECRUITING), h(async (req, res) => {
+  app.post('/api/v1/offers', can('offers:create'), h(async (req, res) => {
     const { db } = ctx(req);
     const { jobOpeningId, candidateId, baseSalary, benefits, startDate, contractType } = req.body;
     const users = await db.users.list();
@@ -585,12 +654,12 @@ async function startServer() {
       startDate: startDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
       contractType: contractType || 'CLT',
       status: 'pending_approval',
-      approverId: users.find(u => u.role === 'HIRING_MANAGER')?.id || users[0]?.id
+      approverId: users.find(u => u.profileId === 'hiring_manager')?.id || users[0]?.id
     });
     res.status(201).json({ success: true, offer });
   }));
 
-  app.patch('/api/v1/offers/:id/status', allow(HR_STAFF), h(async (req, res) => {
+  app.patch('/api/v1/offers/:id/status', can('offers:edit'), h(async (req, res) => {
     const { status, notes } = req.body;
     const now = new Date().toISOString();
     const offer = await ctx(req).db.offers.update(req.params.id, {
@@ -606,11 +675,11 @@ async function startServer() {
   // ---------------------------------------------------------
   // MÓDULO 12: Onboarding
   // ---------------------------------------------------------
-  app.get('/api/v1/onboardings', allow(HR_STAFF), h(async (req, res) => {
+  app.get('/api/v1/onboardings', can('onboarding:view'), h(async (req, res) => {
     res.json({ success: true, onboardings: await ctx(req).db.onboardings.list() });
   }));
 
-  app.patch('/api/v1/onboardings/:id/checklist/:itemId', allow(HR_STAFF), h(async (req, res) => {
+  app.patch('/api/v1/onboardings/:id/checklist/:itemId', can('onboarding:edit'), h(async (req, res) => {
     const { status } = req.body;
     if (!['pending', 'in_progress', 'completed'].includes(status)) {
       throw new ValidationError('Status inválido. Use: pending, in_progress, completed.');
@@ -622,11 +691,11 @@ async function startServer() {
   // ---------------------------------------------------------
   // MÓDULO 13: Desenvolvimento (PDI e 1:1s)
   // ---------------------------------------------------------
-  app.get('/api/v1/development', allow(HR_STAFF), h(async (req, res) => {
+  app.get('/api/v1/development', can('development:view'), h(async (req, res) => {
     res.json({ success: true, developmentRecords: await ctx(req).db.development.list() });
   }));
 
-  app.post('/api/v1/development/:id/goals', allow(HR_STAFF), h(async (req, res) => {
+  app.post('/api/v1/development/:id/goals', can('development:edit'), h(async (req, res) => {
     const { title, competency, deadline } = req.body;
     const goal = {
       id: newId('g'),
@@ -643,13 +712,13 @@ async function startServer() {
   // ---------------------------------------------------------
   // MÓDULO 14: Retenção (eNPS, Clima & Termômetro de Turnover)
   // ---------------------------------------------------------
-  app.get('/api/v1/retention', allow(HR_STAFF), h(async (req, res) => {
+  app.get('/api/v1/retention', can('retention:view'), h(async (req, res) => {
     const { db } = ctx(req);
     const [climateSurveys, turnoverAlerts] = await Promise.all([db.climateSurveys.list(), db.turnoverAlerts.list()]);
     res.json({ success: true, climateSurveys, turnoverAlerts });
   }));
 
-  app.post('/api/v1/retention/alert', allow(HR_STAFF), h(async (req, res) => {
+  app.post('/api/v1/retention/alert', can('retention:edit'), h(async (req, res) => {
     const { collaboratorName, department, riskLevel, earlyWarningSignals, suggestedActions } = req.body;
     const alert = await ctx(req).db.turnoverAlerts.insert({
       id: newId('alt'),
@@ -666,7 +735,7 @@ async function startServer() {
   // ---------------------------------------------------------
   // MÓDULO 15: Indicadores (Tenant Analytics)
   // ---------------------------------------------------------
-  app.get('/api/v1/indicators', allow(HR_STAFF), h(async (req, res) => {
+  app.get('/api/v1/indicators', can('indicators:view'), h(async (req, res) => {
     const indicators = await ctx(req).db.getIndicators();
     if (!indicators) throw new NotFoundError('Indicadores não disponíveis para este tenant.');
     res.json({ success: true, indicators });

@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Building2,
   Users,
   Dna,
   Network,
@@ -15,7 +14,6 @@ import {
   TrendingUp,
   HeartHandshake,
   BarChart3,
-  Shield,
   Search,
   Globe
 } from 'lucide-react';
@@ -35,13 +33,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isCollapsed = false,
   onToggleCollapse
 }) => {
-  const { isSuperAdminMode, setSuperAdminMode, activeTenant, isSuperAdmin, currentRole } = useTenant();
+  const { activeTenant, permissions } = useTenant();
 
   const moduleSections = [
     {
       title: 'Governança & Fundamentos',
       modules: [
-        { id: 1, name: '1. Organizações', icon: Building2, desc: 'Conta Mãe & Configurações' },
         { id: 2, name: '2. Usuários e Permissões', icon: Users, desc: 'RBAC e Acessos' },
         { id: 3, name: '3. DNA Organizacional', icon: Dna, desc: 'Cultura e Pilares' },
         { id: 4, name: '4. Estrutura Organizacional', icon: Network, desc: 'Departamentos e Squads' },
@@ -72,45 +69,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
   ];
 
   const visibleSections = moduleSections
-    .map(sec => ({ ...sec, modules: sec.modules.filter(m => m.id === 16 || canAccessModule(currentRole, m.id)) }))
+    .map(sec => ({ ...sec, modules: sec.modules.filter(m => m.id === 16 || canAccessModule(permissions, m.id)) }))
     .filter(sec => sec.modules.length > 0);
 
   if (isCollapsed) {
     return (
       <aside className="w-16 shrink-0 bg-white border-r border-slate-200 min-h-[calc(100vh-4rem)] flex flex-col justify-between py-4 px-2 items-center transition-all duration-200">
         <div className="space-y-4 w-full flex flex-col items-center">
-          {isSuperAdmin && (
-            <>
-          {/* SuperAdmin Icon */}
-          <button
-            onClick={() => {
-              setSuperAdminMode(!isSuperAdminMode);
-              if (!isSuperAdminMode) onSelectModule(1);
-            }}
-            className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
-              isSuperAdminMode
-                ? 'bg-amber-500 text-white shadow-xs'
-                : 'bg-slate-100 text-slate-600 hover:bg-amber-100 hover:text-amber-700'
-            }`}
-            title={isSuperAdminMode ? 'Conta Mãe Ativa (SuperAdmin)' : 'Alternar para Conta Mãe'}
-          >
-            <Shield className="w-5 h-5" />
-          </button>
-
-          <div className="w-8 h-px bg-slate-200 my-1"></div>
-            </>
-          )}
-
           {/* Module Icons */}
           <div className="space-y-1.5 w-full flex flex-col items-center">
             {visibleSections.flatMap(s => s.modules).map((mod) => {
               const Icon = mod.icon;
-              const isActive = activeModule === mod.id && !isSuperAdminMode;
+              const isActive = activeModule === mod.id;
               return (
                 <button
                   key={mod.id}
                   onClick={() => {
-                    setSuperAdminMode(false);
                     onSelectModule(mod.id);
                   }}
                   className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all relative group ${
@@ -142,37 +116,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     <aside className="w-64 xl:w-72 shrink-0 bg-white border-r border-slate-200 min-h-[calc(100vh-4rem)] flex flex-col justify-between p-4 transition-all duration-200">
       <div className="space-y-6">
         
-        {isSuperAdmin && (
-          <>
-            {/* SuperAdmin Quick Switch Banner */}
-            <div
-              onClick={() => {
-                setSuperAdminMode(!isSuperAdminMode);
-                if (!isSuperAdminMode) onSelectModule(1);
-              }}
-              className={`p-3 rounded-xl border cursor-pointer transition-all ${
-                isSuperAdminMode
-                  ? 'bg-amber-500 text-white border-amber-600 shadow-sm'
-                  : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                <div className={`p-1.5 rounded-lg ${isSuperAdminMode ? 'bg-amber-600 text-white' : 'bg-amber-100 text-amber-700'}`}>
-                  <Shield className="w-4 h-4" />
-                </div>
-                <div className="text-left">
-                  <div className="text-xs font-bold uppercase tracking-wider">
-                    {isSuperAdminMode ? 'CONTA MÃE ATIVA' : 'Visão SuperAdmin'}
-                  </div>
-                  <div className="text-[11px] opacity-90 leading-tight">
-                    {isSuperAdminMode ? 'Gerenciando todos os tenants' : 'Clique para entrar na Conta Mãe'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-
         {/* Modules List */}
         <div className="space-y-5">
           {visibleSections.map((section, sIdx) => (
@@ -183,13 +126,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="space-y-1">
                 {section.modules.map((mod) => {
                   const Icon = mod.icon;
-                  const isActive = activeModule === mod.id && !isSuperAdminMode;
+                  const isActive = activeModule === mod.id;
                   return (
                     <button
                       key={mod.id}
                       onClick={() => {
-                        setSuperAdminMode(false);
-                        onSelectModule(mod.id);
+                            onSelectModule(mod.id);
                       }}
                       className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-left transition-colors text-xs sm:text-sm ${
                         isActive

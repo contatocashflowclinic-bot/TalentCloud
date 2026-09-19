@@ -7,7 +7,7 @@ export const ProvisionOrganizationModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
 }> = ({ isOpen, onClose }) => {
-  const { refreshTenants, switchTenant } = useTenant();
+  const { refreshTenants } = useTenant();
 
   const [name, setName] = useState('');
   const [tradingName, setTradingName] = useState('');
@@ -19,7 +19,7 @@ export const ProvisionOrganizationModal: React.FC<{
   const [adminUserEmail, setAdminUserEmail] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<{ slug: string; name: string; email: string; tempPassword: string } | null>(null);
+  const [created, setCreated] = useState<{ slug: string; name: string; email: string; tempPassword: string; linkedExisting: boolean } | null>(null);
   const [copied, setCopied] = useState(false);
 
   if (!isOpen) return null;
@@ -64,7 +64,8 @@ export const ProvisionOrganizationModal: React.FC<{
         slug: res.tenant.slug,
         name: res.tenant.name,
         email: res.adminCredentials.email,
-        tempPassword: res.adminCredentials.tempPassword
+        tempPassword: res.adminCredentials.tempPassword,
+        linkedExisting: res.adminCredentials.linkedExisting
       });
     } catch (err: any) {
       setError(err.message || 'Falha ao provisionar organização.');
@@ -77,7 +78,9 @@ export const ProvisionOrganizationModal: React.FC<{
     if (!created) return;
     try {
       await navigator.clipboard.writeText(
-        `Organização: ${created.slug}\nE-mail: ${created.email}\nSenha temporária: ${created.tempPassword}`
+        created.linkedExisting
+          ? `Organização: ${created.slug}\nE-mail: ${created.email}\n(use a senha atual da conta)`
+          : `Organização: ${created.slug}\nE-mail: ${created.email}\nSenha temporária: ${created.tempPassword}`
       );
       setCopied(true);
     } catch {
@@ -85,11 +88,9 @@ export const ProvisionOrganizationModal: React.FC<{
     }
   };
 
-  const finish = async () => {
-    const target = created?.slug;
+  const finish = () => {
     resetForm();
     onClose();
-    if (target) await switchTenant(target);
   };
 
   // Step 2: one-time credentials hand-over
@@ -113,10 +114,14 @@ export const ProvisionOrganizationModal: React.FC<{
             </div>
             <div><span className="text-slate-500">Organização:</span> <span className="font-mono font-semibold">{created.slug}</span></div>
             <div><span className="text-slate-500">E-mail:</span> <span className="font-mono font-semibold">{created.email}</span></div>
-            <div>
-              <span className="text-slate-500">Senha temporária:</span>{' '}
-              <span className="font-mono font-bold text-indigo-700 select-all">{created.tempPassword}</span>
-            </div>
+            {created.linkedExisting ? (
+              <div className="text-slate-600">Este e-mail já possuía conta: foi <strong>vinculado</strong> à organização e mantém a senha atual.</div>
+            ) : (
+              <div>
+                <span className="text-slate-500">Senha temporária:</span>{' '}
+                <span className="font-mono font-bold text-indigo-700 select-all">{created.tempPassword}</span>
+              </div>
+            )}
           </div>
 
           <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs">
@@ -139,7 +144,7 @@ export const ProvisionOrganizationModal: React.FC<{
               onClick={finish}
               className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs shadow-md"
             >
-              Concluir e abrir organização
+              Concluir
             </button>
           </div>
         </div>

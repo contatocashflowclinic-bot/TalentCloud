@@ -11,7 +11,7 @@ export const MultiTenantArchitectureModal: React.FC<{ isOpen: boolean; onClose: 
   const statusItems = [
     {
       label: 'Tenant ativo',
-      value: activeTenant?.name || 'Carregando...',
+      value: activeTenant?.name || 'Visão da plataforma',
       detail: activeTenant?.id ? `ID ${activeTenant.id}` : 'Aguardando resolucao',
       icon: Network,
     },
@@ -37,7 +37,7 @@ export const MultiTenantArchitectureModal: React.FC<{ isOpen: boolean; onClose: 
       border: 'border-blue-100',
       bg: 'bg-blue-50/40',
       text: 'O cliente envia a sessao e, quando aplicavel, o slug da organizacao.',
-      detail: 'Authorization + X-Tenant-Slug',
+      detail: 'Authorization (a organização vem da sessão)',
     },
     {
       number: '2',

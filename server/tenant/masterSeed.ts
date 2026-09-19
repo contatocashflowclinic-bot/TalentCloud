@@ -98,46 +98,42 @@ export function getTechCorpSeedData() {
         tenantId: 'tenant-techcorp',
         name: 'Camila Albuquerque',
         email: 'camila.albuquerque@techcorp.io',
-        role: 'ORG_ADMIN',
+        profileId: 'admin',
         jobTitle: 'Head de People & Cultura',
         active: true,
         lastLoginAt: '2026-03-18T16:45:00Z',
-        permissions: ['ALL_ORG_PERMISSIONS']
       },
       {
         id: 'tc-usr-2',
         tenantId: 'tenant-techcorp',
         name: 'Mariana Silva',
         email: 'mariana.silva@techcorp.io',
-        role: 'RECRUITER',
+        profileId: 'recruiter',
         jobTitle: 'Tech Recruiter Senior',
         active: true,
         lastLoginAt: '2026-03-18T17:15:00Z',
-        permissions: ['JOBS_MANAGE', 'CANDIDATES_MANAGE', 'PIPELINE_MANAGE', 'AI_EVALUATE']
       },
       {
         id: 'tc-usr-3',
         tenantId: 'tenant-techcorp',
         name: 'Rodrigo Fontes',
         email: 'rodrigo.fontes@techcorp.io',
-        role: 'HIRING_MANAGER',
+        profileId: 'hiring_manager',
         jobTitle: 'Gerente de Engenharia',
         departmentId: 'dep-tc-eng',
         active: true,
         lastLoginAt: '2026-03-18T14:30:00Z',
-        permissions: ['JOBS_VIEW', 'CANDIDATES_REVIEW', 'INTERVIEWS_CONDUCT', 'OFFERS_APPROVE']
       },
       {
         id: 'tc-usr-4',
         tenantId: 'tenant-techcorp',
         name: 'Lucas Nogueira',
         email: 'lucas.nogueira@techcorp.io',
-        role: 'INTERVIEWER',
+        profileId: 'interviewer',
         jobTitle: 'Staff Software Architect',
         departmentId: 'dep-tc-eng',
         active: true,
         lastLoginAt: '2026-03-17T11:00:00Z',
-        permissions: ['INTERVIEWS_CONDUCT', 'SCORECARD_FILL']
       }
     ],
     departments: [
@@ -563,11 +559,10 @@ export function getVarejoBrSeedData() {
         tenantId: 'tenant-varejobr',
         name: 'Roberto Viana',
         email: 'roberto.viana@varejobrasil.com.br',
-        role: 'ORG_ADMIN',
+        profileId: 'admin',
         jobTitle: 'Diretor de Gente e Cultura',
         active: true,
         lastLoginAt: '2026-03-18T15:00:00Z',
-        permissions: ['ALL_ORG_PERMISSIONS']
       }
     ],
     departments: [
@@ -709,11 +704,10 @@ export function getBioSaudeSeedData() {
         tenantId: 'tenant-biosaude',
         name: 'Dra. Helena Drummond',
         email: 'helena.drummond@biosaude.med.br',
-        role: 'ORG_ADMIN',
+        profileId: 'admin',
         jobTitle: 'Diretora Médica & RH Científico',
         active: true,
         lastLoginAt: '2026-03-18T16:00:00Z',
-        permissions: ['ALL_ORG_PERMISSIONS']
       }
     ],
     departments: [

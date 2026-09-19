@@ -1,14 +1,12 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
   Tenant,
-  UserRole,
   TenantConnectionTelemetry,
   TenantRoutingResolution
 } from '../types.js';
 import {
   MasterApi,
-  TenantApi,
-  setActiveTenantSlug
+  TenantApi
 } from '../services/api.js';
 import { useAuth } from './AuthContext.js';
 
@@ -17,15 +15,15 @@ interface TenantContextValue {
   /** Only populated for the SuperAdmin (organization users never see other organizations). */
   allTenants: Tenant[];
   isSuperAdmin: boolean;
-  isSuperAdminMode: boolean;
-  /** Real role of the signed-in user (from the server session). */
-  currentRole: UserRole;
+  /** Effective permissions of the signed-in user in the active organization (from the server session). */
+  permissions: string[];
+  /** Access profile name shown next to the user. */
+  profileLabel: string;
+  can: (permission: string) => boolean;
   telemetry: TenantConnectionTelemetry | null;
   routingResolution: TenantRoutingResolution | null;
   isLoading: boolean;
   error: string | null;
-  switchTenant: (slug: string) => Promise<void>;
-  setSuperAdminMode: (enabled: boolean) => void;
   refreshTenants: () => Promise<Tenant[]>;
   refreshContext: () => Promise<void>;
 }
@@ -38,8 +36,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
   const [allTenants, setAllTenants] = useState<Tenant[]>([]);
   const [activeTenant, setActiveTenant] = useState<Tenant | null>(null);
-  // Conta Mãe lands on its console from the very first render (no flash of a tenant module / tenant data fetch)
-  const [isSuperAdminMode, setIsSuperAdminMode] = useState<boolean>(isSuperAdmin);
   const [telemetry, setTelemetry] = useState<TenantConnectionTelemetry | null>(null);
   const [routingResolution, setRoutingResolution] = useState<TenantRoutingResolution | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -74,13 +70,6 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, []);
 
-  const switchTenant = useCallback(async (slug: string) => {
-    if (!isSuperAdmin) return; // organization users are pinned to their own organization
-    setActiveTenantSlug(slug);
-    setIsSuperAdminMode(false);
-    await refreshContext();
-  }, [isSuperAdmin, refreshContext]);
-
   // Bootstrap whenever the signed-in user changes (login / logout)
   useEffect(() => {
     setActiveTenant(null);
@@ -88,22 +77,16 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setTelemetry(null);
     setRoutingResolution(null);
     setError(null);
-    setActiveTenantSlug('');
 
-    if (!user) {
-      setIsSuperAdminMode(false);
-      return;
-    }
+    if (!user) return;
     if (user.type === 'super_admin') {
-      // Conta Mãe lands on its console; a tenant's data is only opened (and audited) on demand
-      setIsSuperAdminMode(true);
+      // Platform environment: only the organization catalog is loaded; no organization data is opened
       refreshTenants();
       return;
     }
-    setIsSuperAdminMode(false);
     refreshContext();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id, user?.type]);
+  }, [user?.id, user?.type, user?.tenantId]);
 
   return (
     <TenantContext.Provider
@@ -111,20 +94,13 @@ export const TenantProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         activeTenant,
         allTenants,
         isSuperAdmin,
-        isSuperAdminMode: isSuperAdmin && isSuperAdminMode,
-        currentRole: user?.role ?? 'COLLABORATOR',
+        permissions: user?.permissions ?? [],
+        profileLabel: isSuperAdmin ? 'SuperAdmin (Conta Mãe)' : user?.profileName ?? '',
+        can: (permission: string) => isSuperAdmin || (user?.permissions ?? []).includes(permission),
         telemetry,
         routingResolution,
         isLoading,
         error,
-        switchTenant,
-        setSuperAdminMode: (enabled) => {
-          if (!isSuperAdmin) return;
-          setIsSuperAdminMode(enabled);
-          if (!enabled && !activeTenant && allTenants[0]) {
-            void switchTenant(allTenants[0].slug);
-          }
-        },
         refreshTenants,
         refreshContext
       }}

@@ -60,27 +60,39 @@ export interface Tenant {
   };
 }
 
-// 2. Usuários e Permissões
-export type UserRole = 
-  | 'SUPER_ADMIN' // Conta Mãe
-  | 'ORG_ADMIN'   // Administrador da Organização
-  | 'RECRUITER'   // Recrutador / Especialista de R&S
-  | 'HIRING_MANAGER' // Gestor da Vaga
-  | 'INTERVIEWER' // Entrevistador
-  | 'COLLABORATOR'; // Colaborador
+// 2. Usuários e Permissões (RBAC)
+/** Perfil de acesso da organização: conjunto de permissões `rotina:ação` (ver src/access.ts). */
+export interface AccessProfile {
+  id: string;
+  name: string;
+  description: string;
+  /** Perfil administrador: sempre possui todas as permissões. */
+  isAdmin: boolean;
+  /** Criado junto com a organização: não pode ser excluído. */
+  isSystem: boolean;
+  permissions: string[];
+  memberCount?: number;
+}
 
+/** Vínculo de um usuário (identidade global) com uma organização. */
 export interface TenantUser {
   id: string;
-  tenantId: string; // 'superadmin' if global
+  tenantId: string;
+  userId: string;
   name: string;
   email: string;
-  role: UserRole;
+  profileId: string;
+  profileName?: string;
   departmentId?: string;
   jobTitle: string;
   avatarUrl?: string;
   active: boolean;
   lastLoginAt: string;
-  permissions: string[];
+  /** Exceções individuais sobre o perfil. */
+  grantedPermissions: string[];
+  revokedPermissions: string[];
+  /** Permissões efetivas: (perfil + concedidas) - revogadas. */
+  permissions?: string[];
 }
 
 // 3. DNA Organizacional
@@ -392,13 +404,29 @@ export interface SystemAuditLog {
 // Authentication
 export type AuthPrincipalType = 'super_admin' | 'tenant_user';
 
+/** Organization a user is linked to (used by the organization switcher). */
+export interface OrgMembership {
+  tenantId: string;
+  slug: string;
+  name: string;
+  profileName: string;
+}
+
 export interface AuthUser {
   type: AuthPrincipalType;
+  /** SuperAdmin id, or the id of the link with the active organization. */
   id: string;
+  /** Global identity (organization users only). */
+  userId?: string;
   name: string;
   email: string;
-  role: UserRole;
-  tenantId?: string;        // set for organization users, absent for SuperAdmin
+  tenantId?: string;        // active organization; absent for SuperAdmin
+  profileId?: string;
+  profileName?: string;
+  isOrgAdmin?: boolean;
+  /** Effective permissions in the active organization (SuperAdmin: all). */
+  permissions: string[];
+  memberships?: OrgMembership[];
   mustChangePassword: boolean;
   usingDefaultPassword?: boolean; // SuperAdmin still on the seeded default password
 }

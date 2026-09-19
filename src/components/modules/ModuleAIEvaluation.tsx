@@ -25,7 +25,7 @@ export const ModuleAIEvaluation: React.FC<{
   preselectedCandidateId?: string;
   preselectedJobId?: string;
 }> = ({ preselectedCandidateId, preselectedJobId }) => {
-  const { activeTenant, currentRole } = useTenant();
+  const { activeTenant } = useTenant();
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [openings, setOpenings] = useState<JobOpening[]>([]);
   const [evaluations, setEvaluations] = useState<AIAssistedEvaluation[]>([]);

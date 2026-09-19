@@ -90,7 +90,7 @@ export const LoginPage: React.FC = () => {
 
           <label className="block">
             <span className="text-xs font-semibold text-slate-700">
-              Organização <span className="font-normal text-slate-400">(identificador; deixe vazio se for SuperAdmin)</span>
+              Organização <span className="font-normal text-slate-400">(opcional; use se tiver acesso a mais de uma)</span>
             </span>
             <div className="relative mt-1">
               <Globe className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />

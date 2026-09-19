@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { AuthUser } from '../types.js';
-import { AuthApi, SESSION_EXPIRED_EVENT, getAuthToken, setActiveTenantSlug, setAuthToken } from '../services/api.js';
+import { AuthApi, PERMISSION_DENIED_EVENT, SESSION_EXPIRED_EVENT, getAuthToken, setAuthToken } from '../services/api.js';
 
 interface AuthContextValue {
   user: AuthUser | null;
@@ -8,6 +8,8 @@ interface AuthContextValue {
   isReady: boolean;
   login: (email: string, password: string, tenantSlug?: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Moves the session to another organization the person is linked to. */
+  switchOrganization: (tenantId: string) => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
 }
 
@@ -29,11 +31,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Server rejected the token (expired / revoked / user disabled)
   useEffect(() => {
     const onExpired = () => {
-      setActiveTenantSlug('');
       setUser(null);
     };
     window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
     return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  }, []);
+
+  // Permissions can change on the server at any time (profile edited, exception granted): re-read them when the
+  // tab regains focus and after any permission denial, so menus and buttons never stay stale.
+  useEffect(() => {
+    let last = 0;
+    const refresh = () => {
+      if (!getAuthToken() || Date.now() - last < 5000) return;
+      last = Date.now();
+      AuthApi.me()
+        .then(fresh => setUser(prev => (prev && JSON.stringify(prev) === JSON.stringify(fresh) ? prev : fresh)))
+        .catch(() => undefined);
+    };
+    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener(PERMISSION_DENIED_EVENT, refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener(PERMISSION_DENIED_EVENT, refresh);
+    };
   }, []);
 
   const login = useCallback(async (email: string, password: string, tenantSlug?: string) => {
@@ -49,8 +72,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // token may already be invalid; local sign-out proceeds regardless
     }
     setAuthToken(null);
-    setActiveTenantSlug('');
     setUser(null);
+  }, []);
+
+  const switchOrganization = useCallback(async (tenantId: string) => {
+    setUser(await AuthApi.switchOrganization(tenantId));
   }, []);
 
   const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
@@ -59,7 +85,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isReady, login, logout, changePassword }}>
+    <AuthContext.Provider value={{ user, isReady, login, logout, switchOrganization, changePassword }}>
       {children}
     </AuthContext.Provider>
   );
