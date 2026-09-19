@@ -25,6 +25,7 @@ import { Tenant, SystemAuditLog } from '../types.js';
 import { formatDateTimeSP } from '../utils/dateUtils.js';
 import { OrganizationEditor } from './platform/OrganizationEditor.js';
 import { OrgAccessModal } from './platform/OrgAccessModal.js';
+import { ActionsMenu } from './platform/ActionsMenu.js';
 
 export type PlatformSection = 'overview' | 'organizations' | 'users' | 'audit';
 
@@ -300,7 +301,7 @@ export const SuperAdminConsole: React.FC<{
                   <th className="px-5 py-3">Identificador</th>
                   <th className="px-5 py-3">Plano, módulos & armazenamento</th>
                   <th className="px-5 py-3">Status</th>
-                  <th className="px-5 py-3 text-right">Ações</th>
+                  <th className="px-3 sm:px-5 py-3 text-right sticky right-0 bg-slate-50 shadow-[-8px_0_8px_-8px_rgba(15,23,42,0.15)]">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -339,41 +340,24 @@ export const SuperAdminConsole: React.FC<{
                           {STATUS_LABEL[tenant.status]}
                         </span>
                       </td>
-                      <td className="px-5 py-3.5 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => setEditing(tenant)}
-                            className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:text-indigo-700 hover:bg-indigo-50 text-[11px] font-semibold flex items-center gap-1.5"
-                            title="Editar dados, plano, status e módulos liberados"
-                          >
-                            <Pencil className="w-3.5 h-3.5" /> Editar
-                          </button>
-                          <button
-                            onClick={() => setManaging(tenant)}
-                            className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:text-indigo-700 hover:bg-indigo-50 text-[11px] font-semibold flex items-center gap-1.5"
-                            title="Usuários, vínculos, perfis e permissões desta organização"
-                          >
-                            <Users className="w-3.5 h-3.5" /> Usuários
-                          </button>
-                          <button
-                            onClick={() => handleResetAdminPassword(tenant)}
-                            disabled={resetting === tenant.id}
-                            className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:text-indigo-700 hover:bg-indigo-50 text-[11px] font-semibold flex items-center gap-1.5"
-                            title="Gerar senha temporária para o administrador da organização"
-                          >
-                            <KeyRound className="w-3.5 h-3.5" /> Senha do admin
-                          </button>
-                          <button
-                            onClick={() => handleToggleStatus(tenant)}
-                            disabled={statusUpdating === tenant.id}
-                            className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-semibold flex items-center gap-1.5 transition-colors ${
-                              isSuspended
-                                ? 'text-emerald-700 border-emerald-200 hover:bg-emerald-50'
-                                : 'text-slate-600 border-slate-200 hover:text-rose-600 hover:bg-rose-50'
-                            }`}
-                          >
-                            <Power className="w-3.5 h-3.5" /> {isSuspended ? 'Reativar' : 'Suspender'}
-                          </button>
+                      <td className="px-3 sm:px-5 py-3.5 text-right sticky right-0 bg-white shadow-[-8px_0_8px_-8px_rgba(15,23,42,0.15)]">
+                        <div className="flex items-center justify-end">
+                          <ActionsMenu
+                            label={`Ações de ${tenant.name}`}
+                            items={[
+                              { label: 'Editar organização', icon: Pencil, onClick: () => setEditing(tenant), title: 'Dados, plano, status e módulos liberados' },
+                              { label: 'Usuários e acessos', icon: Users, onClick: () => setManaging(tenant), title: 'Vínculos, perfis e permissões desta organização' },
+                              { label: 'Senha do administrador', icon: KeyRound, onClick: () => handleResetAdminPassword(tenant), disabled: resetting === tenant.id, title: 'Gera uma senha temporária para o administrador' },
+                              {
+                                label: isSuspended ? 'Reativar organização' : 'Suspender organização',
+                                icon: Power,
+                                onClick: () => handleToggleStatus(tenant),
+                                disabled: statusUpdating === tenant.id,
+                                danger: !isSuspended,
+                                separated: true
+                              }
+                            ]}
+                          />
                         </div>
                       </td>
                     </tr>
