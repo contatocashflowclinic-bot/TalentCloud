@@ -21,6 +21,9 @@ import type { PoolClient } from 'pg';
 import { registerPublicApi } from './server/publicApi.js';
 import { actorOf } from './server/tenant/TenantConnectionRouter.js';
 import { withTransaction } from './server/db/pool.js';
+import { assertValidFile, getFile, putFile, removeFile, safeFileName } from './server/storage.js';
+import { reviewItem, type AdmissionAction } from './server/tenant/admission.js';
+import type { AdmissionItem, OnboardingChecklistItem } from './src/types.js';
 
 // Augment Express Request interface with tenantContext
 declare global {
@@ -878,16 +881,47 @@ async function startServer() {
     res.status(201).json({ success: true, offer });
   }));
 
-  app.patch('/api/v1/offers/:id/status', can('offers:edit'), h(async (req, res) => {
+  // Catálogo de benefícios da organização (base do pacote de benefícios das propostas).
+  // Benefícios não são excluídos (propostas antigas guardam o texto): são desativados.
+  const BENEFIT_CATEGORIES = ['Saúde', 'Alimentação', 'Financeiro', 'Bem-estar', 'Trabalho', 'Outros'];
+  const POSITION_LEVELS = ['Júnior', 'Pleno', 'Sênior', 'Especialista', 'Coordenação', 'Gerência', 'Diretoria'];
+  const benefitFields = (body: Record<string, unknown>, partial: boolean) => {
+    const out: Record<string, unknown> = {};
+    if (!partial || body.name !== undefined) out.name = required(body.name, 'name');
+    if (body.category !== undefined || !partial) {
+      const category = (body.category as string) ?? 'Outros';
+      if (!BENEFIT_CATEGORIES.includes(category)) throw new ValidationError('Categoria de benefício inválida.');
+      out.category = category;
+    }
+    if (body.description !== undefined || !partial) out.description = String(body.description ?? '').trim();
+    if (body.active !== undefined) out.active = Boolean(body.active);
+    if (body.defaultLevels !== undefined || !partial) {
+      const levels = csv(body.defaultLevels);
+      if (levels.some(l => !POSITION_LEVELS.includes(l))) throw new ValidationError('Nível de cargo inválido.');
+      out.defaultLevels = levels;
+    }
+    return out;
+  };
+
+  app.get('/api/v1/benefits', can('offers:view'), h(async (req, res) => {
+    res.json({ success: true, benefits: await ctx(req).db.benefits.list() });
+  }));
+
+  app.post('/api/v1/benefits', can('offers:edit'), h(async (req, res) => {
+    const benefit = await ctx(req).db.benefits.insert({ id: newId('ben'), active: true, ...benefitFields(req.body, false) });
+    res.status(201).json({ success: true, benefit });
+  }));
+
+  app.patch('/api/v1/benefits/:id', can('offers:edit'), h(async (req, res) => {
+    const benefit = await ctx(req).db.benefits.update(req.params.id, benefitFields(req.body, true));
+    if (!benefit) throw new NotFoundError('Benefício não encontrado');
+    res.json({ success: true, benefit });
+  }));
+
+  app.patch('/api/v1/offers/:id/status',can('offers:edit'), h(async (req, res) => {
     const { status, notes } = req.body;
-    const now = new Date().toISOString();
-    const offer = await ctx(req).db.offers.update(req.params.id, {
-      status: required(status, 'status'),
-      notes,
-      sentAt: status === 'sent' ? now : undefined,
-      respondedAt: status === 'accepted' || status === 'declined' ? now : undefined
-    });
-    if (!offer) throw new NotFoundError('Proposta não encontrada');
+    const { db } = ctx(req);
+    const offer = await db.setOfferStatus(req.params.id, required(status, 'status') as Parameters<typeof db.setOfferStatus>[1], notes);
     res.json({ success: true, offer });
   }));
 
@@ -895,7 +929,9 @@ async function startServer() {
   // MÓDULO 12: Onboarding
   // ---------------------------------------------------------
   app.get('/api/v1/onboardings', can('onboarding:view'), h(async (req, res) => {
-    res.json({ success: true, onboardings: await ctx(req).db.onboardings.list() });
+    const { db } = ctx(req);
+    await db.syncAcceptedOffers();
+    res.json({ success: true, onboardings: await db.onboardings.list() });
   }));
 
   app.patch('/api/v1/onboardings/:id/checklist/:itemId', can('onboarding:edit'), h(async (req, res) => {
@@ -905,6 +941,218 @@ async function startServer() {
     }
     const onboarding = await ctx(req).db.setChecklistStatus(req.params.id, req.params.itemId, status);
     res.json({ success: true, onboarding });
+  }));
+
+  // ---------------------------------------------------------
+  // MÓDULO 12.2: Checklist de Integração (modelo da organização + itens de cada contratação)
+  // Permissões: onboarding:view para consultar, onboarding:edit para configurar e alterar.
+  // ---------------------------------------------------------
+  const CHECKLIST_CATEGORIES = ['Documentação', 'TI & Acessos', 'Cultura & Boas-Vindas', 'Treinamento Técnico'];
+  const CHECKLIST_RESPONSIBLES = ['RH', 'TI', 'Gestor', 'Buddy'];
+  const dueDayOf = (value: unknown): number => {
+    const day = Number(value ?? 1);
+    if (!Number.isInteger(day) || day < 0 || day > 365) throw new ValidationError('O prazo deve ser de 0 a 365 dias após o início.');
+    return day;
+  };
+  const oneOfList = (value: unknown, allowed: string[], label: string): string => {
+    if (typeof value !== 'string' || !allowed.includes(value)) throw new ValidationError(`${label} inválido(a).`);
+    return value;
+  };
+  const integrationFields = (body: Record<string, unknown>, partial: boolean) => {
+    const out: Record<string, unknown> = {};
+    if (!partial || body.name !== undefined) out.name = required(body.name, 'name');
+    if (!partial || body.category !== undefined) out.category = oneOfList(body.category, CHECKLIST_CATEGORIES, 'Categoria');
+    if (!partial || body.responsible !== undefined) out.responsible = oneOfList(body.responsible ?? 'Gestor', CHECKLIST_RESPONSIBLES, 'Responsável');
+    if (!partial || body.dueDay !== undefined) out.dueDay = dueDayOf(body.dueDay);
+    if (!partial || body.active !== undefined) out.active = body.active === undefined ? true : Boolean(body.active);
+    return out;
+  };
+
+  app.get('/api/v1/integration-templates', can('onboarding:view'), h(async (req, res) => {
+    res.json({ success: true, templates: await ctx(req).db.ensureIntegrationTemplates() });
+  }));
+
+  app.post('/api/v1/integration-templates', can('onboarding:edit'), h(async (req, res) => {
+    const template = await ctx(req).db.integrationTemplates.insert({ id: newId('igt'), ...integrationFields(req.body ?? {}, false) });
+    res.status(201).json({ success: true, template });
+  }));
+
+  app.patch('/api/v1/integration-templates/:id', can('onboarding:edit'), h(async (req, res) => {
+    const template = await ctx(req).db.integrationTemplates.update(req.params.id, integrationFields(req.body ?? {}, true));
+    if (!template) throw new NotFoundError('Item do modelo não encontrado');
+    res.json({ success: true, template });
+  }));
+
+  app.get('/api/v1/onboardings/:id/checklist-available', can('onboarding:view'), h(async (req, res) => {
+    res.json({ success: true, templates: await ctx(req).db.listAvailableChecklistTemplates(req.params.id) });
+  }));
+
+  app.post('/api/v1/onboardings/:id/checklist-apply', can('onboarding:edit'), h(async (req, res) => {
+    const ids = req.body?.templateIds;
+    if (!Array.isArray(ids)) throw new ValidationError('Informe os itens do modelo a incluir (templateIds).');
+    res.json({ success: true, onboarding: await ctx(req).db.applyChecklistTemplates(req.params.id, ids.map(String)) });
+  }));
+
+  // Extra item for one hire (outside the model)
+  app.post('/api/v1/onboardings/:id/checklist', can('onboarding:edit'), h(async (req, res) => {
+    const body = req.body ?? {};
+    const onboarding = await ctx(req).db.addChecklistItem(req.params.id, {
+      id: newId('chk'),
+      title: required(body.title, 'title'),
+      category: oneOfList(body.category ?? 'Cultura & Boas-Vindas', CHECKLIST_CATEGORIES, 'Categoria') as OnboardingChecklistItem['category'],
+      dueDateDay: dueDayOf(body.dueDateDay),
+      status: 'pending',
+      assignedToRole: oneOfList(body.assignedToRole ?? 'Gestor', CHECKLIST_RESPONSIBLES, 'Responsável')
+    });
+    res.status(201).json({ success: true, onboarding });
+  }));
+
+  app.delete('/api/v1/onboardings/:id/checklist/:itemId', can('onboarding:edit'), h(async (req, res) => {
+    res.json({ success: true, onboarding: await ctx(req).db.removeChecklistItem(req.params.id, req.params.itemId) });
+  }));
+
+  // ---------------------------------------------------------
+  // MÓDULO 12.1: Admissão (catálogo de itens + pasta de documentos por contratação)
+  // Permissões: onboarding:view para consultar/baixar, onboarding:edit para configurar, enviar e analisar.
+  // ---------------------------------------------------------
+  const ADMISSION_CATEGORIES = ['Documentos pessoais', 'Exames', 'Dados bancários e dependentes', 'Contratuais', 'Etapas internas'];
+  const ADMISSION_RESPONSIBLES = ['RH', 'Candidato', 'DP', 'Jurídico', 'TI'];
+  const oneOf = (value: unknown, allowed: string[], label: string): string => {
+    if (typeof value !== 'string' || !allowed.includes(value)) throw new ValidationError(`${label} inválido(a).`);
+    return value;
+  };
+  const admissionFields = (body: Record<string, unknown>, partial: boolean) => {
+    const out: Record<string, unknown> = {};
+    if (!partial || body.name !== undefined) out.name = required(body.name, 'name');
+    if (!partial || body.category !== undefined) out.category = oneOf(body.category, ADMISSION_CATEGORIES, 'Categoria');
+    if (!partial || body.responsible !== undefined) out.responsible = oneOf(body.responsible ?? 'RH', ADMISSION_RESPONSIBLES, 'Responsável');
+    if (!partial || body.description !== undefined) out.description = String(body.description ?? '').trim();
+    if (!partial || body.required !== undefined) out.required = body.required === undefined ? true : Boolean(body.required);
+    if (!partial || body.requiresDocument !== undefined) out.requiresDocument = body.requiresDocument === undefined ? true : Boolean(body.requiresDocument);
+    if (!partial || body.active !== undefined) out.active = body.active === undefined ? true : Boolean(body.active);
+    if (!partial || body.dueDaysBeforeStart !== undefined) {
+      const days = Number(body.dueDaysBeforeStart ?? 5);
+      if (!Number.isInteger(days) || days < 0 || days > 90) throw new ValidationError('Prazo deve ser de 0 a 90 dias antes do início.');
+      out.dueDaysBeforeStart = days;
+    }
+    if (!partial || body.contractTypes !== undefined) {
+      const types = csv(body.contractTypes ?? ['CLT', 'PJ']);
+      if (types.length === 0 || types.some(t => !['CLT', 'PJ'].includes(t))) throw new ValidationError('Informe ao menos um tipo de contrato (CLT ou PJ).');
+      out.contractTypes = [...new Set(types)];
+    }
+    return out;
+  };
+
+  app.get('/api/v1/admission-templates', can('onboarding:view'), h(async (req, res) => {
+    res.json({ success: true, templates: await ctx(req).db.ensureAdmissionTemplates() });
+  }));
+
+  app.post('/api/v1/admission-templates', can('onboarding:edit'), h(async (req, res) => {
+    const template = await ctx(req).db.admissionTemplates.insert({ id: newId('adt'), ...admissionFields(req.body ?? {}, false) });
+    res.status(201).json({ success: true, template });
+  }));
+
+  app.patch('/api/v1/admission-templates/:id', can('onboarding:edit'), h(async (req, res) => {
+    const template = await ctx(req).db.admissionTemplates.update(req.params.id, admissionFields(req.body ?? {}, true));
+    if (!template) throw new NotFoundError('Item do catálogo não encontrado');
+    res.json({ success: true, template });
+  }));
+
+  // Catalog items that apply to this hire and are not in its folder yet (the RH chooses which ones to bring)
+  app.get('/api/v1/onboardings/:id/admission/available', can('onboarding:view'), h(async (req, res) => {
+    res.json({ success: true, templates: await ctx(req).db.listAvailableAdmissionTemplates(req.params.id) });
+  }));
+
+  app.post('/api/v1/onboardings/:id/admission/apply-template', can('onboarding:edit'), h(async (req, res) => {
+    const ids = req.body?.templateIds;
+    if (!Array.isArray(ids)) throw new ValidationError('Informe os itens do modelo a incluir (templateIds).');
+    const onboarding = await ctx(req).db.applyAdmissionTemplates(req.params.id, ids.map(String));
+    res.json({ success: true, onboarding });
+  }));
+
+  app.delete('/api/v1/onboardings/:id/admission/:itemId', can('onboarding:edit'), h(async (req, res) => {
+    res.json({ success: true, onboarding: await ctx(req).db.removeAdmissionItem(req.params.id, req.params.itemId) });
+  }));
+
+  // Extra item for a specific hire (outside the catalog)
+  app.post('/api/v1/onboardings/:id/admission', can('onboarding:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const body = req.body ?? {};
+    const journey = await db.onboardings.get(req.params.id);
+    if (!journey) throw new NotFoundError('Jornada de onboarding não encontrada');
+    const dueDate = typeof body.dueDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.dueDate) ? body.dueDate : journey.hireDate;
+    const onboarding = await db.addAdmissionItem(journey.id, {
+      id: newId('adi'),
+      title: required(body.title, 'title'),
+      category: oneOf(body.category ?? 'Etapas internas', ADMISSION_CATEGORIES, 'Categoria') as AdmissionItem['category'],
+      required: body.required === undefined ? true : Boolean(body.required),
+      requiresDocument: body.requiresDocument === undefined ? true : Boolean(body.requiresDocument),
+      responsible: oneOf(body.responsible ?? 'RH', ADMISSION_RESPONSIBLES, 'Responsável') as AdmissionItem['responsible'],
+      dueDate,
+      status: 'pending',
+      history: [{ at: new Date().toISOString(), by: req.auth!.name, action: 'Item incluído manualmente' }]
+    });
+    res.status(201).json({ success: true, onboarding });
+  }));
+
+  // Review: approve / reject (with reason) / reopen
+  app.patch('/api/v1/onboardings/:id/admission/:itemId', can('onboarding:edit'), h(async (req, res) => {
+    const { action, note } = req.body ?? {};
+    const valid = oneOf(action, ['approve', 'reject', 'reopen'], 'Ação') as AdmissionAction;
+    const onboarding = await ctx(req).db.updateAdmissionItem(req.params.id, req.params.itemId, item =>
+      reviewItem(item, valid, typeof note === 'string' ? note : undefined, req.auth!.name)
+    );
+    res.json({ success: true, onboarding });
+  }));
+
+  // Upload: raw body (PDF/JPG/PNG up to 8 MB), file name in ?name=
+  app.post(
+    '/api/v1/onboardings/:id/admission/:itemId/file',
+    can('onboarding:edit'),
+    express.raw({ type: () => true, limit: '9mb' }),
+    h(async (req, res) => {
+      const { db, tenant } = ctx(req);
+      const mime = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+      const content = assertValidFile(req.body, mime);
+      const journey = await db.onboardings.get(req.params.id);
+      const current = journey?.admission.find(i => i.id === req.params.itemId);
+      if (!journey || !current) throw new NotFoundError('Item de admissão não encontrado');
+      if (!current.requiresDocument) throw new ValidationError('Este item é uma etapa e não recebe arquivo.');
+
+      const name = safeFileName(String(req.query.name ?? 'documento'));
+      const storagePath = `${tenant.id}/${journey.id}/${current.id}/${newId('f')}-${name}`;
+      await putFile(storagePath, content, mime);
+
+      let previousPath: string | undefined;
+      try {
+        const onboarding = await db.updateAdmissionItem(journey.id, current.id, item => {
+          previousPath = item.file?.path;
+          const at = new Date().toISOString();
+          item.file = { name, mime, size: content.length, path: storagePath, uploadedAt: at, uploadedBy: req.auth!.name };
+          item.status = 'submitted';
+          item.reviewNote = undefined;
+          item.history.push({ at, by: req.auth!.name, action: `Documento enviado: ${name}` });
+        });
+        if (previousPath) void removeFile(previousPath);
+        res.status(201).json({ success: true, onboarding });
+      } catch (err) {
+        void removeFile(storagePath);
+        throw err;
+      }
+    })
+  );
+
+  // Download through the API (permission + tenant checked); the storage is never exposed by URL
+  app.get('/api/v1/onboardings/:id/admission/:itemId/file', can('onboarding:view'), h(async (req, res) => {
+    const { db, tenant } = ctx(req);
+    const journey = await db.onboardings.get(req.params.id);
+    const file = journey?.admission.find(i => i.id === req.params.itemId)?.file;
+    if (!journey || !file || !file.path.startsWith(`${tenant.id}/${journey.id}/`)) throw new NotFoundError('Documento não encontrado');
+    const content = await getFile(file.path);
+    res.setHeader('Content-Type', file.mime);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(content);
   }));
 
   // ---------------------------------------------------------

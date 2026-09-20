@@ -1,6 +1,11 @@
 import type { PoolClient } from 'pg';
 import {
+  AdmissionItem,
+  AdmissionTemplate,
   AIAssistedEvaluation,
+  BenefitCatalogItem,
+  IntegrationTemplate,
+  OnboardingChecklistItem,
   Candidate,
   ClimateSurveyResponse,
   CollaboratorDevelopment,
@@ -21,6 +26,9 @@ import { getRow, fromRow, insertRow, listRows, toSnake, updateRow, TableSpec } f
 import { getPool, Queryable, withTransaction } from '../db/pool.js';
 import { TABLES } from '../db/tables.js';
 import { NotFoundError, ValidationError } from '../errors.js';
+import { buildAdmissionItems, DEFAULT_ADMISSION_TEMPLATES } from './admission.js';
+import { buildChecklistItems, DEFAULT_INTEGRATION_TEMPLATES } from './integration.js';
+import { newId } from '../ids.js';
 
 /** Generic CRUD bound to a single tenant and table. */
 class Entity<T> {
@@ -60,6 +68,9 @@ export class TenantRepository {
   readonly aiEvaluations: Entity<AIAssistedEvaluation>;
   readonly interviews: Entity<InterviewSession>;
   readonly offers: Entity<JobOffer>;
+  readonly benefits: Entity<BenefitCatalogItem>;
+  readonly admissionTemplates: Entity<AdmissionTemplate>;
+  readonly integrationTemplates: Entity<IntegrationTemplate>;
   readonly onboardings: Entity<OnboardingJourney>;
   readonly development: Entity<CollaboratorDevelopment>;
   readonly climateSurveys: Entity<ClimateSurveyResponse>;
@@ -75,6 +86,9 @@ export class TenantRepository {
     this.aiEvaluations = new Entity(TABLES.aiEvaluations, tenantId);
     this.interviews = new Entity(TABLES.interviews, tenantId);
     this.offers = new Entity(TABLES.offers, tenantId);
+    this.benefits = new Entity(TABLES.benefits, tenantId);
+    this.admissionTemplates = new Entity(TABLES.admissionTemplates, tenantId);
+    this.integrationTemplates = new Entity(TABLES.integrationTemplates, tenantId);
     this.onboardings = new Entity(TABLES.onboardings, tenantId);
     this.development = new Entity(TABLES.development, tenantId);
     this.climateSurveys = new Entity(TABLES.climateSurveys, tenantId);
@@ -184,6 +198,230 @@ export class TenantRepository {
         ]
       );
       return saved;
+    });
+  }
+
+  // ---- Offers -> hire ---------------------------------------------------------
+  /**
+   * Updates an offer's status. Accepting it is the hire: it opens the onboarding journey,
+   * marks the application as hired and counts the seat as filled — all in one transaction.
+   */
+  async setOfferStatus(id: string, status: JobOffer['status'], notes?: string): Promise<JobOffer> {
+    return withTransaction(async tx => {
+      const now = new Date().toISOString();
+      const offer = await this.offers.update(id, {
+        status,
+        notes,
+        sentAt: status === 'sent' ? now : undefined,
+        respondedAt: status === 'accepted' || status === 'declined' ? now : undefined
+      }, tx);
+      if (!offer) throw new NotFoundError('Proposta não encontrada');
+      if (status === 'accepted') await this.registerHire(offer, tx);
+      return offer;
+    });
+  }
+
+  /** Reconciles accepted offers that never got an onboarding journey (accepted before this flow existed). */
+  async syncAcceptedOffers(): Promise<void> {
+    await withTransaction(async tx => {
+      const [offers, journeys] = await Promise.all([this.offers.list(tx), this.onboardings.list(tx)]);
+      const started = new Set(journeys.map(j => j.candidateId));
+      for (const offer of offers) {
+        if (offer.status === 'accepted' && !started.has(offer.candidateId)) await this.registerHire(offer, tx);
+      }
+    });
+  }
+
+  /** Idempotent: the existing journey of the candidate is the guard, so a hire is never counted twice. */
+  private async registerHire(offer: JobOffer, tx: PoolClient): Promise<void> {
+    const journeys = await this.onboardings.list(tx);
+    if (journeys.some(j => j.candidateId === offer.candidateId)) return;
+
+    const [candidate, job] = await Promise.all([
+      this.candidates.get(offer.candidateId, tx),
+      this.openings.get(offer.jobOpeningId, tx)
+    ]);
+    const started = offer.startDate <= new Date().toISOString().split('T')[0];
+
+    await this.onboardings.insert({
+      id: `onb-${offer.id}`,
+      candidateId: offer.candidateId,
+      candidateName: candidate?.name ?? 'Candidato',
+      jobTitle: job?.title ?? 'Cargo a definir',
+      departmentId: job?.departmentId,
+      mentorId: job?.hiringManagerId,
+      hireDate: offer.startDate,
+      status: started ? 'in_progress' : 'preparing',
+      checklists: buildChecklistItems(await this.ensureIntegrationTemplates(tx)),
+      admission: buildAdmissionItems(await this.ensureAdmissionTemplates(tx), offer.contractType, offer.startDate),
+      milestones30DaysDone: false,
+      milestones60DaysDone: false,
+      milestones90DaysDone: false,
+      notes: `Jornada aberta automaticamente após o aceite da proposta (${offer.contractType}).`
+    }, tx);
+
+    // Selection pipeline: the candidate's application ends on the "hired" stage.
+    const application = (await this.applications.list(tx)).find(
+      a => a.candidateId === offer.candidateId && a.jobOpeningId === offer.jobOpeningId
+    );
+    if (application && application.status !== 'hired') {
+      const hiredStage = job?.stages.find(s => s.type === 'hired');
+      await this.applications.update(application.id, {
+        status: 'hired',
+        currentStageId: hiredStage?.id,
+        notes: [...application.notes, `[${new Date().toLocaleDateString('pt-BR')}] Proposta aceita — candidato contratado.`]
+      }, tx);
+    }
+
+    // Opening: one more seat filled; the opening closes when all seats are taken.
+    if (job) {
+      const filledCount = job.filledCount + 1;
+      await this.openings.update(job.id, {
+        filledCount,
+        status: filledCount >= job.openingsCount ? 'filled' : job.status
+      }, tx);
+    }
+  }
+
+  // ---- Integration checklist (catalog + per-hire items inside the onboarding journey) ----
+  /** The catalog is created once per organization from the starter set (never re-created if RH deactivates items). */
+  async ensureIntegrationTemplates(db: Queryable = getPool()): Promise<IntegrationTemplate[]> {
+    const existing = await this.integrationTemplates.list(db);
+    if (existing.length > 0) return existing;
+    const created: IntegrationTemplate[] = [];
+    for (const def of DEFAULT_INTEGRATION_TEMPLATES) {
+      created.push(await this.integrationTemplates.insert({ id: newId('igt'), active: true, ...def }, db));
+    }
+    return created;
+  }
+
+  /** Active catalog items not yet in the journey (matched by origin or, for older journeys, by the same title). */
+  private async availableChecklistTemplates(journey: OnboardingJourney, db: Queryable): Promise<IntegrationTemplate[]> {
+    const ids = new Set(journey.checklists.map(c => c.templateId).filter((id): id is string => !!id));
+    const titles = new Set(journey.checklists.map(c => c.title.trim().toLowerCase()));
+    return (await this.ensureIntegrationTemplates(db)).filter(
+      t => t.active && !ids.has(t.id) && !titles.has(t.name.trim().toLowerCase())
+    );
+  }
+
+  async listAvailableChecklistTemplates(journeyId: string): Promise<IntegrationTemplate[]> {
+    const journey = await this.onboardings.get(journeyId);
+    if (!journey) throw new NotFoundError('Jornada de onboarding não encontrada');
+    return this.availableChecklistTemplates(journey, getPool());
+  }
+
+  /** Adds ONLY the chosen catalog items to this hire's checklist. */
+  async applyChecklistTemplates(journeyId: string, templateIds: string[]): Promise<OnboardingJourney> {
+    if (templateIds.length === 0) throw new ValidationError('Selecione ao menos um item do modelo.');
+    return withTransaction(async tx => {
+      const journey = await getRow<OnboardingJourney>(TABLES.onboardings, this.tenantId, journeyId, tx, true);
+      if (!journey) throw new NotFoundError('Jornada de onboarding não encontrada');
+      const chosen = (await this.availableChecklistTemplates(journey, tx)).filter(t => templateIds.includes(t.id));
+      if (chosen.length === 0) throw new ValidationError('Os itens escolhidos não estão mais disponíveis para esta contratação.');
+      const checklists = [...journey.checklists, ...buildChecklistItems(chosen)].sort((a, b) => a.dueDateDay - b.dueDateDay);
+      return (await this.onboardings.update(journeyId, { checklists }, tx))!;
+    });
+  }
+
+  async addChecklistItem(journeyId: string, item: OnboardingChecklistItem): Promise<OnboardingJourney> {
+    return withTransaction(async tx => {
+      const journey = await getRow<OnboardingJourney>(TABLES.onboardings, this.tenantId, journeyId, tx, true);
+      if (!journey) throw new NotFoundError('Jornada de onboarding não encontrada');
+      const checklists = [...journey.checklists, item].sort((a, b) => a.dueDateDay - b.dueDateDay);
+      return (await this.onboardings.update(journeyId, { checklists }, tx))!;
+    });
+  }
+
+  /** Only an item nobody started can be removed, so progress is never erased by accident. */
+  async removeChecklistItem(journeyId: string, itemId: string): Promise<OnboardingJourney> {
+    return withTransaction(async tx => {
+      const journey = await getRow<OnboardingJourney>(TABLES.onboardings, this.tenantId, journeyId, tx, true);
+      if (!journey) throw new NotFoundError('Jornada de onboarding não encontrada');
+      const item = journey.checklists.find(c => c.id === itemId);
+      if (!item) throw new NotFoundError('Item de checklist não encontrado');
+      if (item.status !== 'pending') throw new ValidationError('Só é possível remover um item pendente. Desmarque o item antes.');
+      return (await this.onboardings.update(journeyId, { checklists: journey.checklists.filter(c => c.id !== itemId) }, tx))!;
+    });
+  }
+
+  // ---- Admission (catalog + per-hire folder inside the onboarding journey) -----
+  /** The catalog is created once per organization from the starter set (never re-created if RH deactivates items). */
+  async ensureAdmissionTemplates(db: Queryable = getPool()): Promise<AdmissionTemplate[]> {
+    const existing = await this.admissionTemplates.list(db);
+    if (existing.length > 0) return existing;
+    const created: AdmissionTemplate[] = [];
+    for (const def of DEFAULT_ADMISSION_TEMPLATES) {
+      created.push(await this.admissionTemplates.insert({ id: newId('adt'), active: true, ...def }, db));
+    }
+    return created;
+  }
+
+  /** Catalog items that apply to the hire's contract type and are not in the folder yet. */
+  private async availableTemplates(journey: OnboardingJourney, db: Queryable): Promise<{ templates: AdmissionTemplate[]; contractType: JobOffer['contractType'] }> {
+    const offers = await this.offers.list(db);
+    const contractType = offers.find(o => o.candidateId === journey.candidateId && o.status === 'accepted')?.contractType ?? 'CLT';
+    const present = new Set(journey.admission.map(i => i.templateId).filter((id): id is string => !!id));
+    const templates = (await this.ensureAdmissionTemplates(db)).filter(
+      t => t.active && t.contractTypes.includes(contractType) && !present.has(t.id)
+    );
+    return { templates, contractType };
+  }
+
+  async listAvailableAdmissionTemplates(journeyId: string): Promise<AdmissionTemplate[]> {
+    const journey = await this.onboardings.get(journeyId);
+    if (!journey) throw new NotFoundError('Jornada de onboarding não encontrada');
+    return (await this.availableTemplates(journey, getPool())).templates;
+  }
+
+  /** Adds to the folder ONLY the chosen catalog items (the RH picks according to the position). */
+  async applyAdmissionTemplates(journeyId: string, templateIds: string[]): Promise<OnboardingJourney> {
+    if (templateIds.length === 0) throw new ValidationError('Selecione ao menos um item do modelo.');
+    return withTransaction(async tx => {
+      const journey = await getRow<OnboardingJourney>(TABLES.onboardings, this.tenantId, journeyId, tx, true);
+      if (!journey) throw new NotFoundError('Jornada de onboarding não encontrada');
+      const { templates, contractType } = await this.availableTemplates(journey, tx);
+      const chosen = templates.filter(t => templateIds.includes(t.id));
+      if (chosen.length === 0) throw new ValidationError('Os itens escolhidos não estão mais disponíveis para esta contratação.');
+      const added = buildAdmissionItems(chosen, contractType, journey.hireDate);
+      return (await this.onboardings.update(journeyId, { admission: [...journey.admission, ...added] }, tx))!;
+    });
+  }
+
+  /** Only an item nobody has worked on can be removed: a document already sent is never discarded silently. */
+  async removeAdmissionItem(journeyId: string, itemId: string): Promise<OnboardingJourney> {
+    return withTransaction(async tx => {
+      const journey = await getRow<OnboardingJourney>(TABLES.onboardings, this.tenantId, journeyId, tx, true);
+      if (!journey) throw new NotFoundError('Jornada de onboarding não encontrada');
+      const item = journey.admission.find(i => i.id === itemId);
+      if (!item) throw new NotFoundError('Item de admissão não encontrado');
+      if (item.file || item.status !== 'pending') {
+        throw new ValidationError('Só é possível remover um item pendente e sem arquivo. Reabra ou trate o item antes.');
+      }
+      return (await this.onboardings.update(journeyId, { admission: journey.admission.filter(i => i.id !== itemId) }, tx))!;
+    });
+  }
+
+  async addAdmissionItem(journeyId: string, item: AdmissionItem): Promise<OnboardingJourney> {
+    return withTransaction(async tx => {
+      const journey = await getRow<OnboardingJourney>(TABLES.onboardings, this.tenantId, journeyId, tx, true);
+      if (!journey) throw new NotFoundError('Jornada de onboarding não encontrada');
+      return (await this.onboardings.update(journeyId, { admission: [...journey.admission, item] }, tx))!;
+    });
+  }
+
+  /** Read-modify-write of one admission item with the journey row locked; `mutate` may throw to abort. */
+  async updateAdmissionItem(
+    journeyId: string,
+    itemId: string,
+    mutate: (item: AdmissionItem) => void
+  ): Promise<OnboardingJourney> {
+    return withTransaction(async tx => {
+      const journey = await getRow<OnboardingJourney>(TABLES.onboardings, this.tenantId, journeyId, tx, true);
+      if (!journey) throw new NotFoundError('Jornada de onboarding não encontrada');
+      const item = journey.admission.find(i => i.id === itemId);
+      if (!item) throw new NotFoundError('Item de admissão não encontrado');
+      mutate(item);
+      return (await this.onboardings.update(journeyId, { admission: journey.admission }, tx))!;
     });
   }
 

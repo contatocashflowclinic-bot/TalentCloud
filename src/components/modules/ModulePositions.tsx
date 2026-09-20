@@ -3,6 +3,7 @@ import { Briefcase, Plus, Tag, DollarSign, Award, CheckCircle2 } from 'lucide-re
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { JobPosition, Department } from '../../types.js';
+import { PositionSummaryModal } from './EntitySummaryModals.js';
 
 export const ModulePositions: React.FC = () => {
   const { activeTenant } = useTenant();
@@ -10,6 +11,7 @@ export const ModulePositions: React.FC = () => {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [summaryId, setSummaryId] = useState<string | null>(null);
 
   // Form states
   const [title, setTitle] = useState('');
@@ -97,7 +99,11 @@ export const ModulePositions: React.FC = () => {
         {positions.map((pos) => {
           const dept = departments.find(d => d.id === pos.departmentId);
           return (
-            <div key={pos.id} className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between space-y-4">
+            <div
+              key={pos.id}
+              onClick={() => setSummaryId(pos.id)}
+              className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between space-y-4 cursor-pointer hover:border-indigo-300 hover:shadow-md transition-all"
+            >
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-800">
@@ -139,6 +145,14 @@ export const ModulePositions: React.FC = () => {
           );
         })}
       </div>
+
+      {summaryId && positions.some(p => p.id === summaryId) && (
+        <PositionSummaryModal
+          position={positions.find(p => p.id === summaryId)!}
+          department={departments.find(d => d.id === positions.find(p => p.id === summaryId)!.departmentId)}
+          onClose={() => setSummaryId(null)}
+        />
+      )}
 
       {/* Modal */}
       {isModalOpen && (

@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { GitBranch, User, Sparkles, ChevronRight, CheckCircle2, ArrowRight } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
-import { SelectionApplication, JobOpening, Candidate, AIAssistedEvaluation } from '../../types.js';
+import { SelectionApplication, JobOpening, Candidate, AIAssistedEvaluation, InterviewSession } from '../../types.js';
+import { useAuth } from '../../context/AuthContext.js';
+import { ApplicationSummaryModal } from './ApplicationSummaryModal.js';
 
 export const ModuleSelectionProcess: React.FC<{
   initialJobId?: string;
@@ -16,6 +18,9 @@ export const ModuleSelectionProcess: React.FC<{
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [aiEvaluations, setAiEvaluations] = useState<AIAssistedEvaluation[]>([]);
   const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const [interviews, setInterviews] = useState<InterviewSession[]>([]);
+  const [summaryAppId, setSummaryAppId] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialJobId) {
@@ -30,7 +35,9 @@ export const ModuleSelectionProcess: React.FC<{
         TenantApi.getOpenings(),
         TenantApi.getApplications(),
         TenantApi.getCandidates(),
-        TenantApi.getAIEvaluations()
+        TenantApi.getAIEvaluations(),
+        // Entrevistas só enriquecem o resumo; sem permissão de ver entrevistas o Kanban segue funcionando.
+        TenantApi.getInterviews().then(setInterviews).catch(() => setInterviews([]))
       ]);
       setOpenings(ops);
       setApplications(apps);
@@ -54,6 +61,8 @@ export const ModuleSelectionProcess: React.FC<{
   }, [activeTenant?.id]);
 
   const activeJob = openings.find(o => o.id === selectedJobId) || openings[0];
+
+  const summaryApp = applications.find(a => a.id === summaryAppId);
 
   const handleAdvanceStage = async (appId: string, currentStageId: string) => {
     if (!activeJob) return;
@@ -138,7 +147,8 @@ export const ModuleSelectionProcess: React.FC<{
                       return (
                         <div
                           key={app.id}
-                          className={`p-4 rounded-2xl bg-white border transition-all space-y-3 group ${
+                          onClick={() => setSummaryAppId(app.id)}
+                          className={`p-4 rounded-2xl bg-white border transition-all space-y-3 group cursor-pointer ${
                             isHighlighted
                               ? 'border-indigo-500 ring-4 ring-indigo-500/20 shadow-md bg-indigo-50/30'
                               : 'border-slate-200/90 shadow-2xs hover:shadow-md hover:border-indigo-300'
@@ -191,7 +201,10 @@ export const ModuleSelectionProcess: React.FC<{
                           )}
 
                           {/* Actions */}
-                          <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1">
+                          <div
+                            onClick={(e) => e.stopPropagation()}
+                            className="pt-2 border-t border-slate-100 flex items-center justify-between gap-1 cursor-default"
+                          >
                             {onNavigateToAI && (
                               <button
                                 onClick={() => onNavigateToAI(app.candidateId, activeJob.id)}
@@ -231,6 +244,23 @@ export const ModuleSelectionProcess: React.FC<{
         </div>
       ) : (
         <div className="p-8 text-center text-slate-500">Nenhuma vaga ativa encontrada.</div>
+      )}
+
+      {summaryApp && activeJob && (
+        <ApplicationSummaryModal
+          application={summaryApp}
+          candidate={candidates.find(c => c.id === summaryApp.candidateId)}
+          job={activeJob}
+          evaluation={aiEvaluations.find(e => e.candidateId === summaryApp.candidateId && e.jobOpeningId === activeJob.id)}
+          interviews={interviews.filter(i => i.candidateId === summaryApp.candidateId && i.jobOpeningId === activeJob.id)}
+          canAdvance={!!user?.permissions.includes('selection:edit')}
+          onAdvance={async () => {
+            await handleAdvanceStage(summaryApp.id, summaryApp.currentStageId);
+            setSummaryAppId(null);
+          }}
+          onOpenAI={onNavigateToAI ? () => onNavigateToAI(summaryApp.candidateId, activeJob.id) : undefined}
+          onClose={() => setSummaryAppId(null)}
+        />
       )}
     </div>
   );

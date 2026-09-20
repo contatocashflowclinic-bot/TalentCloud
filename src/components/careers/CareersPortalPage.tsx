@@ -302,15 +302,16 @@ export const CareersPortalPage: React.FC<CareersPortalPageProps> = ({
         </div>
       </section>
 
-      <main className="max-w-6xl w-full mx-auto px-4 sm:px-8 py-10 space-y-16 flex-1">
+      <main className="flex-1">
 
         {/* Openings + filters */}
-        <section id="vagas" className="scroll-mt-20">
-          <div className="grid lg:grid-cols-[1fr_270px] gap-8 items-start">
+        <section id="vagas" className="scroll-mt-16 py-14 sm:py-16">
+          <div className="max-w-6xl mx-auto px-4 sm:px-8 grid lg:grid-cols-[1fr_270px] gap-8 items-start">
             <div className="space-y-5 min-w-0">
               <div className="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                  <h2 className="text-2xl font-bold text-slate-900">Vagas abertas</h2>
+                  <span className="text-xs font-bold uppercase tracking-widest text-indigo-600">Oportunidades</span>
+                  <h2 className="text-2xl sm:text-3xl font-bold text-slate-900">Vagas abertas</h2>
                   <p className="text-sm text-slate-500">
                     {filteredOpenings.length} {filteredOpenings.length === 1 ? 'oportunidade encontrada' : 'oportunidades encontradas'}
                   </p>
@@ -462,57 +463,71 @@ export const CareersPortalPage: React.FC<CareersPortalPageProps> = ({
 
         {/* Culture pillars */}
         {dna && dna.pillars.length > 0 && (
-          <section id="como-trabalhamos" className="scroll-mt-20 space-y-5">
-            <div>
-              <h2 className="text-2xl font-bold text-slate-900">Nosso jeito de trabalhar</h2>
-              <p className="text-sm text-slate-500">O que nos move todos os dias e faz da {orgName} um lugar único para crescer.</p>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {dna.pillars.slice(0, 3).map((pillar, i) => {
-                const PillarIcon = PILLAR_ICONS[i % PILLAR_ICONS.length];
-                return (
-                  <div key={pillar.id} className="p-5 rounded-2xl bg-white border border-slate-200 space-y-2.5">
-                    <span className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center"><PillarIcon className="w-5 h-5" /></span>
-                    <h3 className="font-bold text-slate-900">{pillar.name}</h3>
-                    <p className="text-sm text-slate-500 leading-relaxed">{pillar.description}</p>
-                  </div>
-                );
-              })}
+          <section id="como-trabalhamos" className="scroll-mt-16 bg-white border-y border-slate-200 py-16 sm:py-20">
+            <div className="max-w-6xl mx-auto px-4 sm:px-8 space-y-10">
+              <div className="text-center max-w-2xl mx-auto space-y-2">
+                <span className="text-xs font-bold uppercase tracking-widest text-indigo-600">Cultura</span>
+                <h2 className="text-2xl sm:text-3xl font-bold text-slate-900">Nosso jeito de trabalhar</h2>
+                <p className="text-sm sm:text-base text-slate-500">O que nos move todos os dias e faz da {orgName} um lugar único para crescer.</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {dna.pillars.slice(0, 3).map((pillar, i) => {
+                  const PillarIcon = PILLAR_ICONS[i % PILLAR_ICONS.length];
+                  return (
+                    <div key={pillar.id} className="p-6 rounded-2xl bg-slate-50 border border-slate-200 space-y-3 text-center md:text-left">
+                      <span className="w-12 h-12 rounded-2xl bg-indigo-600 text-white flex items-center justify-center mx-auto md:mx-0 shadow-md shadow-indigo-200"><PillarIcon className="w-6 h-6" /></span>
+                      <h3 className="font-bold text-slate-900 text-lg">{pillar.name}</h3>
+                      <p className="text-sm text-slate-600 leading-relaxed">{pillar.description}</p>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </section>
         )}
 
         {/* Selection process */}
-        <section id="processo" className="scroll-mt-20 space-y-5">
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900">Nosso processo seletivo</h2>
-            <p className="text-sm text-slate-500">Transparente, respeitoso e focado em pessoas. A decisão final é sempre humana.</p>
+        <section id="processo" className="scroll-mt-16 bg-gradient-to-br from-slate-950 via-indigo-950 to-indigo-900 text-white py-16 sm:py-20">
+          <div className="max-w-6xl mx-auto px-4 sm:px-8 space-y-12">
+            <div className="text-center max-w-2xl mx-auto space-y-2">
+              <span className="text-xs font-bold uppercase tracking-widest text-indigo-300">Passo a passo</span>
+              <h2 className="text-2xl sm:text-3xl font-bold">Nosso processo seletivo</h2>
+              <p className="text-sm sm:text-base text-slate-300">Transparente, respeitoso e focado em pessoas. A decisão final é sempre humana.</p>
+            </div>
+            <ol className="grid grid-cols-1 sm:grid-cols-2 lg:grid-flow-col lg:auto-cols-fr gap-x-6 gap-y-10">
+              {processSteps.map((step, i) => (
+                <li key={`${step.name}-${i}`} className="relative flex lg:flex-col items-start lg:items-center gap-4 lg:text-center">
+                  {i < processSteps.length - 1 && (
+                    <span aria-hidden className="hidden lg:block absolute top-6 left-1/2 w-full h-px bg-white/20" />
+                  )}
+                  <span className={`relative z-10 w-12 h-12 rounded-full flex items-center justify-center text-base font-bold shrink-0 ring-4 ring-indigo-950 ${i === 0 ? 'bg-indigo-500 text-white' : 'bg-white text-indigo-800'}`}>{i + 1}</span>
+                  <div className="lg:px-2">
+                    <h3 className="text-sm font-bold">{step.name}</h3>
+                    <p className="text-xs text-slate-300 mt-1 leading-relaxed">{step.text}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
           </div>
-          <ol className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
-            {processSteps.map((step, i) => (
-              <li key={`${step.name}-${i}`} className="flex lg:flex-col gap-3 items-start">
-                <span className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${i === 0 ? 'bg-indigo-600 text-white' : 'bg-indigo-100 text-indigo-700'}`}>{i + 1}</span>
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900">{step.name}</h3>
-                  <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{step.text}</p>
-                </div>
-              </li>
-            ))}
-          </ol>
         </section>
 
         {/* About */}
         {dna && (dna.cultureSummary || dna.coreValues.length > 0) && (
-          <section id="sobre" className="scroll-mt-20 space-y-4">
-            <h2 className="text-2xl font-bold text-slate-900">Sobre nós</h2>
-            {dna.cultureSummary && <p className="text-sm text-slate-600 max-w-3xl leading-relaxed">{dna.cultureSummary}</p>}
-            {dna.coreValues.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {dna.coreValues.map(v => (
-                  <span key={v} className="px-3 py-1.5 rounded-full bg-white border border-slate-200 text-xs font-medium text-slate-700">{v}</span>
-                ))}
+          <section id="sobre" className="scroll-mt-16 py-16 sm:py-20">
+            <div className="max-w-6xl mx-auto px-4 sm:px-8 space-y-5">
+              <div className="space-y-2">
+                <span className="text-xs font-bold uppercase tracking-widest text-indigo-600">Quem somos</span>
+                <h2 className="text-2xl sm:text-3xl font-bold text-slate-900">Sobre nós</h2>
               </div>
-            )}
+              {dna.cultureSummary && <p className="text-sm sm:text-base text-slate-600 max-w-3xl leading-relaxed">{dna.cultureSummary}</p>}
+              {dna.coreValues.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {dna.coreValues.map(v => (
+                    <span key={v} className="px-3.5 py-1.5 rounded-full bg-white border border-slate-200 text-xs font-medium text-slate-700">{v}</span>
+                  ))}
+                </div>
+              )}
+            </div>
           </section>
         )}
       </main>

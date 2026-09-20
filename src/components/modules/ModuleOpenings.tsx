@@ -4,6 +4,7 @@ import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { JobOpening, JobPosition, Department, OrganizationalDNA } from '../../types.js';
 import { JobSocialShareModal } from '../careers/JobSocialShareModal.js';
+import { OpeningSummaryModal } from './EntitySummaryModals.js';
 
 export const ModuleOpenings: React.FC<{
   onNavigateToProcess?: (jobId: string) => void;
@@ -16,6 +17,7 @@ export const ModuleOpenings: React.FC<{
   const [dna, setDna] = useState<OrganizationalDNA | null>(null);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [summaryId, setSummaryId] = useState<string | null>(null);
 
   // Social Share Modal state
   const [shareJob, setShareJob] = useState<JobOpening | null>(null);
@@ -126,7 +128,8 @@ export const ModuleOpenings: React.FC<{
           return (
             <div
               key={job.id}
-              className="p-6 rounded-3xl bg-white border border-slate-200/90 shadow-xs hover:shadow-lg hover:border-indigo-300 transition-all duration-200 flex flex-col justify-between space-y-5 group relative"
+              onClick={() => setSummaryId(job.id)}
+              className="p-6 rounded-3xl bg-white border border-slate-200/90 shadow-xs hover:shadow-lg hover:border-indigo-300 transition-all duration-200 flex flex-col justify-between space-y-5 group relative cursor-pointer"
             >
               <div className="space-y-3.5">
                 {/* Status, SLA and Dept Header */}
@@ -195,7 +198,7 @@ export const ModuleOpenings: React.FC<{
               </div>
 
               {/* Card Footer Actions */}
-              <div className="space-y-2.5 pt-3 border-t border-slate-100 text-xs">
+              <div onClick={(e) => e.stopPropagation()} className="space-y-2.5 pt-3 border-t border-slate-100 text-xs cursor-default">
                 {/* Social Share & Public Link Row */}
                 <div className="grid grid-cols-2 gap-2">
                   <button
@@ -233,6 +236,21 @@ export const ModuleOpenings: React.FC<{
           );
         })}
       </div>
+
+      {summaryId && openings.some(j => j.id === summaryId) && (() => {
+        const job = openings.find(j => j.id === summaryId)!;
+        return (
+          <OpeningSummaryModal
+            job={job}
+            department={departments.find(d => d.id === job.departmentId)}
+            position={positions.find(p => p.id === job.positionId)}
+            onOpenPipeline={onNavigateToProcess ? () => onNavigateToProcess(job.id) : undefined}
+            onOpenPortal={onNavigateToCareersPortal ? () => onNavigateToCareersPortal(job.id) : undefined}
+            onShare={() => { setSummaryId(null); handleOpenShareModal(job); }}
+            onClose={() => setSummaryId(null)}
+          />
+        );
+      })()}
 
       {/* Modal */}
       {isModalOpen && (

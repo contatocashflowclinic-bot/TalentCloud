@@ -311,14 +311,93 @@ export interface JobOffer {
   notes?: string;
 }
 
+export const BENEFIT_CATEGORIES = ['Saúde', 'Alimentação', 'Financeiro', 'Bem-estar', 'Trabalho', 'Outros'] as const;
+export type BenefitCategory = typeof BENEFIT_CATEGORIES[number];
+
+/** Benefício do catálogo da organização. `defaultLevels`: níveis de cargo em que já vem marcado na proposta. */
+export interface BenefitCatalogItem {
+  id: string;
+  name: string;
+  category: BenefitCategory;
+  description: string;
+  active: boolean;
+  defaultLevels: JobPosition['level'][];
+}
+
 // 12. Onboarding
+export const CHECKLIST_CATEGORIES = ['Documentação', 'TI & Acessos', 'Cultura & Boas-Vindas', 'Treinamento Técnico'] as const;
+export const CHECKLIST_RESPONSIBLES = ['RH', 'TI', 'Gestor', 'Buddy'] as const;
+
+/** Item do modelo de integração da organização (checklist pós-início). */
+export interface IntegrationTemplate {
+  id: string;
+  name: string;
+  category: typeof CHECKLIST_CATEGORIES[number];
+  responsible: typeof CHECKLIST_RESPONSIBLES[number];
+  dueDay: number;
+  active: boolean;
+}
+
 export interface OnboardingChecklistItem {
   id: string;
+  templateId?: string;
   title: string;
   category: 'Documentação' | 'TI & Acessos' | 'Cultura & Boas-Vindas' | 'Treinamento Técnico';
   dueDateDay: number; // e.g., Day 1, Day 7, Day 30
   status: 'pending' | 'in_progress' | 'completed';
   assignedToRole: string;
+}
+
+// 12.1 Admissão (documentos e etapas exigidos na contratação)
+export const ADMISSION_CATEGORIES = ['Documentos pessoais', 'Exames', 'Dados bancários e dependentes', 'Contratuais', 'Etapas internas'] as const;
+export const ADMISSION_RESPONSIBLES = ['RH', 'Candidato', 'DP', 'Jurídico', 'TI'] as const;
+export type AdmissionCategory = typeof ADMISSION_CATEGORIES[number];
+export type AdmissionResponsible = typeof ADMISSION_RESPONSIBLES[number];
+
+/** Item do catálogo da organização: vira um item da pasta de admissão de cada contratação. */
+export interface AdmissionTemplate {
+  id: string;
+  name: string;
+  category: AdmissionCategory;
+  description: string;
+  required: boolean;
+  requiresDocument: boolean;
+  responsible: AdmissionResponsible;
+  dueDaysBeforeStart: number;
+  contractTypes: JobOffer['contractType'][];
+  active: boolean;
+}
+
+export type AdmissionStatus = 'pending' | 'submitted' | 'approved' | 'rejected';
+
+export interface AdmissionFile {
+  name: string;
+  mime: string;
+  size: number;
+  path: string;
+  uploadedAt: string;
+  uploadedBy: string;
+}
+
+export interface AdmissionHistoryEntry {
+  at: string;
+  by: string;
+  action: string;
+}
+
+export interface AdmissionItem {
+  id: string;
+  templateId?: string;
+  title: string;
+  category: AdmissionCategory;
+  required: boolean;
+  requiresDocument: boolean;
+  responsible: AdmissionResponsible;
+  dueDate: string;
+  status: AdmissionStatus;
+  file?: AdmissionFile;
+  reviewNote?: string;
+  history: AdmissionHistoryEntry[];
 }
 
 export interface OnboardingJourney {
@@ -331,6 +410,7 @@ export interface OnboardingJourney {
   hireDate: string;
   status: 'preparing' | 'in_progress' | 'completed';
   checklists: OnboardingChecklistItem[];
+  admission: AdmissionItem[];
   milestones30DaysDone: boolean;
   milestones60DaysDone: boolean;
   milestones90DaysDone: boolean;

@@ -5,6 +5,7 @@ import { TenantApi } from '../../services/api.js';
 import { Candidate, JobOpening, AIAssistedEvaluation } from '../../types.js';
 import { ExportButton } from '../ExportButton.js';
 import { exportCandidatesToCSV, exportCandidatesToPDF } from '../../utils/exportUtils.js';
+import { CandidateSummaryModal } from './EntitySummaryModals.js';
 
 export const ModuleCandidates: React.FC<{
   onSelectCandidateForAI?: (candidateId: string, jobId?: string) => void;
@@ -18,6 +19,7 @@ export const ModuleCandidates: React.FC<{
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState(initialSearchTerm || '');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [summaryId, setSummaryId] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialSearchTerm !== undefined) {
@@ -164,7 +166,8 @@ export const ModuleCandidates: React.FC<{
           return (
             <div
               key={cand.id}
-              className={`p-6 rounded-3xl bg-white border transition-all duration-200 flex flex-col justify-between space-y-5 group relative ${
+              onClick={() => setSummaryId(cand.id)}
+              className={`p-6 rounded-3xl bg-white border transition-all duration-200 flex flex-col justify-between space-y-5 group relative cursor-pointer ${
                 isHighlighted
                   ? 'border-indigo-500 ring-4 ring-indigo-500/20 shadow-lg'
                   : 'border-slate-200/90 shadow-xs hover:shadow-lg hover:border-indigo-300'
@@ -275,7 +278,7 @@ export const ModuleCandidates: React.FC<{
 
                 {onSelectCandidateForAI && (
                   <button
-                    onClick={() => onSelectCandidateForAI(cand.id, openings[0]?.id)}
+                    onClick={(e) => { e.stopPropagation(); onSelectCandidateForAI(cand.id, openings[0]?.id); }}
                     className="w-full py-2.5 rounded-xl bg-indigo-50/90 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs transition-all flex items-center justify-center gap-2 border border-indigo-200/80 group-hover:bg-indigo-600 group-hover:text-white group-hover:border-transparent active:scale-99"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-indigo-600 group-hover:text-white" />
@@ -288,6 +291,16 @@ export const ModuleCandidates: React.FC<{
           );
         })}
       </div>
+
+      {summaryId && candidates.some(c => c.id === summaryId) && (
+        <CandidateSummaryModal
+          candidate={candidates.find(c => c.id === summaryId)!}
+          evaluations={evaluations}
+          openings={openings}
+          onOpenAI={onSelectCandidateForAI ? () => onSelectCandidateForAI(summaryId, openings[0]?.id) : undefined}
+          onClose={() => setSummaryId(null)}
+        />
+      )}
 
       {/* Modal */}
       {isModalOpen && (

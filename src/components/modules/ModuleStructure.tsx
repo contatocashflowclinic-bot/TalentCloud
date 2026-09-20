@@ -3,12 +3,14 @@ import { Network, Plus, Users, DollarSign, Building, CheckCircle2 } from 'lucide
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { Department } from '../../types.js';
+import { DepartmentSummaryModal } from './EntitySummaryModals.js';
 
 export const ModuleStructure: React.FC = () => {
   const { activeTenant } = useTenant();
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [summaryId, setSummaryId] = useState<string | null>(null);
 
   // Form states
   const [name, setName] = useState('');
@@ -80,7 +82,11 @@ export const ModuleStructure: React.FC = () => {
         {departments.map((dept) => {
           const progress = Math.min(100, Math.round((dept.currentHeadcount / dept.headcountTarget) * 100));
           return (
-            <div key={dept.id} className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-4">
+            <div
+              key={dept.id}
+              onClick={() => setSummaryId(dept.id)}
+              className="p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-4 cursor-pointer hover:border-indigo-300 hover:shadow-md transition-all"
+            >
               <div className="flex items-start justify-between">
                 <div className="space-y-1">
                   <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-100 text-slate-700">
@@ -121,6 +127,14 @@ export const ModuleStructure: React.FC = () => {
           );
         })}
       </div>
+
+      {summaryId && departments.some(d => d.id === summaryId) && (
+        <DepartmentSummaryModal
+          department={departments.find(d => d.id === summaryId)!}
+          departments={departments}
+          onClose={() => setSummaryId(null)}
+        />
+      )}
 
       {/* Modal */}
       {isModalOpen && (

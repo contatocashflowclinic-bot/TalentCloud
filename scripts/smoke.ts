@@ -21,6 +21,7 @@ import { closePool, getPool } from '../server/db/pool.js';
 import { PLAN_ROUTINES } from '../src/access.js';
 import { TenantRepository } from '../server/tenant/TenantRepository.js';
 import { AccessService } from '../server/auth/AccessService.js';
+import { removeFile } from '../server/storage.js';
 
 config({ path: ['.env.local', '.env'], quiet: true });
 
@@ -28,6 +29,7 @@ const BASE = process.env.BASE_URL || 'http://localhost:3000';
 const ADMIN_EMAIL = process.env.SMOKE_ADMIN_EMAIL || 'admin@admin.com.br';
 const ADMIN_PASSWORD = process.env.SMOKE_ADMIN_PASSWORD || 'Admin@123';
 
+const storedFiles = new Set<string>();
 let passed = 0;
 const failures: string[] = [];
 
@@ -105,7 +107,7 @@ async function seedFidelity() {
     check(`[${slug}] aiEvaluations`, sameData(await repo.aiEvaluations.list(), [...(seed.aiEvaluations ?? [])].reverse()));
     check(`[${slug}] interviews`, sameData(await repo.interviews.list(), seed.interviews ?? []));
     check(`[${slug}] offers`, sameData(await repo.offers.list(), seed.offers ?? []));
-    check(`[${slug}] onboardings`, sameData(await repo.onboardings.list(), seed.onboardings ?? []));
+    check(`[${slug}] onboardings`, sameData(await repo.onboardings.list(), (seed.onboardings ?? []).map((o: any) => ({ admission: [], ...o }))));
     check(`[${slug}] development`, sameData(await repo.development.list(), seed.developmentRecords ?? []));
     check(`[${slug}] climateSurveys`, sameData(await repo.climateSurveys.list(), seed.climateSurveys ?? []));
     check(`[${slug}] turnoverAlerts`, sameData(await repo.turnoverAlerts.list(), seed.turnoverAlerts ?? []));
@@ -411,6 +413,140 @@ async function main() {
     check('create offer', offer.status === 201, offer.json);
     check('offer sent sets sentAt', !!(await A('PATCH', `/api/v1/offers/${offer.json.offer.id}/status`, { status: 'sent' })).json.offer?.sentAt);
     check('invalid offer status -> 400', (await A('PATCH', `/api/v1/offers/${offer.json.offer.id}/status`, { status: 'bogus' })).status === 400);
+
+    // ---- Contratação: o aceite abre o onboarding + pasta de admissão -----------------
+    const accepted = await A('PATCH', `/api/v1/offers/${offer.json.offer.id}/status`, { status: 'accepted' });
+    check('accept offer', accepted.json.offer?.status === 'accepted', accepted.json);
+    const journeys = (await A('GET', '/api/v1/onboardings')).json.onboardings ?? [];
+    const journey = journeys.find((j: any) => j.candidateId === candId);
+    check('accepted offer opens the onboarding journey', !!journey && !!journey.jobTitle && !!journey.hireDate, journey);
+    check('journey has an admission folder (CLT items, contract included, no PJ-only items)',
+      journey?.admission?.length > 0 && journey.admission.some((i: any) => i.title === 'Contrato de trabalho assinado') && !journey.admission.some((i: any) => /prestação de serviços/.test(i.title)), journey?.admission?.length);
+    await A('PATCH', `/api/v1/offers/${offer.json.offer.id}/status`, { status: 'accepted' });
+    check('accepting twice does not duplicate the journey', ((await A('GET', '/api/v1/onboardings')).json.onboardings ?? []).filter((j: any) => j.candidateId === candId).length === 1);
+    check('application marked as hired', (await A('GET', '/api/v1/applications')).json.applications.find((a: any) => a.id === appId)?.status === 'hired');
+    check('opening seat counted once', (await A('GET', '/api/v1/openings')).json.openings.find((o: any) => o.id === jobId)?.filledCount === 1);
+
+    const upload = (token: string, jid: string, iid: string, body: Buffer | string, type: string, name = 'doc.pdf') =>
+      fetch(`${BASE}/api/v1/onboardings/${jid}/admission/${iid}/file?name=${encodeURIComponent(name)}`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': type }, body: body as any
+      }).then(async r => ({ status: r.status, json: (await r.json().catch(() => ({}))) as any }));
+    const pdf = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF');
+    const docItem = journey.admission.find((i: any) => i.requiresDocument && i.required);
+    const stepItem = journey.admission.find((i: any) => !i.requiresDocument);
+    const jp = `/api/v1/onboardings/${journey.id}/admission`;
+
+    const up = await upload(adminA, journey.id, docItem.id, pdf, 'application/pdf', 'Meu RG ç.pdf');
+    const upItem = up.json.onboarding?.admission?.find((i: any) => i.id === docItem.id);
+    check('upload PDF -> item in review with file metadata', up.status === 201 && upItem?.status === 'submitted' && upItem.file?.size === pdf.length, up.json);
+    if (upItem?.file?.path) storedFiles.add(upItem.file.path);
+    check('upload: disallowed type -> 400', (await upload(adminA, journey.id, docItem.id, 'x=1', 'text/plain')).status === 400);
+    check('upload: content that is not a PDF -> 400', (await upload(adminA, journey.id, docItem.id, 'nao sou pdf', 'application/pdf')).status === 400);
+    check('upload: empty body -> 400', (await upload(adminA, journey.id, docItem.id, '', 'application/pdf')).status === 400);
+    check('upload to a step item -> 400', (await upload(adminA, journey.id, stepItem.id, pdf, 'application/pdf')).status === 400);
+    check('upload: unknown item -> 404', (await upload(adminA, journey.id, 'adi-nope', pdf, 'application/pdf')).status === 404);
+    check('upload denied without onboarding:edit', (await upload(tokens.INTERVIEWER, journey.id, docItem.id, pdf, 'application/pdf')).status === 403);
+    const dl = await fetch(`${BASE}${jp}/${docItem.id}/file`, { headers: { Authorization: `Bearer ${adminA}` } });
+    const dlBytes = Buffer.from(await dl.arrayBuffer());
+    check('download returns the same bytes as a private attachment', dl.status === 200 && dlBytes.equals(pdf) && /attachment/.test(dl.headers.get('content-disposition') ?? '') && /no-store/.test(dl.headers.get('cache-control') ?? ''), dl.status);
+    check('download denied without onboarding:view', (await fetch(`${BASE}${jp}/${docItem.id}/file`, { headers: { Authorization: `Bearer ${tokens.INTERVIEWER}` } })).status === 403);
+    check('download: item without file -> 404', (await fetch(`${BASE}${jp}/${stepItem.id}/file`, { headers: { Authorization: `Bearer ${adminA}` } })).status === 404);
+
+    check('review: reject needs a reason -> 400', (await A('PATCH', `${jp}/${docItem.id}`, { action: 'reject' })).status === 400);
+    check('review: invalid action -> 400', (await A('PATCH', `${jp}/${docItem.id}`, { action: 'explode' })).status === 400);
+    const rejected = (await A('PATCH', `${jp}/${docItem.id}`, { action: 'reject', note: 'ilegível' })).json.onboarding?.admission.find((i: any) => i.id === docItem.id);
+    check('review: reject stores the reason', rejected?.status === 'rejected' && rejected.reviewNote === 'ilegível', rejected);
+    check('review: cannot approve a rejected document without a new upload -> 400', (await A('PATCH', `${jp}/${docItem.id}`, { action: 'approve' })).status === 400);
+    const reup = await upload(adminA, journey.id, docItem.id, pdf, 'application/pdf', 'novo.pdf');
+    const reItem = reup.json.onboarding?.admission?.find((i: any) => i.id === docItem.id);
+    check('re-upload replaces the file and goes back to review', reup.status === 201 && reItem?.status === 'submitted' && reItem.file?.name === 'novo.pdf' && !reItem.reviewNote, reup.json);
+    if (reItem?.file?.path) storedFiles.add(reItem.file.path);
+    const approved = (await A('PATCH', `${jp}/${docItem.id}`, { action: 'approve' })).json.onboarding?.admission.find((i: any) => i.id === docItem.id);
+    check('review: approve + history recorded', approved?.status === 'approved' && approved.history.length >= 4, approved?.history);
+    check('step item: cannot be rejected -> 400', (await A('PATCH', `${jp}/${stepItem.id}`, { action: 'reject', note: 'x' })).status === 400);
+    check('step item: mark as done', (await A('PATCH', `${jp}/${stepItem.id}`, { action: 'approve' })).json.onboarding?.admission.find((i: any) => i.id === stepItem.id)?.status === 'approved');
+    check('reopen sends a step back to pending', (await A('PATCH', `${jp}/${stepItem.id}`, { action: 'reopen' })).json.onboarding?.admission.find((i: any) => i.id === stepItem.id)?.status === 'pending');
+
+    const extraItem = await A('POST', jp, { title: 'Declaração extra', category: 'Contratuais', responsible: 'Jurídico', requiresDocument: true });
+    check('add a custom item to one hire', extraItem.status === 201 && extraItem.json.onboarding.admission.length === journey.admission.length + 1, extraItem.json);
+    check('custom item: invalid category -> 400', (await A('POST', jp, { title: 'x', category: 'Inexistente' })).status === 400);
+    // Modelo: o RH escolhe quais itens levar; nada entra sem ser escolhido
+    check('available: all starter CLT items are already in the folder', ((await A('GET', `${jp}/available`)).json.templates ?? []).length === 0);
+    const extraTpl = await A('POST', '/api/v1/admission-templates', { name: 'Exame toxicológico', category: 'Exames', contractTypes: ['CLT'], required: false });
+    const avail = (await A('GET', `${jp}/available`)).json.templates ?? [];
+    check('available: a new CLT catalog item is offered (and PJ-only ones are not)', avail.length === 1 && avail[0].id === extraTpl.json.template?.id, avail);
+    check('apply-template without templateIds -> 400', (await A('POST', `${jp}/apply-template`, {})).status === 400);
+    check('apply-template with an empty selection -> 400', (await A('POST', `${jp}/apply-template`, { templateIds: [] })).status === 400);
+    check('apply-template with an unavailable item -> 400', (await A('POST', `${jp}/apply-template`, { templateIds: ['adt-nope'] })).status === 400);
+    const chosen = await A('POST', `${jp}/apply-template`, { templateIds: [extraTpl.json.template.id] });
+    check('apply-template brings only the chosen item', chosen.json.onboarding?.admission.length === journey.admission.length + 2 && chosen.json.onboarding.admission.some((i: any) => i.title === 'Exame toxicológico'), chosen.json);
+    check('apply-template twice does not duplicate -> 400', (await A('POST', `${jp}/apply-template`, { templateIds: [extraTpl.json.template.id] })).status === 400);
+    const toxId = chosen.json.onboarding.admission.find((i: any) => i.title === 'Exame toxicológico').id;
+    check('org B cannot list or apply the folder items of org A', (await B('GET', `${jp}/available`)).status === 404 && (await B('POST', `${jp}/apply-template`, { templateIds: [extraTpl.json.template.id] })).status === 404);
+    check('remove: a document with a file cannot be removed -> 400', (await A('DELETE', `${jp}/${docItem.id}`)).status === 400);
+    check('remove: unknown item -> 404', (await A('DELETE', `${jp}/adi-nope`)).status === 404);
+    check('remove denied without onboarding:edit', (await R('INTERVIEWER', 'DELETE', `${jp}/${toxId}`)).status === 403);
+    check('remove: a pending item without file is removed', (await A('DELETE', `${jp}/${toxId}`)).json.onboarding?.admission.length === journey.admission.length + 1);
+    check('removed item is offered again by the model', ((await A('GET', `${jp}/available`)).json.templates ?? []).some((t: any) => t.id === extraTpl.json.template.id));
+
+    const tpls = await A('GET', '/api/v1/admission-templates');
+    check('catalog starts with the starter set (CLT + PJ + steps)', tpls.json.templates?.length >= 20 && tpls.json.templates.some((t: any) => !t.requiresDocument), tpls.json.templates?.length);
+    check('catalog: invalid category -> 400', (await A('POST', '/api/v1/admission-templates', { name: 'x', category: 'Nada' })).status === 400);
+    check('catalog: no contract type -> 400', (await A('POST', '/api/v1/admission-templates', { name: 'x', category: 'Exames', contractTypes: [] })).status === 400);
+    check('catalog: due days out of range -> 400', (await A('POST', '/api/v1/admission-templates', { name: 'x', category: 'Exames', dueDaysBeforeStart: 500 })).status === 400);
+    const newTpl = await A('POST', '/api/v1/admission-templates', { name: 'Curso NR-10', category: 'Exames', contractTypes: ['PJ'], responsible: 'RH' });
+    check('catalog: create item', newTpl.status === 201 && newTpl.json.template.active === true, newTpl.json);
+    check('catalog: duplicate name -> 409', (await A('POST', '/api/v1/admission-templates', { name: 'curso nr-10', category: 'Exames' })).status === 409);
+    check('catalog: deactivate item', (await A('PATCH', `/api/v1/admission-templates/${newTpl.json.template.id}`, { active: false })).json.template?.active === false);
+    check('catalog edit denied without onboarding:edit', (await R('INTERVIEWER', 'POST', '/api/v1/admission-templates', { name: 'y', category: 'Exames' })).status === 403);
+
+    check('isolation: org B cannot see org A admission catalog items', !(await B('GET', '/api/v1/admission-templates')).json.templates?.some((t: any) => t.id === newTpl.json.template.id));
+    check('isolation: org B cannot download org A documents', (await fetch(`${BASE}${jp}/${docItem.id}/file`, { headers: { Authorization: `Bearer ${adminB}` } })).status === 404);
+    check('isolation: org B cannot review org A documents', (await B('PATCH', `${jp}/${docItem.id}`, { action: 'reopen' })).status === 404);
+    check('isolation: org B cannot upload to org A journey', (await upload(adminB, journey.id, docItem.id, pdf, 'application/pdf')).status === 404);
+
+    // ---- Checklist de Integração: modelo por organização + itens escolhidos por contratação --------
+    const ck = `/api/v1/onboardings/${journey.id}/checklist`;
+    const fresh = async () => ((await A('GET', '/api/v1/onboardings')).json.onboardings ?? []).find((j: any) => j.candidateId === candId);
+    const j0 = await fresh();
+    check('hire creates the checklist from the model (8 tasks, sorted by due day, none about the contract)',
+      j0.checklists.length === 8 && j0.checklists.every((c: any) => c.templateId && c.status === 'pending') &&
+      j0.checklists.every((c: any, i: number, arr: any[]) => i === 0 || arr[i - 1].dueDateDay <= c.dueDateDay) &&
+      !j0.checklists.some((c: any) => /contrato/i.test(c.title)), j0.checklists.map((c: any) => c.title));
+    const c1 = j0.checklists[0], c2 = j0.checklists[1];
+    check('checklist: toggle an item still works', (await A('PATCH', `${ck}/${c1.id}`, { status: 'completed' })).json.onboarding?.checklists.find((c: any) => c.id === c1.id)?.status === 'completed');
+    check('checklist: a started item cannot be removed -> 400', (await A('DELETE', `${ck}/${c1.id}`)).status === 400);
+    check('checklist: unknown item -> 404', (await A('DELETE', `${ck}/chk-nope`)).status === 404);
+    check('checklist: remove denied without onboarding:edit', (await R('INTERVIEWER', 'DELETE', `${ck}/${c2.id}`)).status === 403);
+    check('checklist: a pending item is removed', (await A('DELETE', `${ck}/${c2.id}`)).json.onboarding?.checklists.length === 7);
+    const avail2 = (await A('GET', `/api/v1/onboardings/${journey.id}/checklist-available`)).json.templates ?? [];
+    check('checklist: the removed task is offered again by the model (only it)', avail2.length === 1 && avail2[0].id === c2.templateId, avail2);
+    const capply = `/api/v1/onboardings/${journey.id}/checklist-apply`;
+    check('checklist: apply without templateIds -> 400', (await A('POST', capply, {})).status === 400);
+    check('checklist: apply with an empty selection -> 400', (await A('POST', capply, { templateIds: [] })).status === 400);
+    check('checklist: apply with an unavailable item -> 400', (await A('POST', capply, { templateIds: ['igt-nope'] })).status === 400);
+    check('checklist: apply brings only the chosen task back', (await A('POST', capply, { templateIds: [c2.templateId] })).json.onboarding?.checklists.length === 8);
+    check('checklist: applying twice does not duplicate -> 400', (await A('POST', capply, { templateIds: [c2.templateId] })).status === 400);
+    check('checklist: apply denied without onboarding:edit', (await R('INTERVIEWER', 'POST', capply, { templateIds: [c2.templateId] })).status === 403);
+    const custom = await A('POST', ck, { title: 'Treinamento da ferramenta X', category: 'Treinamento Técnico', assignedToRole: 'RH', dueDateDay: 10 });
+    check('checklist: add a one-off task', custom.status === 201 && custom.json.onboarding.checklists.length === 9 && custom.json.onboarding.checklists.some((c: any) => c.title === 'Treinamento da ferramenta X' && c.dueDateDay === 10), custom.json);
+    check('checklist: one-off task with invalid category -> 400', (await A('POST', ck, { title: 'x', category: 'Nada' })).status === 400);
+    check('checklist: one-off task with invalid due day -> 400', (await A('POST', ck, { title: 'x', dueDateDay: 999 })).status === 400);
+    check('checklist: one-off task with invalid responsible -> 400', (await A('POST', ck, { title: 'x', assignedToRole: 'Ninguém' })).status === 400);
+
+    const itpls = await A('GET', '/api/v1/integration-templates');
+    check('integration model starts with the starter set', itpls.json.templates?.length === 8, itpls.json.templates?.length);
+    check('integration model: invalid category -> 400', (await A('POST', '/api/v1/integration-templates', { name: 'x', category: 'Nada' })).status === 400);
+    check('integration model: invalid responsible -> 400', (await A('POST', '/api/v1/integration-templates', { name: 'x', category: 'Documentação', responsible: 'Ninguém' })).status === 400);
+    check('integration model: negative due day -> 400', (await A('POST', '/api/v1/integration-templates', { name: 'x', category: 'Documentação', dueDay: -1 })).status === 400);
+    const itpl = await A('POST', '/api/v1/integration-templates', { name: 'Almoço com o time', category: 'Cultura & Boas-Vindas', responsible: 'Gestor', dueDay: 5 });
+    check('integration model: create task', itpl.status === 201 && itpl.json.template.active === true && itpl.json.template.dueDay === 5, itpl.json);
+    check('integration model: duplicate name -> 409', (await A('POST', '/api/v1/integration-templates', { name: 'almoço com o time', category: 'Documentação' })).status === 409);
+    check('integration model: new task is offered to open journeys', ((await A('GET', `/api/v1/onboardings/${journey.id}/checklist-available`)).json.templates ?? []).some((t: any) => t.id === itpl.json.template.id));
+    check('integration model: deactivated task is no longer offered', (await A('PATCH', `/api/v1/integration-templates/${itpl.json.template.id}`, { active: false })).json.template?.active === false && !((await A('GET', `/api/v1/onboardings/${journey.id}/checklist-available`)).json.templates ?? []).some((t: any) => t.id === itpl.json.template.id));
+    check('integration model: edit denied without onboarding:edit', (await R('INTERVIEWER', 'POST', '/api/v1/integration-templates', { name: 'y', category: 'Documentação' })).status === 403);
+    check('isolation: org B cannot see org A integration model items', !((await B('GET', '/api/v1/integration-templates')).json.templates ?? []).some((t: any) => t.id === itpl.json.template.id));
+    check('isolation: org B cannot touch org A checklist', (await B('GET', `/api/v1/onboardings/${journey.id}/checklist-available`)).status === 404 && (await B('DELETE', `${ck}/${c1.id}`)).status === 404 && (await B('POST', ck, { title: 'x' })).status === 404);
     check('turnover alert', (await A('POST', '/api/v1/retention/alert', { collaboratorName: 'Fulano', riskLevel: 'Alto', earlyWarningSignals: 'faltas, queda', suggestedActions: '1:1' })).status === 201);
 
     // ---- Isolation between organizations -------------------------------------------
@@ -617,6 +753,7 @@ async function main() {
       }
     }
   } finally {
+    for (const path of storedFiles) await removeFile(path);
     // ---- Cleanup: remove temporary orgs (cascade users/sessions) and their audit rows ----
     const ids = createdTenantIds.filter(Boolean);
     await getPool().query(`delete from public.platform_audit_logs where user_name like '%@smoke.test' or details like '%@smoke.test%'`);

@@ -18,6 +18,11 @@ import {
   InterviewSession,
   JobOffer,
   OnboardingJourney,
+  AdmissionTemplate,
+  AdmissionItem,
+  IntegrationTemplate,
+  OnboardingChecklistItem,
+  BenefitCatalogItem,
   CollaboratorDevelopment,
   ClimateSurveyResponse,
   TurnoverRiskAlert,
@@ -64,7 +69,7 @@ export function getLastTelemetry() {
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers || {});
-  headers.set('Content-Type', 'application/json');
+  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   
   if (authToken) {
     headers.set('Authorization', `Bearer ${authToken}`);
@@ -393,10 +398,86 @@ export const TenantApi = {
     method: 'POST',
     body: JSON.stringify(payload)
   })).offer,
+  getBenefits: async () => (await request<{ success: boolean; benefits: BenefitCatalogItem[] }>('/api/v1/benefits')).benefits,
+  createBenefit: async (payload: Partial<BenefitCatalogItem>) => (await request<{ success: boolean; benefit: BenefitCatalogItem }>('/api/v1/benefits', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })).benefit,
+  updateBenefit: async (id: string, payload: Partial<BenefitCatalogItem>) => (await request<{ success: boolean; benefit: BenefitCatalogItem }>(`/api/v1/benefits/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).benefit,
   updateOfferStatus: async (id: string, status: JobOffer['status'], notes?: string) => (await request<{ success: boolean; offer: JobOffer }>(`/api/v1/offers/${id}/status`, {
     method: 'PATCH',
     body: JSON.stringify({ status, notes })
   })).offer,
+
+  // 12.1 Admissão
+  getAdmissionTemplates: async () => (await request<{ success: boolean; templates: AdmissionTemplate[] }>('/api/v1/admission-templates')).templates,
+  createAdmissionTemplate: async (payload: Partial<AdmissionTemplate>) => (await request<{ success: boolean; template: AdmissionTemplate }>('/api/v1/admission-templates', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })).template,
+  updateAdmissionTemplate: async (id: string, payload: Partial<AdmissionTemplate>) => (await request<{ success: boolean; template: AdmissionTemplate }>(`/api/v1/admission-templates/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).template,
+  getAvailableAdmissionTemplates: async (journeyId: string) => (await request<{ success: boolean; templates: AdmissionTemplate[] }>(`/api/v1/onboardings/${journeyId}/admission/available`)).templates,
+  applyAdmissionTemplate: async (journeyId: string, templateIds: string[]) => (await request<{ success: boolean; onboarding: OnboardingJourney }>(`/api/v1/onboardings/${journeyId}/admission/apply-template`, {
+    method: 'POST',
+    body: JSON.stringify({ templateIds })
+  })).onboarding,
+  removeAdmissionItem: async (journeyId: string, itemId: string) => (await request<{ success: boolean; onboarding: OnboardingJourney }>(`/api/v1/onboardings/${journeyId}/admission/${itemId}`, { method: 'DELETE' })).onboarding,
+  addAdmissionItem: async (journeyId: string, payload: Partial<AdmissionItem>) => (await request<{ success: boolean; onboarding: OnboardingJourney }>(`/api/v1/onboardings/${journeyId}/admission`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })).onboarding,
+  reviewAdmissionItem: async (journeyId: string, itemId: string, action: 'approve' | 'reject' | 'reopen', note?: string) => (await request<{ success: boolean; onboarding: OnboardingJourney }>(`/api/v1/onboardings/${journeyId}/admission/${itemId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ action, note })
+  })).onboarding,
+  uploadAdmissionFile: async (journeyId: string, itemId: string, file: File) => (await request<{ success: boolean; onboarding: OnboardingJourney }>(`/api/v1/onboardings/${journeyId}/admission/${itemId}/file${qs({ name: file.name })}`, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type },
+    body: file
+  })).onboarding,
+  /** The file needs the session token, so it is fetched (not linked) and handed to the browser as a download. */
+  downloadAdmissionFile: async (journeyId: string, itemId: string, fileName: string) => {
+    const response = await fetch(`/api/v1/onboardings/${journeyId}/admission/${itemId}/file`, {
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {}
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new ApiError(data.error || 'Não foi possível baixar o documento.', response.status);
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  },
+
+  // 12.2 Checklist de Integração
+  getIntegrationTemplates: async () => (await request<{ success: boolean; templates: IntegrationTemplate[] }>('/api/v1/integration-templates')).templates,
+  createIntegrationTemplate: async (payload: Partial<IntegrationTemplate>) => (await request<{ success: boolean; template: IntegrationTemplate }>('/api/v1/integration-templates', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })).template,
+  updateIntegrationTemplate: async (id: string, payload: Partial<IntegrationTemplate>) => (await request<{ success: boolean; template: IntegrationTemplate }>(`/api/v1/integration-templates/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).template,
+  getAvailableChecklistTemplates: async (journeyId: string) => (await request<{ success: boolean; templates: IntegrationTemplate[] }>(`/api/v1/onboardings/${journeyId}/checklist-available`)).templates,
+  applyChecklistTemplates: async (journeyId: string, templateIds: string[]) => (await request<{ success: boolean; onboarding: OnboardingJourney }>(`/api/v1/onboardings/${journeyId}/checklist-apply`, {
+    method: 'POST',
+    body: JSON.stringify({ templateIds })
+  })).onboarding,
+  addChecklistItem: async (journeyId: string, payload: Partial<OnboardingChecklistItem>) => (await request<{ success: boolean; onboarding: OnboardingJourney }>(`/api/v1/onboardings/${journeyId}/checklist`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })).onboarding,
+  removeChecklistItem: async (journeyId: string, itemId: string) => (await request<{ success: boolean; onboarding: OnboardingJourney }>(`/api/v1/onboardings/${journeyId}/checklist/${itemId}`, { method: 'DELETE' })).onboarding,
 
   // 12. Onboarding
   getOnboardings: async () => (await request<{ success: boolean; onboardings: OnboardingJourney[] }>('/api/v1/onboardings')).onboardings,

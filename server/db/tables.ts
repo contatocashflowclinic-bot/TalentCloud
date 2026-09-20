@@ -65,12 +65,27 @@ export const TABLES = {
       'approverId', 'sentAt', 'respondedAt', 'notes'
     ]
   },
+  benefits: {
+    table: 'benefit_catalog',
+    columns: ['id', 'name', 'category', 'description', 'active', 'defaultLevels']
+  },
+  integrationTemplates: {
+    table: 'integration_templates',
+    columns: ['id', 'name', 'category', 'responsible', 'dueDay', 'active']
+  },
+  admissionTemplates: {
+    table: 'admission_templates',
+    columns: [
+      'id', 'name', 'category', 'description', 'required', 'requiresDocument', 'responsible', 'dueDaysBeforeStart',
+      'contractTypes', 'active'
+    ]
+  },
   onboardings: {
     table: 'onboarding_journeys',
-    json: ['checklists'],
+    json: ['checklists', 'admission'],
     columns: [
       'id', 'candidateId', 'candidateName', 'jobTitle', 'departmentId', 'mentorId', 'hireDate', 'status', 'checklists',
-      'milestones30DaysDone', 'milestones60DaysDone', 'milestones90DaysDone', 'notes'
+      'admission', 'milestones30DaysDone', 'milestones60DaysDone', 'milestones90DaysDone', 'notes'
     ]
   },
   development: {
