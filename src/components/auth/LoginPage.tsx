@@ -38,7 +38,7 @@ export const LoginPage: React.FC = () => {
           </div>
           <div>
             <div className="text-2xl font-bold text-white tracking-tight">TalentCloud</div>
-            <div className="text-xs text-indigo-300">SaaS de Ciclo de Gestão de Talentos</div>
+            <div className="text-xs text-indigo-300">Gestão do ciclo de talentos</div>
           </div>
         </div>
 

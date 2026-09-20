@@ -14,13 +14,11 @@ export const ModuleUsers: React.FC = () => {
       <div>
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 2</span>
-          <span className="text-slate-300">•</span>
-          <span className="text-xs font-mono text-slate-500">Partição: {activeTenant?.dbConfig?.dbName}</span>
         </div>
-        <h1 className="text-xl font-bold text-slate-900 mt-1">Usuários e Permissões (RBAC)</h1>
+        <h1 className="text-xl font-bold text-slate-900 mt-1">Usuários e Permissões</h1>
         <p className="text-xs text-slate-500">
-          Cada usuário é vinculado a uma ou mais organizações e recebe um perfil de acesso com permissões por rotina.
-          Senhas são guardadas apenas como hash.
+          Cada pessoa é vinculada a uma ou mais organizações e recebe um perfil de acesso, que define o que ela pode ver e fazer em cada área do sistema.
+          As senhas são guardadas de forma segura.
         </p>
       </div>
 

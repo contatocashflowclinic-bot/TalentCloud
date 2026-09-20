@@ -36,7 +36,11 @@ const IS_PROD =
   process.env.NODE_ENV === 'production' || (typeof __filename !== 'undefined' && __filename.endsWith('.cjs'));
 
 /** Forwards rejected promises to the error middleware (Express 4 does not do it natively). */
-const h = (fn: (req: Request, res: Response) => Promise<unknown>): RequestHandler =>
+const ROUTE_NOT_FOUND_MESSAGE =
+  'Não foi possível concluir esta ação porque o sistema está desatualizado. ' +
+  'Atualize a página (Ctrl+F5) e tente de novo. Se o problema continuar, avise o suporte.';
+
+const h = (fn:(req: Request, res: Response) => Promise<unknown>): RequestHandler =>
   (req, res, next) => { fn(req, res).catch(next); };
 
 const csv = (value: unknown): string[] =>
@@ -958,7 +962,8 @@ async function startServer() {
 
   // Unknown API routes must not fall through to the SPA
   app.use('/api', (req, res) => {
-    res.status(404).json({ success: false, error: `Rota não encontrada: ${req.method} ${req.originalUrl}` });
+    console.warn(`[api] rota inexistente: ${req.method} ${req.originalUrl}`);
+    res.status(404).json({ success: false, error: ROUTE_NOT_FOUND_MESSAGE, code: 'ROUTE_NOT_FOUND' });
   });
 
   // Central error handler (validation, not-found, Postgres constraint errors, ...)

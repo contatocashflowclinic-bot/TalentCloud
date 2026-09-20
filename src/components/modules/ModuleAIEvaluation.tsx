@@ -126,12 +126,10 @@ export const ModuleAIEvaluation: React.FC<{
         <div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 9</span>
-            <span className="text-slate-300">•</span>
-            <span className="text-xs font-mono text-slate-500">Partição: {activeTenant?.dbConfig?.dbName}</span>
           </div>
           <h1 className="text-xl font-bold text-slate-900 mt-1">Avaliação Assistida por IA</h1>
           <p className="text-xs text-slate-500">
-            Apoio preditivo explicável com pilares do DNA cultural do tenant e garantia de decisão final humana.
+            Apoio preditivo explicável com pilares do DNA cultural da organização e garantia de decisão final humana.
           </p>
         </div>
 
@@ -312,7 +310,7 @@ export const ModuleAIEvaluation: React.FC<{
           {/* Cultural Pillars Breakdown (Ponderação por Pilar do DNA) */}
           <div className="bg-white rounded-3xl border border-slate-200/90 shadow-xs p-6 sm:p-7 space-y-4">
             <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wider">
-              Aderência por Pilar do DNA Cultural do Tenant
+              Aderência por Pilar do DNA Cultural da Organização
             </h3>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5">
               {activeEvaluation.pillarScores.map((ps, idx) => (

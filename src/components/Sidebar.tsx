@@ -43,7 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     {
       title: 'Governança & Fundamentos',
       modules: [
-        { id: 2, name: '2. Usuários e Permissões', icon: Users, desc: 'RBAC e Acessos' },
+        { id: 2, name: '2. Usuários e Permissões', icon: Users, desc: 'Perfis e Acessos' },
         { id: 3, name: '3. DNA Organizacional', icon: Dna, desc: 'Cultura e Pilares' },
         { id: 4, name: '4. Estrutura Organizacional', icon: Network, desc: 'Departamentos e Squads' },
         { id: 5, name: '5. Cargos', icon: Briefcase, desc: 'Competências e Faixas' },

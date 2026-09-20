@@ -58,6 +58,39 @@ const OrgProfilePicker: React.FC<{
   );
 };
 
+const VISIBLE_LINKS = 2;
+
+/** Organization links of one person: one tidy line per organization; beyond two, the rest folds into "+N". */
+const LinksCell: React.FC<{ links: PlatformUser['links']; onOpen: (link: PlatformUser['links'][number]) => void }> = ({ links, onOpen }) => {
+  const [expanded, setExpanded] = useState(false);
+  if (links.length === 0) return <span className="text-xs text-slate-400">Sem vínculo</span>;
+  const shown = expanded ? links : links.slice(0, VISIBLE_LINKS);
+  const hidden = links.length - shown.length;
+  return (
+    <ul className="max-w-md space-y-0.5">
+      {shown.map(l => (
+        <li key={l.membershipId}>
+          <button
+            onClick={() => onOpen(l)}
+            title="Editar perfil e permissões nesta organização"
+            className={`w-full flex items-center justify-between gap-3 rounded-lg px-2 py-1 -mx-2 text-left hover:bg-slate-100 ${l.active ? '' : 'opacity-50'}`}
+          >
+            <span className={`truncate text-xs font-medium ${l.active ? 'text-slate-800' : 'text-slate-500 line-through'}`}>{l.tenantName}</span>
+            <span className="shrink-0 whitespace-nowrap rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">{l.profileName}</span>
+          </button>
+        </li>
+      ))}
+      {links.length > VISIBLE_LINKS && (
+        <li>
+          <button onClick={() => setExpanded(v => !v)} className="px-0.5 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800">
+            {expanded ? 'Mostrar menos' : `+ ${hidden} ${hidden === 1 ? 'organização' : 'organizações'}`}
+          </button>
+        </li>
+      )}
+    </ul>
+  );
+};
+
 /** Conta Mãe: every person on the platform, their organization links and access. */
 export const PlatformUsersPanel: React.FC = () => {
   const [items, setItems] = useState<PlatformUser[]>([]);
@@ -182,19 +215,7 @@ export const PlatformUsersPanel: React.FC = () => {
                     <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5"><Mail className="w-3 h-3" /> {u.email}</div>
                   </td>
                   <td className="px-5 py-3.5">
-                    <div className="flex flex-wrap gap-1.5 max-w-md">
-                      {u.links.map(l => (
-                        <button
-                          key={l.membershipId}
-                          onClick={() => openOrg(l.tenantId, u.email)}
-                          title="Editar perfil e permissões nesta organização"
-                          className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${l.active ? 'bg-indigo-50 text-indigo-800 border-indigo-200 hover:bg-indigo-100' : 'bg-slate-100 text-slate-400 border-slate-200 line-through'}`}
-                        >
-                          {l.tenantName} · {l.profileName}
-                        </button>
-                      ))}
-                      {u.links.length === 0 && <span className="text-xs text-slate-400">Sem vínculo</span>}
-                    </div>
+                    <LinksCell links={u.links} onOpen={l => openOrg(l.tenantId, u.email)} />
                   </td>
                   <td className="px-5 py-3.5">
                     <span className={`inline-flex items-center gap-1 text-xs font-medium ${u.active ? 'text-emerald-700' : 'text-slate-400'}`}>

@@ -110,8 +110,6 @@ export const ModuleCandidates: React.FC<{
         <div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 7</span>
-            <span className="text-slate-300">•</span>
-            <span className="text-xs font-mono text-slate-500">Partição: {activeTenant?.dbConfig?.dbName}</span>
           </div>
           <h1 className="text-xl font-bold text-slate-900 mt-1">Banco de Talentos Isolado</h1>
           <p className="text-xs text-slate-500">
@@ -296,7 +294,7 @@ export const ModuleCandidates: React.FC<{
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="bg-white rounded-2xl p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto border border-slate-200 shadow-xl">
             <h3 className="text-base font-bold text-slate-900 mb-1">Cadastrar Candidato</h3>
-            <p className="text-xs text-slate-500 mb-4">Insere o talento na base de dados privada deste tenant.</p>
+            <p className="text-xs text-slate-500 mb-4">Cadastra o talento no banco de talentos da sua organização.</p>
 
             <form onSubmit={handleCreateCandidate} className="space-y-3.5 text-xs">
               <div>

@@ -86,7 +86,7 @@ export const ModuleDNA: React.FC = () => {
   };
 
   if (loading) {
-    return <div className="p-8 text-center text-slate-500 text-xs">Carregando DNA Organizacional do tenant...</div>;
+    return <div className="p-8 text-center text-slate-500 text-xs">Carregando o DNA Organizacional...</div>;
   }
 
   return (
@@ -96,8 +96,6 @@ export const ModuleDNA: React.FC = () => {
         <div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 3</span>
-            <span className="text-slate-300">•</span>
-            <span className="text-xs font-mono text-slate-500">Partição: {activeTenant?.dbConfig?.dbName}</span>
           </div>
           <h1 className="text-xl font-bold text-slate-900 mt-1">DNA Organizacional & Cultura</h1>
           <p className="text-xs text-slate-500">

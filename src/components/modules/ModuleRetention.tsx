@@ -67,8 +67,6 @@ export const ModuleRetention: React.FC = () => {
         <div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 14</span>
-            <span className="text-slate-300">•</span>
-            <span className="text-xs font-mono text-slate-500">Partição: {activeTenant?.dbConfig?.dbName}</span>
           </div>
           <h1 className="text-xl font-bold text-slate-900 mt-1">Retenção de Talentos & Clima</h1>
           <p className="text-xs text-slate-500">
@@ -98,7 +96,7 @@ export const ModuleRetention: React.FC = () => {
             </span>
           </div>
           <p className="text-[11px] text-slate-300">
-            Baseado nas pesquisas de clima e satisfação no banco deste tenant.
+            Baseado nas pesquisas de clima e satisfação da sua organização.
           </p>
         </div>
 

@@ -614,8 +614,6 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
               <div className="flex items-center gap-2 font-mono text-[11px]">
                 <Building2 className="w-3.5 h-3.5 text-indigo-600" />
                 <span>Escopo: <strong>{activeTenant?.name}</strong></span>
-                <span className="text-slate-300">|</span>
-                <span>Partição: <strong className="text-emerald-700">{activeTenant?.dbConfig?.dbName}</strong></span>
               </div>
 
               <div className="flex items-center gap-3 text-[11px]">

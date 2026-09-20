@@ -256,7 +256,7 @@ Confira todos os detalhes e candidate-se pelo nosso portal oficial:
       // Footer branding
       ctx.fillStyle = '#64748b';
       ctx.font = '22px sans-serif';
-      ctx.fillText('TalentCloud Multi-Tenant • Portal Oficial de Carreiras', 260, 1840);
+      ctx.fillText('TalentCloud • Portal Oficial de Carreiras', 260, 1840);
 
     } else {
       // Feed / LinkedIn: 1200 x 630
@@ -340,7 +340,7 @@ Confira todos os detalhes e candidate-se pelo nosso portal oficial:
 
       ctx.fillStyle = '#64748b';
       ctx.font = '16px sans-serif';
-      ctx.fillText('TalentCloud Multi-Tenant • Carreiras', 820, 558);
+      ctx.fillText('TalentCloud • Carreiras', 820, 558);
     }
 
     // Trigger download

@@ -8,7 +8,6 @@ import { ShieldAlert } from 'lucide-react';
 import { PlatformLayout } from './components/platform/PlatformLayout.js';
 import { Header } from './components/Header.js';
 import { Sidebar } from './components/Sidebar.js';
-import { MultiTenantArchitectureModal } from './components/MultiTenantArchitectureModal.js';
 import { CareersPortalPage } from './components/careers/CareersPortalPage.js';
 
 // Feature Modules 2 to 15
@@ -32,7 +31,6 @@ const MainLayout: React.FC = () => {
   const { user } = useAuth();
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const [activeModule, setActiveModule] = useState<number>(3); // Default to Module 3 (DNA) or 1
-  const [isArchitectureModalOpen, setIsArchitectureModalOpen] = useState(false);
   const [isCareersView, setIsCareersView] = useState(false);
   const [careersSlugFromUrl, setCareersSlugFromUrl] = useState<string | undefined>(undefined);
 
@@ -103,7 +101,6 @@ const MainLayout: React.FC = () => {
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans antialiased">
       {/* Top Header with Dynamic Routing and Tenant Switcher */}
       <Header
-        onOpenArchitectureModal={() => setIsArchitectureModalOpen(true)}
         onOpenCareersPortal={() => {
           setCareersSlugFromUrl(undefined);
           setIsCareersView(true);
@@ -193,12 +190,6 @@ const MainLayout: React.FC = () => {
           )}
         </main>
       </div>
-
-      {/* Interactive Multi-Tenancy Architecture Console Modal */}
-      <MultiTenantArchitectureModal
-        isOpen={isArchitectureModalOpen}
-        onClose={() => setIsArchitectureModalOpen(false)}
-      />
 
       {isChangePasswordOpen && !user?.mustChangePassword && (
         <ChangePasswordModal onClose={() => setIsChangePasswordOpen(false)} />

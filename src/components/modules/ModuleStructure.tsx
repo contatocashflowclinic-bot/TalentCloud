@@ -59,8 +59,6 @@ export const ModuleStructure: React.FC = () => {
         <div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 4</span>
-            <span className="text-slate-300">•</span>
-            <span className="text-xs font-mono text-slate-500">Partição: {activeTenant?.dbConfig?.dbName}</span>
           </div>
           <h1 className="text-xl font-bold text-slate-900 mt-1">Estrutura Organizacional</h1>
           <p className="text-xs text-slate-500">
@@ -129,7 +127,7 @@ export const ModuleStructure: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md border border-slate-200 shadow-xl">
             <h3 className="text-base font-bold text-slate-900 mb-1">Criar Novo Departamento</h3>
-            <p className="text-xs text-slate-500 mb-4">Adiciona o departamento na base de dados deste tenant.</p>
+            <p className="text-xs text-slate-500 mb-4">Adiciona o departamento à estrutura da sua organização.</p>
 
             <form onSubmit={handleCreateDepartment} className="space-y-3.5 text-xs">
               <div>

@@ -1,27 +1,25 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Building2,
-  Briefcase,
-  Share2,
-  MapPin,
-  Clock,
-  Sparkles,
-  Search,
-  Filter,
-  ArrowRight,
-  ShieldCheck,
-  ChevronDown,
-  Layers,
-  Heart,
-  Award,
-  Globe,
-  CheckCircle2,
-  Users,
-  Compass,
   ArrowLeft,
-  ExternalLink,
-  MessageSquare,
-  Linkedin
+  ArrowRight,
+  Briefcase,
+  ChevronDown,
+  Clock,
+  Code,
+  Cpu,
+  Filter,
+  Globe,
+  Heart,
+  MapPin,
+  Monitor,
+  RotateCcw,
+  Rocket,
+  Search,
+  Share2,
+  ShieldCheck,
+  User,
+  Users,
+  X
 } from 'lucide-react';
 import { PublicApi, PublicCareers } from '../../services/api.js';
 import { JobOpening, JobPosition, Department, PublicTenant } from '../../types.js';
@@ -34,6 +32,41 @@ interface CareersPortalPageProps {
   onBackToAdmin?: () => void;
   initialJobId?: string;
 }
+
+type SortKey = 'recent' | 'oldest' | 'title';
+
+const WORK_MODELS: JobOpening['workModel'][] = ['Remoto', 'Híbrido', 'Presencial'];
+const LEVEL_ORDER: JobPosition['level'][] = ['Júnior', 'Pleno', 'Sênior', 'Especialista', 'Coordenação', 'Gerência', 'Diretoria'];
+const PILLAR_ICONS = [Code, Rocket, Users];
+
+const toggle = (list: string[], value: string) => (list.includes(value) ? list.filter(v => v !== value) : [...list, value]);
+
+const publishedLabel = (openedAt: string) => {
+  const days = Math.floor((Date.now() - new Date(openedAt).getTime()) / 86_400_000);
+  if (!Number.isFinite(days) || days < 1) return 'Publicado hoje';
+  return `Publicado há ${days} ${days === 1 ? 'dia' : 'dias'}`;
+};
+
+const jobIcon = (areaName: string) => {
+  const n = areaName.toLowerCase();
+  if (/intelig|dados|\bia\b|data/.test(n)) return Cpu;
+  if (/engenharia|software|tecnologia|produto|ti\b/.test(n)) return Monitor;
+  return Briefcase;
+};
+
+const FilterGroup: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+  <div className="space-y-2">
+    <h4 className="text-sm font-bold text-slate-900">{title}</h4>
+    <div className="space-y-1.5">{children}</div>
+  </div>
+);
+
+const FilterOption: React.FC<{ label: string; count: number; checked: boolean; onChange: () => void }> = ({ label, count, checked, onChange }) => (
+  <label className={`flex items-center gap-2.5 text-sm cursor-pointer ${count === 0 && !checked ? 'text-slate-400' : 'text-slate-700'}`}>
+    <input type="checkbox" checked={checked} onChange={onChange} className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+    <span>{label} <span className="text-slate-400">({count})</span></span>
+  </label>
+);
 
 export const CareersPortalPage: React.FC<CareersPortalPageProps> = ({
   tenantSlug,
@@ -50,8 +83,12 @@ export const CareersPortalPage: React.FC<CareersPortalPageProps> = ({
 
   // Filter states
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedDept, setSelectedDept] = useState<string>('all');
-  const [selectedWorkModel, setSelectedWorkModel] = useState<string>('all');
+  const [locationFilter, setLocationFilter] = useState('all');
+  const [workModels, setWorkModels] = useState<string[]>([]);
+  const [areas, setAreas] = useState<string[]>([]);
+  const [levels, setLevels] = useState<string[]>([]);
+  const [sortBy, setSortBy] = useState<SortKey>('recent');
+  const [filtersOpen, setFiltersOpen] = useState(false); // filters panel on small screens
 
   // Modal states
   const [shareModalJob, setShareModalJob] = useState<JobOpening | null>(null);
@@ -89,28 +126,57 @@ export const CareersPortalPage: React.FC<CareersPortalPageProps> = ({
     loadPortalData();
   }, [tenantSlug]);
 
-  // Filtered jobs
-  const filteredOpenings = openings.filter(job => {
-    // Only show active/open jobs
-    if (job.status !== 'open' && job.status !== 'in_progress') return false;
+  const getPositionForJob = (job: JobOpening) => positions.find(p => p.id === job.positionId);
+  const getDepartmentForJob = (job: JobOpening) => departments.find(d => d.id === job.departmentId);
 
-    const matchesSearch =
-      job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      job.location.toLowerCase().includes(searchTerm.toLowerCase());
+  const openJobs = useMemo(() => openings.filter(j => j.status === 'open' || j.status === 'in_progress'), [openings]);
+  const orgName = activeTenant?.tradingName || activeTenant?.name || '';
+  const locations = useMemo(() => [...new Set(openJobs.map(j => j.location).filter(Boolean))].sort(), [openJobs]);
 
-    const matchesDept = selectedDept === 'all' || job.departmentId === selectedDept;
-    const matchesModel = selectedWorkModel === 'all' || job.workModel === selectedWorkModel;
+  const levelOf = (j: JobOpening) => getPositionForJob(j)?.level as string | undefined;
+  const areaOf = (j: JobOpening) => getDepartmentForJob(j)?.id;
 
-    return matchesSearch && matchesDept && matchesModel;
-  });
+  const filteredOpenings = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
+    const list = openJobs.filter(job => {
+      const pos = positions.find(p => p.id === job.positionId);
+      const haystack = [job.title, job.location, pos?.description ?? '', ...(pos?.technicalRequirements ?? [])].join(' ').toLowerCase();
+      return (
+        (!term || haystack.includes(term)) &&
+        (locationFilter === 'all' || job.location === locationFilter) &&
+        (workModels.length === 0 || workModels.includes(job.workModel)) &&
+        (areas.length === 0 || areas.includes(job.departmentId)) &&
+        (levels.length === 0 || (pos?.level && levels.includes(pos.level)))
+      );
+    });
+    return list.sort((a, b) =>
+      sortBy === 'title' ? a.title.localeCompare(b.title, 'pt-BR')
+        : sortBy === 'oldest' ? a.openedAt.localeCompare(b.openedAt)
+        : b.openedAt.localeCompare(a.openedAt)
+    );
+  }, [openJobs, positions, searchTerm, locationFilter, workModels, areas, levels, sortBy]);
 
-  const getPositionForJob = (job: JobOpening) => {
-    return positions.find(p => p.id === job.positionId);
+  const activeFilterCount = workModels.length + areas.length + levels.length + (locationFilter !== 'all' ? 1 : 0);
+  const clearFilters = () => {
+    setSearchTerm('');
+    setLocationFilter('all');
+    setWorkModels([]);
+    setAreas([]);
+    setLevels([]);
   };
 
-  const getDepartmentForJob = (job: JobOpening) => {
-    return departments.find(d => d.id === job.departmentId);
-  };
+  const countBy = (pred: (j: JobOpening) => boolean) => openJobs.filter(pred).length;
+  const areaOptions = departments.filter(d => countBy(j => j.departmentId === d.id) > 0 || areas.includes(d.id));
+  const levelOptions = LEVEL_ORDER.filter(l => countBy(j => levelOf(j) === l) > 0 || levels.includes(l));
+
+  // Selection process: what candidates actually go through (stages of the open jobs), preceded by the application
+  const processSteps = useMemo(() => {
+    const stages = [...(openJobs.find(j => j.stages?.length)?.stages ?? [])].sort((a, b) => a.order - b.order);
+    return [
+      { name: 'Candidatura', text: 'Inscreva-se na vaga de seu interesse.' },
+      ...stages.slice(0, 4).map(s => ({ name: s.name, text: s.description }))
+    ];
+  }, [openJobs]);
 
   const handleOpenShare = (job: JobOpening | null) => {
     setShareModalJob(job);
@@ -122,13 +188,15 @@ export const CareersPortalPage: React.FC<CareersPortalPageProps> = ({
     setIsApplicationModalOpen(true);
   };
 
+  const navLink = 'text-sm font-medium text-slate-600 hover:text-indigo-700 transition-colors';
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans antialiased">
-      
-      {/* Top Banner Navigation: Admin Return & Tenant Switcher for preview */}
-      <div className="bg-slate-950 text-slate-300 px-4 sm:px-8 py-2.5 text-xs flex flex-wrap items-center justify-between gap-3 border-b border-slate-800">
-        <div className="flex items-center gap-3">
-          {onBackToAdmin && (
+    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans antialiased scroll-smooth">
+
+      {/* Admin preview strip: only when opened from the admin panel */}
+      {onBackToAdmin && (
+        <div className="bg-slate-950 text-slate-300 px-4 sm:px-8 py-2 text-xs flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
             <button
               onClick={onBackToAdmin}
               className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold transition-colors"
@@ -136,335 +204,339 @@ export const CareersPortalPage: React.FC<CareersPortalPageProps> = ({
               <ArrowLeft className="w-3.5 h-3.5" />
               Voltar ao Painel Administrativo
             </button>
-          )}
-          <span className="text-slate-500 hidden sm:inline">|</span>
-          <span className="flex items-center gap-1.5 text-slate-300">
-            <Globe className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Página Pública de Divulgação de Vagas</span>
-          </span>
-        </div>
-
-        {/* Share */}
-        <div className="flex items-center gap-2">
+            <span className="hidden sm:flex items-center gap-1.5">
+              <Globe className="w-3.5 h-3.5 text-indigo-400" />
+              Pré-visualização da página pública de vagas
+            </span>
+          </div>
           <button
             onClick={() => handleOpenShare(null)}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold transition-colors ml-1"
-            title="Compartilhar página geral de carreiras"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white font-semibold transition-colors"
+            title="Compartilhar a página geral de carreiras"
           >
             <Share2 className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Divulgar Portal</span>
+            Divulgar Portal
           </button>
         </div>
-      </div>
+      )}
 
-      {/* Hero Section */}
-      <div className="bg-gradient-to-b from-slate-900 via-indigo-950 to-slate-900 text-white py-14 px-4 sm:px-8 border-b border-slate-800 relative overflow-hidden">
-        {/* Subtle decorative circles */}
-        <div className="absolute top-0 right-0 -mr-20 -mt-20 w-96 h-96 rounded-full bg-indigo-500/10 blur-3xl pointer-events-none"></div>
-        <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-96 h-96 rounded-full bg-blue-500/10 blur-3xl pointer-events-none"></div>
-
-        <div className="max-w-6xl mx-auto space-y-6 relative z-10">
-          
-          {/* Org Identification Badge */}
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-3.5">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-600 to-blue-500 flex items-center justify-center text-white font-black text-2xl shadow-xl shadow-indigo-950/50">
-                {(activeTenant?.tradingName || activeTenant?.name || 'TC').slice(0, 2).toUpperCase()}
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white">
-                    {activeTenant?.tradingName || activeTenant?.name}
-                  </h1>
-                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                    <ShieldCheck className="w-3 h-3" />
-                    Empresa Verificada
-                  </span>
-                </div>
-                <div className="text-xs text-indigo-300 font-medium mt-0.5">
-                  Portal Oficial de Carreiras & Banco de Talentos
-                </div>
-              </div>
-            </div>
-
-            {/* Quick Share Button */}
-            <button
-              onClick={() => handleOpenShare(null)}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 shadow-md backdrop-blur-xs transition-all hover:scale-[1.02]"
-            >
-              <Share2 className="w-4 h-4 text-indigo-300" />
-              Compartilhar no WhatsApp / Instagram / LinkedIn
-            </button>
-          </div>
-
-          {/* Mission & Archetype Pitch */}
-          <div className="max-w-3xl space-y-3">
-            <h2 className="text-xl sm:text-2xl font-bold text-slate-100 leading-snug">
-              Construa sua jornada com quem valoriza talento, autonomia e impacto real.
-            </h2>
-            <p className="text-slate-300 text-xs sm:text-sm leading-relaxed">
-              {dna?.mission || 'Buscamos profissionais apaixonados por inovação para integrar um ambiente transparente, dinâmico e focado em excelência.'}
-            </p>
-          </div>
-
-          {/* Value Pillars Highlights */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-            <div className="p-3.5 rounded-xl bg-white/5 border border-white/10 backdrop-blur-xs">
-              <div className="text-indigo-400 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5" />
-                Arquétipo Cultural
-              </div>
-              <div className="text-sm font-semibold text-white mt-1">
-                {dna?.archetype || 'Inovador & Ágil'}
-              </div>
-            </div>
-
-            <div className="p-3.5 rounded-xl bg-white/5 border border-white/10 backdrop-blur-xs">
-              <div className="text-emerald-400 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                Avaliação Assistida por IA
-              </div>
-              <div className="text-sm font-semibold text-white mt-1">
-                Feedback Transparente & Decisão Humana
-              </div>
-            </div>
-
-            <div className="p-3.5 rounded-xl bg-white/5 border border-white/10 backdrop-blur-xs">
-              <div className="text-blue-400 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5" />
-                Oportunidades Abertas
-              </div>
-              <div className="text-sm font-semibold text-white mt-1">
-                {openings.filter(o => o.status === 'open').length} Vagas Disponíveis
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </div>
-
-      {/* Main Content Area */}
-      <div className="max-w-6xl w-full mx-auto px-4 sm:px-8 py-10 space-y-8 flex-1">
-        
-        {/* Culture & Pillars Section */}
-        {dna && dna.pillars && dna.pillars.length > 0 && (
-          <div className="p-6 rounded-3xl bg-white border border-slate-200 shadow-xs space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <Compass className="w-4 h-4 text-indigo-600" />
-                  Nossos Pilares Culturais & DNA
-                </h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  O que valorizamos no dia a dia e como avaliamos a aderência mútua no nosso processo seletivo.
-                </p>
-              </div>
-              <span className="hidden sm:inline-block px-3 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700">
-                Fit Cultural Explicável
+      {/* Top navigation */}
+      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-slate-200">
+        <div className="max-w-6xl mx-auto px-4 sm:px-8 h-16 flex items-center justify-between gap-4">
+          <a href="#vagas" className="flex items-center gap-3 min-w-0">
+            {activeTenant?.logoUrl ? (
+              <img src={activeTenant.logoUrl} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
+            ) : (
+              <span className="w-9 h-9 rounded-lg bg-indigo-600 text-white font-extrabold text-sm flex items-center justify-center shrink-0">
+                {orgName.slice(0, 2).toUpperCase() || 'TC'}
               </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
-              {dna.pillars.slice(0, 3).map((pillar) => (
-                <div key={pillar.id} className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
-                  <div className="font-bold text-slate-800 text-sm">{pillar.name}</div>
-                  <p className="text-xs text-slate-600 leading-relaxed line-clamp-3">
-                    {pillar.description}
-                  </p>
-                  {pillar.expectedBehaviors && pillar.expectedBehaviors.length > 0 && (
-                    <div className="text-[11px] text-indigo-600 font-medium pt-1">
-                      ✓ {pillar.expectedBehaviors[0]}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Filter Bar */}
-        <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h3 className="text-lg font-bold text-slate-900">Vagas e Posições Abertas</h3>
-              <p className="text-xs text-slate-500">
-                Explore as oportunidades disponíveis e candidate-se com praticidade.
-              </p>
-            </div>
-            <div className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-100 self-start sm:self-auto">
-              {filteredOpenings.length} {filteredOpenings.length === 1 ? 'vaga encontrada' : 'vagas encontradas'}
-            </div>
-          </div>
-
-          <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs grid grid-cols-1 sm:grid-cols-12 gap-3">
-            {/* Search Input */}
-            <div className="sm:col-span-6 relative">
-              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Buscar por cargo ou palavra-chave..."
-                className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 focus:outline-hidden focus:border-indigo-500 text-xs"
-              />
-            </div>
-
-            {/* Department Filter */}
-            <div className="sm:col-span-3">
-              <select
-                value={selectedDept}
-                onChange={(e) => setSelectedDept(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-hidden focus:border-indigo-500 text-xs bg-white"
-              >
-                <option value="all">Todos os Departamentos</option>
-                {departments.map(d => (
-                  <option key={d.id} value={d.id}>{d.name}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Work Model Filter */}
-            <div className="sm:col-span-3">
-              <select
-                value={selectedWorkModel}
-                onChange={(e) => setSelectedWorkModel(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-hidden focus:border-indigo-500 text-xs bg-white"
-              >
-                <option value="all">Todos os Modelos</option>
-                <option value="Remoto">100% Remoto</option>
-                <option value="Híbrido">Híbrido</option>
-                <option value="Presencial">Presencial</option>
-              </select>
-            </div>
-          </div>
+            )}
+            <span className="font-bold text-slate-900 text-lg truncate">{orgName}</span>
+          </a>
+          <nav className="hidden md:flex items-center gap-6 lg:gap-8">
+            <a href="#vagas" className={`${navLink} text-indigo-700 border-b-2 border-indigo-600 py-5`}>Vagas</a>
+            <a href="#como-trabalhamos" className={navLink}>Como trabalhamos</a>
+            <a href="#processo" className={navLink}>Processo seletivo</a>
+            <a href="#sobre" className={navLink}>Sobre nós</a>
+          </nav>
         </div>
+      </header>
 
-        {/* Job Openings Grid */}
-        {loading ? (
-          <div className="text-center py-16 text-slate-400 text-xs animate-pulse">
-            Carregando vagas públicas do banco de dados isolado...
-          </div>
-        ) : filteredOpenings.length === 0 ? (
-          <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 space-y-3">
-            <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
-              <Briefcase className="w-6 h-6" />
-            </div>
-            <h4 className="text-sm font-bold text-slate-800">Nenhuma vaga encontrada com estes filtros</h4>
-            <p className="text-xs text-slate-500 max-w-sm mx-auto">
-              Tente redefinir a busca ou selecione outro departamento para encontrar posições abertas.
+      {/* Hero */}
+      <section className="bg-gradient-to-br from-slate-950 via-indigo-950 to-indigo-900 text-white relative overflow-hidden">
+        <div className="absolute -top-24 -right-24 w-96 h-96 rounded-full bg-indigo-500/20 blur-3xl pointer-events-none" />
+        <div className="max-w-6xl mx-auto px-4 sm:px-8 py-12 sm:py-16 relative grid lg:grid-cols-[1fr_280px] gap-10 items-center">
+          <div className="space-y-6 min-w-0">
+            <h1 className="text-3xl sm:text-5xl font-extrabold leading-tight tracking-tight">
+              Encontre uma oportunidade<br className="hidden sm:block" /> para transformar o futuro<br className="hidden sm:block" />{' '}
+              <span className="text-blue-400">com a gente.</span>
+            </h1>
+            <p className="text-slate-200 text-sm sm:text-base max-w-xl">
+              {dna?.cultureSummary || 'Autonomia e impacto real em um ambiente que valoriza pessoas.'}
             </p>
-            <button
-              onClick={() => {
-                setSearchTerm('');
-                setSelectedDept('all');
-                setSelectedWorkModel('all');
-              }}
-              className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors"
-            >
-              Limpar Filtros
-            </button>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {filteredOpenings.map((job) => {
-              const pos = getPositionForJob(job);
-              const dept = getDepartmentForJob(job);
 
-              return (
-                <div
-                  key={job.id}
-                  className="p-6 rounded-3xl bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all flex flex-col justify-between space-y-5 group"
+            <div className="bg-white rounded-2xl p-2 flex flex-col sm:flex-row gap-2 shadow-xl max-w-3xl">
+              <label className="flex items-center gap-2.5 flex-1 min-w-0 px-3">
+                <Search className="w-5 h-5 text-indigo-600 shrink-0" />
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  placeholder="Cargo, competência ou palavra-chave"
+                  aria-label="Buscar vagas"
+                  className="w-full py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-hidden"
+                />
+              </label>
+              <label className="flex items-center gap-2 sm:border-l border-slate-200 px-3 sm:w-56 relative">
+                <MapPin className="w-5 h-5 text-slate-500 shrink-0" />
+                <select
+                  value={locationFilter}
+                  onChange={e => setLocationFilter(e.target.value)}
+                  aria-label="Localização"
+                  className="w-full py-2.5 text-sm text-slate-700 bg-transparent appearance-none focus:outline-hidden pr-5"
                 >
-                  <div className="space-y-3">
-                    {/* Top Badges */}
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-100">
-                        {dept?.name || 'Tecnologia'}
-                      </span>
-                      <span className="text-[11px] font-semibold text-slate-500 flex items-center gap-1">
-                        <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                        {job.workModel} ({job.location})
-                      </span>
-                    </div>
+                  <option value="all">Localização</option>
+                  {locations.map(l => <option key={l} value={l}>{l}</option>)}
+                </select>
+                <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 pointer-events-none" />
+              </label>
+              <a href="#vagas" className="px-6 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold flex items-center justify-center gap-2 transition-colors">
+                Buscar vagas <ArrowRight className="w-4 h-4" />
+              </a>
+            </div>
 
-                    {/* Job Title */}
-                    <div>
-                      <h4 className="text-base font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
-                        {job.title}
-                      </h4>
-                      {pos?.level && (
-                        <div className="text-xs text-slate-500 font-medium mt-0.5">
-                          Nível: {pos.level} {pos.careerTrack ? `• Carreira: ${pos.careerTrack}` : ''}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Technical and behavioral tags */}
-                    {pos && (
-                      <div className="space-y-2 pt-1">
-                        {pos.technicalRequirements && pos.technicalRequirements.length > 0 && (
-                          <div className="flex flex-wrap gap-1.5">
-                            {pos.technicalRequirements.slice(0, 3).map((req, rIdx) => (
-                              <span key={rIdx} className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-medium">
-                                {req}
-                              </span>
-                            ))}
-                            {pos.technicalRequirements.length > 3 && (
-                              <span className="px-1.5 py-0.5 text-[10px] text-slate-400">
-                                +{pos.technicalRequirements.length - 3}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Actions Bar */}
-                  <div className="pt-4 border-t border-slate-100 flex items-center justify-between gap-3">
-                    {/* Social Share Trigger */}
-                    <button
-                      onClick={() => handleOpenShare(job)}
-                      className="p-2.5 rounded-xl bg-slate-50 hover:bg-indigo-50 hover:text-indigo-700 text-slate-600 border border-slate-200 transition-all flex items-center gap-1.5 text-xs font-semibold"
-                      title="Divulgar esta vaga no Instagram, WhatsApp ou LinkedIn"
-                    >
-                      <Share2 className="w-4 h-4 text-indigo-600" />
-                      <span className="hidden sm:inline">Divulgar Vaga</span>
-                    </button>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setSelectedJobDetail(job)}
-                        className="px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors"
-                      >
-                        Ver Detalhes
-                      </button>
-
-                      <button
-                        onClick={() => handleOpenApply(job)}
-                        className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-xs flex items-center gap-1.5 transition-colors"
-                      >
-                        Candidatar-se
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+            <div className="flex flex-wrap gap-x-7 gap-y-2 text-sm font-medium text-slate-100">
+              <span className="flex items-center gap-2"><ShieldCheck className="w-5 h-5 text-emerald-400" /> Empresa verificada</span>
+              <span className="flex items-center gap-2"><Users className="w-5 h-5 text-blue-300" /> Processo transparente</span>
+              <span className="flex items-center gap-2"><Heart className="w-5 h-5 text-violet-300 fill-violet-300" /> Decisão final humana</span>
+            </div>
           </div>
+
+          {dna?.mission && (
+            <aside className="hidden lg:block border-l border-white/15 pl-8 space-y-3">
+              <p className="font-bold text-lg leading-snug">{dna.mission}</p>
+              <div className="w-12 h-0.5 bg-indigo-400" />
+              {dna.vision && <p className="text-sm text-slate-300 leading-relaxed">{dna.vision}</p>}
+            </aside>
+          )}
+        </div>
+      </section>
+
+      <main className="max-w-6xl w-full mx-auto px-4 sm:px-8 py-10 space-y-16 flex-1">
+
+        {/* Openings + filters */}
+        <section id="vagas" className="scroll-mt-20">
+          <div className="grid lg:grid-cols-[1fr_270px] gap-8 items-start">
+            <div className="space-y-5 min-w-0">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h2 className="text-2xl font-bold text-slate-900">Vagas abertas</h2>
+                  <p className="text-sm text-slate-500">
+                    {filteredOpenings.length} {filteredOpenings.length === 1 ? 'oportunidade encontrada' : 'oportunidades encontradas'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setFiltersOpen(v => !v)}
+                  className="lg:hidden flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-700"
+                >
+                  <Filter className="w-4 h-4" /> Filtros{activeFilterCount > 0 ? ` (${activeFilterCount})` : ''}
+                </button>
+              </div>
+
+              {/* Active filters + sorting */}
+              <div className="flex flex-wrap items-center gap-2">
+                {activeFilterCount > 0 && (
+                  <>
+                    <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-xs font-medium text-indigo-700">
+                      <Filter className="w-3.5 h-3.5" /> Todos os filtros ({activeFilterCount})
+                    </span>
+                    {locationFilter !== 'all' && (
+                      <button onClick={() => setLocationFilter('all')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-xs font-medium text-indigo-700">
+                        {locationFilter} <X className="w-3 h-3" />
+                      </button>
+                    )}
+                    {workModels.map(m => (
+                      <button key={m} onClick={() => setWorkModels(toggle(workModels, m))} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-xs font-medium text-indigo-700">
+                        {m} <X className="w-3 h-3" />
+                      </button>
+                    ))}
+                    {areas.map(id => (
+                      <button key={id} onClick={() => setAreas(toggle(areas, id))} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-xs font-medium text-indigo-700">
+                        {departments.find(d => d.id === id)?.name ?? 'Área'} <X className="w-3 h-3" />
+                      </button>
+                    ))}
+                    {levels.map(l => (
+                      <button key={l} onClick={() => setLevels(toggle(levels, l))} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50 text-xs font-medium text-indigo-700">
+                        {l} <X className="w-3 h-3" />
+                      </button>
+                    ))}
+                    <button onClick={clearFilters} className="text-xs font-semibold text-indigo-600 underline hover:text-indigo-800">Limpar filtros</button>
+                  </>
+                )}
+                <label className="ml-auto flex items-center gap-2 text-xs text-slate-500">
+                  Ordenar por
+                  <select
+                    value={sortBy}
+                    onChange={e => setSortBy(e.target.value as SortKey)}
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-xs text-slate-700 focus:outline-hidden focus:border-indigo-500"
+                  >
+                    <option value="recent">Mais recentes</option>
+                    <option value="oldest">Mais antigas</option>
+                    <option value="title">Título (A–Z)</option>
+                  </select>
+                </label>
+              </div>
+
+              {/* Job list */}
+              {loading ? (
+                <div className="text-center py-16 text-slate-400 text-sm animate-pulse">Carregando as vagas...</div>
+              ) : loadError ? (
+                <div className="p-8 text-center bg-white rounded-2xl border border-rose-200 text-sm text-rose-700">{loadError}</div>
+              ) : filteredOpenings.length === 0 ? (
+                <div className="p-10 text-center bg-white rounded-2xl border border-slate-200 space-y-3">
+                  <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
+                    <Briefcase className="w-6 h-6" />
+                  </div>
+                  <h3 className="text-sm font-bold text-slate-800">Nenhuma vaga encontrada</h3>
+                  <p className="text-xs text-slate-500 max-w-sm mx-auto">Tente outra palavra-chave ou remova alguns filtros para ver mais oportunidades.</p>
+                  <button onClick={clearFilters} className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition-colors">
+                    Limpar filtros
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {filteredOpenings.map(job => {
+                    const pos = getPositionForJob(job);
+                    const dept = getDepartmentForJob(job);
+                    const Icon = jobIcon(dept?.name ?? job.title);
+                    const tags = pos?.technicalRequirements?.slice(0, 3) ?? [];
+                    return (
+                      <article key={job.id} className="p-5 sm:p-6 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all flex gap-4 sm:gap-5">
+                        <div className="hidden sm:flex w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-600 items-center justify-center shrink-0">
+                          <Icon className="w-7 h-7" />
+                        </div>
+                        <div className="flex-1 min-w-0 space-y-2.5">
+                          <div>
+                            <h3 className="text-lg font-bold text-slate-900">{job.title}</h3>
+                            {dept && <div className="text-sm font-medium text-indigo-600">{dept.name}</div>}
+                          </div>
+                          {pos?.description && <p className="text-sm text-slate-500 line-clamp-2">{pos.description}</p>}
+                          <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs text-slate-500">
+                            <span className="flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5" /> {job.workModel}{job.location ? ` • ${job.location}` : ''}</span>
+                            {pos?.level && <span className="flex items-center gap-1.5"><User className="w-3.5 h-3.5" /> {pos.level}</span>}
+                            <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> {publishedLabel(job.openedAt)}</span>
+                          </div>
+                          <div className="flex flex-wrap items-end justify-between gap-3 pt-1">
+                            <div className="flex flex-wrap gap-1.5">
+                              {tags.map(t => (
+                                <span key={t} className="px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 text-xs font-medium">{t}</span>
+                              ))}
+                            </div>
+                            <button
+                              onClick={() => setSelectedJobDetail(job)}
+                              className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold flex items-center gap-2 transition-colors"
+                            >
+                              Ver vaga <ArrowRight className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Filters panel */}
+            <aside className={`${filtersOpen ? 'block' : 'hidden'} lg:block p-5 rounded-2xl bg-white border border-slate-200 space-y-6 lg:sticky lg:top-24`}>
+              <h3 className="text-lg font-bold text-slate-900">Filtrar vagas</h3>
+
+              <FilterGroup title="Modelo de trabalho">
+                {WORK_MODELS.map(m => (
+                  <FilterOption key={m} label={m} count={countBy(j => j.workModel === m)} checked={workModels.includes(m)} onChange={() => setWorkModels(toggle(workModels, m))} />
+                ))}
+              </FilterGroup>
+
+              {areaOptions.length > 0 && (
+                <FilterGroup title="Área">
+                  {areaOptions.map(d => (
+                    <FilterOption key={d.id} label={d.name} count={countBy(j => areaOf(j) === d.id)} checked={areas.includes(d.id)} onChange={() => setAreas(toggle(areas, d.id))} />
+                  ))}
+                </FilterGroup>
+              )}
+
+              {levelOptions.length > 0 && (
+                <FilterGroup title="Senioridade">
+                  {levelOptions.map(l => (
+                    <FilterOption key={l} label={l} count={countBy(j => levelOf(j) === l)} checked={levels.includes(l)} onChange={() => setLevels(toggle(levels, l))} />
+                  ))}
+                </FilterGroup>
+              )}
+
+              <button onClick={clearFilters} className="flex items-center gap-2 pt-4 border-t border-slate-100 w-full text-sm font-semibold text-indigo-600 hover:text-indigo-800">
+                <RotateCcw className="w-4 h-4" /> Limpar filtros
+              </button>
+            </aside>
+          </div>
+        </section>
+
+        {/* Culture pillars */}
+        {dna && dna.pillars.length > 0 && (
+          <section id="como-trabalhamos" className="scroll-mt-20 space-y-5">
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900">Nosso jeito de trabalhar</h2>
+              <p className="text-sm text-slate-500">O que nos move todos os dias e faz da {orgName} um lugar único para crescer.</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {dna.pillars.slice(0, 3).map((pillar, i) => {
+                const PillarIcon = PILLAR_ICONS[i % PILLAR_ICONS.length];
+                return (
+                  <div key={pillar.id} className="p-5 rounded-2xl bg-white border border-slate-200 space-y-2.5">
+                    <span className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center"><PillarIcon className="w-5 h-5" /></span>
+                    <h3 className="font-bold text-slate-900">{pillar.name}</h3>
+                    <p className="text-sm text-slate-500 leading-relaxed">{pillar.description}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
         )}
 
-      </div>
+        {/* Selection process */}
+        <section id="processo" className="scroll-mt-20 space-y-5">
+          <div>
+            <h2 className="text-2xl font-bold text-slate-900">Nosso processo seletivo</h2>
+            <p className="text-sm text-slate-500">Transparente, respeitoso e focado em pessoas. A decisão final é sempre humana.</p>
+          </div>
+          <ol className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-5">
+            {processSteps.map((step, i) => (
+              <li key={`${step.name}-${i}`} className="flex lg:flex-col gap-3 items-start">
+                <span className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${i === 0 ? 'bg-indigo-600 text-white' : 'bg-indigo-100 text-indigo-700'}`}>{i + 1}</span>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">{step.name}</h3>
+                  <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{step.text}</p>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        {/* About */}
+        {dna && (dna.cultureSummary || dna.coreValues.length > 0) && (
+          <section id="sobre" className="scroll-mt-20 space-y-4">
+            <h2 className="text-2xl font-bold text-slate-900">Sobre nós</h2>
+            {dna.cultureSummary && <p className="text-sm text-slate-600 max-w-3xl leading-relaxed">{dna.cultureSummary}</p>}
+            {dna.coreValues.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {dna.coreValues.map(v => (
+                  <span key={v} className="px-3 py-1.5 rounded-full bg-white border border-slate-200 text-xs font-medium text-slate-700">{v}</span>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+      </main>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-slate-200 py-8 px-4 sm:px-8 mt-auto text-xs text-slate-500 text-center space-y-2">
-        <div className="flex items-center justify-center gap-2 font-bold text-slate-800">
-          <Building2 className="w-4 h-4 text-indigo-600" />
-          {activeTenant?.tradingName || activeTenant?.name} • Portal de Carreiras
+      <footer className="bg-white border-t border-slate-200 py-8 px-4 sm:px-8 mt-auto">
+        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2.5 font-bold text-slate-900">
+              <span className="w-8 h-8 rounded-lg bg-indigo-600 text-white text-xs font-extrabold flex items-center justify-center">{orgName.slice(0, 2).toUpperCase() || 'TC'}</span>
+              {orgName}
+            </div>
+            <p className="text-xs text-slate-500 mt-2">Portal de Carreiras</p>
+          </div>
+          <nav className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-500">
+            <a href="#vagas" className="hover:text-indigo-700">Vagas</a>
+            <a href="#como-trabalhamos" className="hover:text-indigo-700">Como trabalhamos</a>
+            <a href="#processo" className="hover:text-indigo-700">Processo seletivo</a>
+            <a href="#sobre" className="hover:text-indigo-700">Sobre nós</a>
+          </nav>
         </div>
-        <div className="text-[11px] text-slate-400 max-w-md mx-auto">
-          Powered by TalentCloud Multi-Tenant SaaS. Seus dados são processados com isolamento de banco de dados e total conformidade com a LGPD.
+        <div className="max-w-6xl mx-auto mt-6 pt-4 border-t border-slate-100 text-[11px] text-slate-400 flex flex-wrap justify-between gap-2">
+          <span>© {new Date().getFullYear()} {orgName} • Seus dados são tratados com segurança e em conformidade com a LGPD.</span>
+          <span>Powered by TalentCloud</span>
         </div>
       </footer>
 

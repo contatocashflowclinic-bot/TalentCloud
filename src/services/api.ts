@@ -101,7 +101,12 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     window.dispatchEvent(new Event(PERMISSION_DENIED_EVENT));
   }
   if (!response.ok || !data.success) {
-    throw new ApiError(data.error || 'Erro na requisição ao servidor', response.status, data.code);
+    // Servidor ainda na versão antiga responde com o texto técnico "Rota não encontrada: ..."
+    const staleServer = response.status === 404 && /^Rota não encontrada/.test(String(data.error ?? ''));
+    const message = staleServer
+      ? 'Não foi possível concluir esta ação porque o sistema está desatualizado. Atualize a página (Ctrl+F5) e tente de novo. Se o problema continuar, avise o suporte.'
+      : data.error || 'Erro na requisição ao servidor';
+    throw new ApiError(message, response.status, data.code);
   }
 
   return data as T;

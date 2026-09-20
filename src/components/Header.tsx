@@ -1,12 +1,7 @@
 import React, { useState } from 'react';
 import {
   Building2,
-  Database,
   ChevronDown,
-  Activity,
-  Layers,
-  Sparkles,
-  Info,
   Check,
   Globe,
   PanelLeftClose,
@@ -22,7 +17,6 @@ import { SaoPauloClockBadge } from './SaoPauloClockBadge.js';
 import { GlobalCandidateSearchBar } from './search/GlobalCandidateSearchBar.js';
 
 export const Header: React.FC<{
-  onOpenArchitectureModal: () => void;
   onOpenCareersPortal?: () => void;
   onNavigateToCandidate?: (candidateId: string, searchTerm?: string) => void;
   onNavigateToProcess?: (jobId: string, candidateId?: string) => void;
@@ -31,7 +25,6 @@ export const Header: React.FC<{
   onToggleSidebar?: () => void;
   onOpenChangePassword?: () => void;
 }> = ({
-  onOpenArchitectureModal,
   onOpenCareersPortal,
   onNavigateToCandidate,
   onNavigateToProcess,
@@ -40,13 +33,7 @@ export const Header: React.FC<{
   onToggleSidebar,
   onOpenChangePassword
 }) => {
-  const {
-    activeTenant,
-    profileLabel,
-    can,
-    telemetry,
-    routingResolution
-  } = useTenant();
+  const { activeTenant, profileLabel, can } = useTenant();
   const { user, logout, switchOrganization } = useAuth();
   const memberships = user?.memberships ?? [];
   const canSwitchOrg = memberships.length > 1;
@@ -85,12 +72,9 @@ export const Header: React.FC<{
             <div className="hidden sm:block">
               <div className="flex items-center gap-2">
                 <span className="font-bold text-slate-900 text-lg tracking-tight">TalentCloud</span>
-                <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-800 rounded-md">
-                  Multi-Tenancy
-                </span>
               </div>
               <p className="text-[11px] text-slate-500 leading-none">
-                SaaS de Ciclo de Gestão de Talentos
+                Gestão do ciclo de talentos
               </p>
             </div>
           </div>
@@ -105,26 +89,6 @@ export const Header: React.FC<{
               />
             </div>
           )}
-
-          {/* Dynamic Routing & DB Health Pill (Clickable for Architecture details) */}
-          <button
-            onClick={onOpenArchitectureModal}
-            className="hidden lg:flex shrink-0 whitespace-nowrap items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-all text-left group"
-            title="Clique para ver o console de arquitetura multi-tenant e roteamento dinâmico"
-          >
-            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-            <div className="text-xs">
-              <span className="text-slate-500 font-medium">Partição:</span>{' '}
-              <span className="font-mono font-semibold text-slate-800 group-hover:text-indigo-600">
-                {activeTenant?.dbConfig?.dbName || '—'}
-              </span>
-            </div>
-            <div className="h-3 w-px bg-slate-300"></div>
-            <span className="text-[11px] font-mono text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
-              {telemetry?.latencyMs ?? 0}ms
-            </span>
-            <Info className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600" />
-          </button>
 
           {/* Horário Padrão São Paulo - SP Badge */}
           <div className="hidden 2xl:block shrink-0">
