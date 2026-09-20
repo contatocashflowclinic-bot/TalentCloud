@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Plus, Pencil, Power } from 'lucide-react';
 import { TenantApi } from '../../services/api.js';
 import { ADMISSION_CATEGORIES, ADMISSION_RESPONSIBLES, AdmissionTemplate } from '../../types.js';
+import { useBackdropClose } from '../../hooks/useBackdropClose.js';
 
 interface Props {
   templates: AdmissionTemplate[];
@@ -25,6 +26,7 @@ export const AdmissionCatalogModal: React.FC<Props> = ({ templates, canEdit, onC
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [busy, setBusy] = useState(false);
+  const backdrop = useBackdropClose(onClose);
 
   const run = async (fn: () => Promise<unknown>) => {
     try {
@@ -59,7 +61,7 @@ export const AdmissionCatalogModal: React.FC<Props> = ({ templates, canEdit, onC
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" {...backdrop}>
       <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-y-auto border border-slate-200 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-3">
           <div>

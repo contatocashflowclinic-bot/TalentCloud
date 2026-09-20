@@ -9,6 +9,7 @@ import {
 } from '../../types.js';
 import { formatDateSP } from '../../utils/dateUtils.js';
 import { Card, Pill } from './SummaryParts.js';
+import { useBackdropClose } from '../../hooks/useBackdropClose.js';
 
 const FIELD_LABEL: Record<string, string> = {
   name: 'Nome', email: 'E-mail', phone: 'Telefone', location: 'Localização', linkedinUrl: 'LinkedIn', currentRole: 'Cargo atual',
@@ -78,6 +79,7 @@ export const CandidateSummaryModal: React.FC<Props> = ({
   const [archiving, setArchiving] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const backdrop = useBackdropClose(onClose);
 
   const initials = candidate.name.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase() || 'CD';
   const fromPortal = candidate.dataOrigin === 'candidate';
@@ -111,7 +113,7 @@ export const CandidateSummaryModal: React.FC<Props> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs" {...backdrop}>
       <div className="bg-white rounded-3xl w-full max-w-5xl max-h-[94vh] flex flex-col border border-slate-200 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="px-5 sm:px-7 pt-5 sm:pt-6 pb-4 flex items-start justify-between gap-3">

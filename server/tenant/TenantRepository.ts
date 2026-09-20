@@ -24,7 +24,7 @@ import {
   TenantUser,
   TurnoverRiskAlert
 } from '../../src/types.js';
-import { getRow, fromRow, insertRow, listRows, toSnake, updateRow, TableSpec } from '../db/crud.js';
+import { deleteRow, getRow, fromRow, insertRow, listRows, toSnake, updateRow, TableSpec } from '../db/crud.js';
 import { getPool, Queryable, withTransaction } from '../db/pool.js';
 import { TABLES } from '../db/tables.js';
 import { NotFoundError, ValidationError } from '../errors.js';
@@ -41,6 +41,7 @@ class Entity<T> {
   update(id: string, patch: Record<string, unknown>, db?: Queryable) {
     return updateRow<T>(this.spec, this.tenantId, id, patch, db);
   }
+  delete(id: string, db?: Queryable) { return deleteRow(this.spec, this.tenantId, id, db); }
 }
 
 const DNA_SPEC: TableSpec = {

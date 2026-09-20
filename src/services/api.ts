@@ -549,5 +549,6 @@ export const TenantApi = {
   updateAgendaEvent: async (id: string, payload: Record<string, unknown>) => (await request<{ success: boolean; event: AgendaEvent }>(`/api/v1/agenda/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(payload)
-  })).event
+  })).event,
+  deleteAgendaEvent: async (id: string) => { await request<{ success: boolean }>(`/api/v1/agenda/${id}`, { method: 'DELETE' }); }
 };

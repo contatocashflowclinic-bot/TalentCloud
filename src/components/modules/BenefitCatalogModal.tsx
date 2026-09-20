@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Plus, Pencil, Power, Sparkles } from 'lucide-react';
 import { TenantApi } from '../../services/api.js';
 import { BENEFIT_CATEGORIES, BenefitCatalogItem, JobPosition } from '../../types.js';
+import { useBackdropClose } from '../../hooks/useBackdropClose.js';
 
 const LEVELS: JobPosition['level'][] = ['Júnior', 'Pleno', 'Sênior', 'Especialista', 'Coordenação', 'Gerência', 'Diretoria'];
 
@@ -27,6 +28,7 @@ export const BenefitCatalogModal: React.FC<Props> = ({ benefits, onClose, onChan
   const [editingId, setEditingId] = useState<string | 'new' | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [busy, setBusy] = useState(false);
+  const backdrop = useBackdropClose(onClose);
 
   const run = async (fn: () => Promise<unknown>) => {
     try {
@@ -62,7 +64,7 @@ export const BenefitCatalogModal: React.FC<Props> = ({ benefits, onClose, onChan
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" {...backdrop}>
       <div
         className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto border border-slate-200 shadow-xl"
         onClick={(e) => e.stopPropagation()}

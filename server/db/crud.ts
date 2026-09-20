@@ -100,3 +100,13 @@ export async function updateRow<T>(
   );
   return rows[0] ? fromRow<T>(spec, rows[0]) : undefined;
 }
+
+export async function deleteRow(
+  spec: TableSpec,
+  tenantId: string,
+  id: string,
+  db: Queryable = getPool()
+): Promise<boolean> {
+  const { rowCount } = await db.query(`delete from public.${q(spec.table)} where tenant_id = $1 and id = $2`, [tenantId, id]);
+  return (rowCount ?? 0) > 0;
+}

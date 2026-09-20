@@ -10,6 +10,7 @@ import {
 import { formatDateSP } from '../../utils/dateUtils.js';
 import { Card, Pill } from './SummaryParts.js';
 import { ApplicationSummaryData, buildPrintHtml, buildSummaryText, printHtml } from '../../utils/applicationShare.js';
+import { useBackdropClose } from '../../hooks/useBackdropClose.js';
 
 const RECOMMENDATION: Record<NonNullable<InterviewSession['interviewerRecommendation']>, { label: string; cls: string }> = {
   STRONG_YES: { label: 'Fortemente recomendado', cls: 'bg-emerald-100 text-emerald-800' },
@@ -82,6 +83,7 @@ export const ApplicationSummaryModal: React.FC<Props> = ({
   const [archiving, setArchiving] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const backdrop = useBackdropClose(onClose);
 
   const stages = [...job.stages].sort((a, b) => a.order - b.order);
   const stageIdx = stages.findIndex(s => s.id === application.currentStageId);
@@ -144,7 +146,7 @@ export const ApplicationSummaryModal: React.FC<Props> = ({
   const iconBtn = 'p-2 rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/60 backdrop-blur-xs" {...backdrop}>
       <div className="bg-white rounded-3xl w-full max-w-4xl max-h-[94vh] flex flex-col border border-slate-200 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="px-5 sm:px-7 pt-5 sm:pt-6 pb-4 flex items-start justify-between gap-3">

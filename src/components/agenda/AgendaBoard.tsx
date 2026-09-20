@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, Plus, Video, CheckSquare, Clock, MapPin, ArrowRight, Users2, CalendarDays, LayoutList } from 'lucide-react';
+import { CalendarClock, Plus, Video, CheckSquare, Clock, MapPin, ArrowRight, Users2, CalendarDays, LayoutList, Pencil, Trash2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.js';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
@@ -77,6 +77,17 @@ export const AgendaBoard: React.FC<AgendaBoardProps> = ({ compact = false, onOpe
   const openCreateOn = (dateKey: string) => {
     setCreateDate(dateKey);
     setCreateOpen(true);
+  };
+
+  const handleDelete = async (event: AgendaEvent) => {
+    if (!confirm(`Excluir "${event.title}"? Essa ação não pode ser desfeita.`)) return;
+    try {
+      await TenantApi.deleteAgendaEvent(event.id);
+      setSelected(null);
+      await load();
+    } catch (err: any) {
+      alert(err.message || 'Não foi possível excluir.');
+    }
   };
 
   const load = async () => {
@@ -210,7 +221,13 @@ export const AgendaBoard: React.FC<AgendaBoardProps> = ({ compact = false, onOpe
           {loading ? (
             <div className="p-8 text-center text-slate-400 text-xs animate-pulse">Carregando a agenda...</div>
           ) : !compact && view === 'calendar' ? (
-            <AgendaCalendarMonth events={visible} memberName={memberName} onSelectEvent={setSelected} onCreateOnDate={openCreateOn} />
+            <AgendaCalendarMonth
+              events={visible}
+              memberName={memberName}
+              onSelectEvent={setSelected}
+              onCreateOnDate={openCreateOn}
+              onDeleteEvent={handleDelete}
+            />
           ) : displayList.length === 0 ? (
             <div className="p-8 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-2xl">
               Nenhum compromisso {filter === 'mine' ? 'atribuído a você' : 'por aqui'}. Clique em "Novo compromisso" para agendar.
@@ -218,7 +235,7 @@ export const AgendaBoard: React.FC<AgendaBoardProps> = ({ compact = false, onOpe
           ) : compact ? (
             <div className="space-y-2.5">
               {displayList.map(ev => (
-                <EventCard key={ev.id} event={ev} memberName={memberName} onClick={() => setSelected(ev)} />
+                <EventCard key={ev.id} event={ev} memberName={memberName} onClick={() => setSelected(ev)} onDelete={() => handleDelete(ev)} />
               ))}
             </div>
           ) : (
@@ -227,7 +244,7 @@ export const AgendaBoard: React.FC<AgendaBoardProps> = ({ compact = false, onOpe
                 <div key={group.label} className="space-y-2.5">
                   <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-0.5">{group.label}</div>
                   {group.items.map(ev => (
-                    <EventCard key={ev.id} event={ev} memberName={memberName} onClick={() => setSelected(ev)} />
+                    <EventCard key={ev.id} event={ev} memberName={memberName} onClick={() => setSelected(ev)} onDelete={() => handleDelete(ev)} />
                   ))}
                 </div>
               ))}
@@ -283,24 +300,35 @@ export const AgendaBoard: React.FC<AgendaBoardProps> = ({ compact = false, onOpe
         />
       )}
       {selected && (
-        <AgendaEventModal mode="edit" event={selected} members={members} onClose={() => setSelected(null)} onSaved={load} />
+        <AgendaEventModal
+          mode="edit"
+          event={selected}
+          members={members}
+          onClose={() => setSelected(null)}
+          onSaved={load}
+          onDelete={() => handleDelete(selected)}
+        />
       )}
     </div>
   );
 };
 
-const EventCard: React.FC<{ event: AgendaEvent; memberName: (id: string) => string; onClick: () => void }> = ({
-  event,
-  memberName,
-  onClick
-}) => {
+const EventCard: React.FC<{
+  event: AgendaEvent;
+  memberName: (id: string) => string;
+  onClick: () => void;
+  onDelete: () => void;
+}> = ({ event, memberName, onClick, onDelete }) => {
   const type = TYPE_META[event.type];
   const status = STATUS_META[event.status];
   const Icon = type.icon;
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className="w-full text-left p-4 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all flex items-start gap-3.5"
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
+      className="w-full text-left p-4 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all flex items-start gap-3.5 cursor-pointer"
     >
       <div className={`w-10 h-10 rounded-xl bg-gradient-to-tr ${type.accent} text-white flex items-center justify-center shrink-0`}>
         <Icon className="w-4.5 h-4.5" />
@@ -308,7 +336,25 @@ const EventCard: React.FC<{ event: AgendaEvent; memberName: (id: string) => stri
       <div className="min-w-0 flex-1 space-y-1.5">
         <div className="flex items-start justify-between gap-2">
           <h4 className="text-sm font-bold text-slate-900 truncate">{event.title}</h4>
-          <span className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-bold ${status.badge}`}>{status.label}</span>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${status.badge}`}>{status.label}</span>
+            <button
+              onClick={(e) => { e.stopPropagation(); onClick(); }}
+              title="Editar"
+              aria-label="Editar compromisso"
+              className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-indigo-600 transition-colors"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+              title="Excluir"
+              aria-label="Excluir compromisso"
+              className="p-1 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
           <span className="flex items-center gap-1">
@@ -331,6 +377,6 @@ const EventCard: React.FC<{ event: AgendaEvent; memberName: (id: string) => stri
           </div>
         )}
       </div>
-    </button>
+    </div>
   );
 };

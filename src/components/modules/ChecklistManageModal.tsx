@@ -4,6 +4,7 @@ import { TenantApi } from '../../services/api.js';
 import {
   CHECKLIST_CATEGORIES, CHECKLIST_RESPONSIBLES, IntegrationTemplate, OnboardingChecklistItem, OnboardingJourney
 } from '../../types.js';
+import { useBackdropClose } from '../../hooks/useBackdropClose.js';
 
 interface Props {
   journey: OnboardingJourney;
@@ -24,6 +25,7 @@ export const ChecklistManageModal: React.FC<Props> = ({ journey, onUpdated, onCl
   const [selected, setSelected] = useState<string[]>([]);
   const [extra, setExtra] = useState(emptyExtra);
   const [busy, setBusy] = useState(false);
+  const backdrop = useBackdropClose(onClose);
 
   useEffect(() => {
     TenantApi.getAvailableChecklistTemplates(journey.id)
@@ -57,7 +59,7 @@ export const ChecklistManageModal: React.FC<Props> = ({ journey, onUpdated, onCl
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" {...backdrop}>
       <div className="bg-white rounded-2xl w-full max-w-xl max-h-[92vh] overflow-y-auto border border-slate-200 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-3">
           <div>

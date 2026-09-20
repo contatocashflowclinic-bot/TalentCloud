@@ -7,6 +7,7 @@ import {
   Department, JobOpening, JobPosition, SelectionApplication, TenantUser
 } from '../../types.js';
 import { formatDateSP } from '../../utils/dateUtils.js';
+import { useBackdropClose } from '../../hooks/useBackdropClose.js';
 
 // ---------------------------------------------------------------------------------------------
 // Shared building blocks
@@ -23,8 +24,10 @@ const Shell: React.FC<{
   onEdit?: () => void;
   onClose: () => void;
   children: React.ReactNode;
-}> = ({ kicker, title, subtitle, badge, footer, onEdit, onClose, children }) => (
-  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" onClick={onClose}>
+}> = ({ kicker, title, subtitle, badge, footer, onEdit, onClose, children }) => {
+  const backdrop = useBackdropClose(onClose);
+  return (
+  <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" {...backdrop}>
     <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[92vh] flex flex-col border border-slate-200 shadow-xl" onClick={(e) => e.stopPropagation()}>
       <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -51,7 +54,8 @@ const Shell: React.FC<{
       </div>
     </div>
   </div>
-);
+  );
+};
 
 const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
   <div className="space-y-2">

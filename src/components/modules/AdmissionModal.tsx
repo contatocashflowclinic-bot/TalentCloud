@@ -5,6 +5,7 @@ import {
   ADMISSION_CATEGORIES, ADMISSION_RESPONSIBLES, AdmissionItem, AdmissionStatus, AdmissionTemplate, OnboardingJourney
 } from '../../types.js';
 import { formatDateSP } from '../../utils/dateUtils.js';
+import { useBackdropClose } from '../../hooks/useBackdropClose.js';
 
 const STATUS: Record<AdmissionStatus, { label: string; cls: string }> = {
   pending: { label: 'Pendente', cls: 'bg-slate-100 text-slate-700' },
@@ -42,6 +43,7 @@ export const AdmissionModal: React.FC<Props> = ({ journey, canEdit, onUpdated, o
   const [picker, setPicker] = useState<{ templates: AdmissionTemplate[]; selected: string[] } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const uploadTarget = useRef<string | null>(null);
+  const backdrop = useBackdropClose(onClose);
 
   const items = journey.admission ?? [];
   const summary = admissionSummary(items);
@@ -115,7 +117,7 @@ export const AdmissionModal: React.FC<Props> = ({ journey, canEdit, onUpdated, o
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" {...backdrop}>
       <div
         className="bg-white rounded-2xl w-full max-w-3xl max-h-[92vh] overflow-y-auto border border-slate-200 shadow-xl"
         onClick={(e) => e.stopPropagation()}

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Lock } from 'lucide-react';
 import { centsToBRLText, digitsToCents, parseBRLText } from '../../utils/currencyUtils.js';
 import { DateInputBR } from '../DateInputBR.js';
+import { useBackdropClose } from '../../hooks/useBackdropClose.js';
 
 export interface FieldDef {
   key: string;
@@ -69,6 +70,7 @@ export const EditFormModal: React.FC<Props> = ({ title, subtitle, fields, initia
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const backdrop = useBackdropClose(onClose);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,7 +97,7 @@ export const EditFormModal: React.FC<Props> = ({ title, subtitle, fields, initia
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" {...backdrop}>
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[92vh] flex flex-col border border-slate-200 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-3">
           <div>
@@ -123,6 +125,8 @@ export const EditFormModal: React.FC<Props> = ({ title, subtitle, fields, initia
                     rows={f.type === 'lines' ? 4 : 3}
                     required={f.required && !f.readOnly}
                     disabled={f.readOnly}
+                    lang="pt-BR"
+                    spellCheck
                     value={values[f.key]}
                     placeholder={f.placeholder}
                     onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
@@ -173,6 +177,8 @@ export const EditFormModal: React.FC<Props> = ({ title, subtitle, fields, initia
                     disabled={f.readOnly}
                     min={f.min}
                     max={f.max}
+                    lang="pt-BR"
+                    spellCheck={f.type === 'text' || f.type === 'list'}
                     value={values[f.key]}
                     placeholder={f.placeholder}
                     onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}

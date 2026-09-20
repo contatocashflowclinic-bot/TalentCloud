@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react';
 import { AgendaEvent } from '../../types.js';
 import { formatTimeSP, spDateKey } from '../../utils/dateUtils.js';
 
@@ -38,10 +38,11 @@ interface Props {
   memberName: (id: string) => string;
   onSelectEvent: (event: AgendaEvent) => void;
   onCreateOnDate: (dateKey: string) => void;
+  onDeleteEvent: (event: AgendaEvent) => void;
 }
 
 /** Month-grid calendar — the familiar clinic/office scheduling view, with today highlighted. */
-export const AgendaCalendarMonth: React.FC<Props> = ({ events, memberName, onSelectEvent, onCreateOnDate }) => {
+export const AgendaCalendarMonth: React.FC<Props> = ({ events, memberName, onSelectEvent, onCreateOnDate, onDeleteEvent }) => {
   const todayKey = spDateKey(new Date());
   const [cursor, setCursor] = useState(() => {
     const [y, m] = todayKey.split('-').map(Number);
@@ -155,10 +156,13 @@ export const AgendaCalendarMonth: React.FC<Props> = ({ events, memberName, onSel
           ) : (
             <div className="space-y-1.5">
               {openDayEvents.map(ev => (
-                <button
+                <div
                   key={ev.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => onSelectEvent(ev)}
-                  className="w-full flex items-center gap-2.5 p-2.5 rounded-xl bg-white border border-slate-200 hover:border-indigo-300 text-left transition-colors"
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelectEvent(ev); } }}
+                  className="w-full flex items-center gap-2.5 p-2.5 rounded-xl bg-white border border-slate-200 hover:border-indigo-300 text-left transition-colors cursor-pointer"
                 >
                   <span className={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-bold ${TYPE_CHIP[ev.type]}`}>
                     {ev.type === 'meeting' ? 'Reunião' : 'Tarefa'}
@@ -170,7 +174,25 @@ export const AgendaCalendarMonth: React.FC<Props> = ({ events, memberName, onSel
                       {ev.assigneeIds.map(memberName).join(', ')}
                     </span>
                   )}
-                </button>
+                  <div className="flex items-center gap-1 shrink-0 pl-1">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onSelectEvent(ev); }}
+                      title="Editar"
+                      aria-label="Editar compromisso"
+                      className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-indigo-600 transition-colors"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onDeleteEvent(ev); }}
+                      title="Excluir"
+                      aria-label="Excluir compromisso"
+                      className="p-1 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
           )}

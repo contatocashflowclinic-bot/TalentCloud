@@ -1532,6 +1532,12 @@ async function startServer() {
     res.json({ success: true, event });
   }));
 
+  app.delete('/api/v1/agenda/:id', h(async (req, res) => {
+    const deleted = await ctx(req).db.agendaEvents.delete(req.params.id);
+    if (!deleted) throw new NotFoundError('Compromisso não encontrado.');
+    res.json({ success: true });
+  }));
+
   // Unknown API routes must not fall through to the SPA
   app.use('/api', (req, res) => {
     console.warn(`[api] rota inexistente: ${req.method} ${req.originalUrl}`);
