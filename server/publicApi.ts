@@ -106,9 +106,16 @@ export function registerPublicApi(app: Express, router: TenantConnectionRouter) 
 
         // Reuse an existing profile for the same e-mail WITHOUT overwriting it (no public edits of others' data)
         const found = await tx.query(
-          'select id from public.candidates where tenant_id = $1 and lower(email) = $2 limit 1',
+          'select id, archived from public.candidates where tenant_id = $1 and lower(email) = $2 limit 1',
           [tenant.id, email]
         );
+        if (found.rows[0]?.archived) {
+          await db.candidates.update(found.rows[0].id, { archived: false }, tx);
+          await db.candidateChanges.insert({
+            id: newId('chg'), candidateId: found.rows[0].id, field: 'archived', oldValue: true, newValue: false, kind: 'update',
+            reason: 'Perfil reativado por nova candidatura recebida pelo portal público.', changedBy: 'Portal Público de Vagas'
+          }, tx);
+        }
         const candidateId: string =
           found.rows[0]?.id ??
           (
@@ -127,7 +134,8 @@ export function registerPublicApi(app: Express, router: TenantConnectionRouter) 
                 skills: list(b.skills, 'Competências', 30, 60),
                 languages: ['Português (Nativo)'],
                 registeredAt: new Date().toISOString(),
-                tags: ['Candidatura Portal Público', job.workModel]
+                tags: ['Candidatura Portal Público', job.workModel],
+                dataOrigin: 'candidate'
               },
               tx
             )

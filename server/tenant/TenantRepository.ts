@@ -4,6 +4,7 @@ import {
   AdmissionTemplate,
   AIAssistedEvaluation,
   BenefitCatalogItem,
+  CandidateChange,
   IntegrationTemplate,
   OnboardingChecklistItem,
   Candidate,
@@ -64,6 +65,7 @@ export class TenantRepository {
   readonly positions: Entity<JobPosition>;
   readonly openings: Entity<JobOpening>;
   readonly candidates: Entity<Candidate>;
+  readonly candidateChanges: Entity<CandidateChange>;
   readonly applications: Entity<SelectionApplication>;
   readonly aiEvaluations: Entity<AIAssistedEvaluation>;
   readonly interviews: Entity<InterviewSession>;
@@ -82,6 +84,7 @@ export class TenantRepository {
     this.positions = new Entity(TABLES.positions, tenantId);
     this.openings = new Entity(TABLES.openings, tenantId);
     this.candidates = new Entity(TABLES.candidates, tenantId);
+    this.candidateChanges = new Entity(TABLES.candidateChanges, tenantId);
     this.applications = new Entity(TABLES.applications, tenantId);
     this.aiEvaluations = new Entity(TABLES.aiEvaluations, tenantId);
     this.interviews = new Entity(TABLES.interviews, tenantId);
@@ -138,6 +141,51 @@ export class TenantRepository {
          ${cols.filter(c => c !== '"period"').map(c => `${c} = excluded.${c}`).join(', ')}`,
       [this.tenantId, ...values]
     );
+  }
+
+  // ---- Candidates: every change leaves a permanent, append-only trail ----------
+  /**
+   * Applies a patch to a candidate and records one history row per field that really changed
+   * (previous value, new value, who, when and — for corrections — why), in the same transaction.
+   */
+  async updateCandidate(
+    id: string,
+    patch: Record<string, unknown>,
+    audit: { kind: CandidateChange['kind']; by: string; byId?: string; reason?: string }
+  ): Promise<{ candidate: Candidate; changedFields: string[] }> {
+    return withTransaction(async tx => {
+      const current = await getRow<Candidate>(TABLES.candidates, this.tenantId, id, tx, true);
+      if (!current) throw new NotFoundError('Candidato não encontrado');
+      const before = current as unknown as Record<string, unknown>;
+      const norm = (v: unknown) => JSON.stringify(v === undefined || v === '' ? null : v);
+      const changedFields = Object.keys(patch).filter(k => norm(before[k]) !== norm(patch[k]));
+      if (changedFields.length === 0) return { candidate: current, changedFields };
+
+      const candidate = (await this.candidates.update(id, Object.fromEntries(changedFields.map(k => [k, patch[k]])), tx))!;
+      for (const field of changedFields) {
+        await this.candidateChanges.insert({
+          id: newId('chg'),
+          candidateId: id,
+          field,
+          oldValue: before[field] ?? null,
+          newValue: patch[field] ?? null,
+          kind: audit.kind,
+          reason: audit.reason,
+          changedBy: audit.by,
+          changedById: audit.byId
+        }, tx);
+      }
+      return { candidate, changedFields };
+    });
+  }
+
+  async listCandidateChanges(candidateId: string): Promise<CandidateChange[]> {
+    const { rows } = await getPool().query(
+      `select tenant_id, id, candidate_id, field, old_value, new_value, kind, reason, changed_by, changed_by_id, changed_at
+         from public.candidate_changes where tenant_id = $1 and candidate_id = $2 order by seq desc`,
+      [this.tenantId, candidateId]
+    );
+    return rows.map(r => fromRow<CandidateChange>({}, r));
   }
 
   // ---- Selection pipeline ---------------------------------------------

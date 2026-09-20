@@ -23,6 +23,7 @@ import {
   IntegrationTemplate,
   OnboardingChecklistItem,
   BenefitCatalogItem,
+  CandidateChange,
   CollaboratorDevelopment,
   ClimateSurveyResponse,
   TurnoverRiskAlert,
@@ -370,6 +371,19 @@ export const TenantApi = {
     method: 'PATCH',
     body: JSON.stringify(payload)
   })).candidate,
+  correctCandidate: async (id: string, changes: Record<string, unknown>, reason: string) => (await request<{ success: boolean; candidate: Candidate; changedFields: string[] }>(`/api/v1/candidates/${id}/corrections`, {
+    method: 'POST',
+    body: JSON.stringify({ changes, reason })
+  })).candidate,
+  archiveCandidate: async (id: string, reason: string) => (await request<{ success: boolean; candidate: Candidate }>(`/api/v1/candidates/${id}/archive`, {
+    method: 'POST',
+    body: JSON.stringify({ reason })
+  })).candidate,
+  unarchiveCandidate: async (id: string) => (await request<{ success: boolean; candidate: Candidate }>(`/api/v1/candidates/${id}/unarchive`, {
+    method: 'POST',
+    body: JSON.stringify({})
+  })).candidate,
+  getCandidateHistory: async (id: string) => (await request<{ success: boolean; changes: CandidateChange[] }>(`/api/v1/candidates/${id}/history`)).changes,
   createCandidate: async (payload: Partial<Candidate>) => (await request<{ success: boolean; candidate: Candidate }>('/api/v1/candidates', {
     method: 'POST',
     body: JSON.stringify(payload)
@@ -381,7 +395,7 @@ export const TenantApi = {
     method: 'POST',
     body: JSON.stringify({ candidateId, jobOpeningId })
   })).application,
-  updateApplicationStage: async (id: string, stageId: string, note?: string, status?: string) => (await request<{ success: boolean; application: SelectionApplication }>(`/api/v1/applications/${id}/stage`, {
+  updateApplicationStage: async (id: string, stageId?: string, note?: string, status?: string) => (await request<{ success: boolean; application: SelectionApplication }>(`/api/v1/applications/${id}/stage`, {
     method: 'PATCH',
     body: JSON.stringify({ stageId, note, status })
   })).application,

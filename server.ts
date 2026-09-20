@@ -10,7 +10,7 @@ import { TenantConnectionRouter, TenantConnectionContext } from './server/tenant
 import { evaluateCandidateWithAI } from './server/gemini.js';
 import { closePool, getPool } from './server/db/pool.js';
 import { newId } from './server/ids.js';
-import { ConflictError, NotFoundError, ValidationError, toHttpError } from './server/errors.js';
+import { AppError, ConflictError, NotFoundError, ValidationError, toHttpError } from './server/errors.js';
 import { ALL_PERMISSIONS } from './src/access.js';
 import { sessionCache } from './server/cache.js';
 import { AuthService } from './server/auth/AuthService.js';
@@ -23,7 +23,7 @@ import { actorOf } from './server/tenant/TenantConnectionRouter.js';
 import { withTransaction } from './server/db/pool.js';
 import { assertValidFile, getFile, putFile, removeFile, safeFileName } from './server/storage.js';
 import { reviewItem, type AdmissionAction } from './server/tenant/admission.js';
-import type { AdmissionItem, OnboardingChecklistItem } from './src/types.js';
+import { CANDIDATE_DECLARED_FIELDS, type AdmissionItem, type OnboardingChecklistItem } from './src/types.js';
 
 // Augment Express Request interface with tenantContext
 declare global {
@@ -834,18 +834,18 @@ async function startServer() {
       skills: csv(skills),
       languages: Array.isArray(languages) ? languages : ['Português (Nativo)'],
       registeredAt: new Date().toISOString(),
-      tags: Array.isArray(tags) ? tags : ['Novo Candidato']
+      tags: Array.isArray(tags) ? tags : ['Novo Candidato'],
+      dataOrigin: 'rh'
     });
     res.status(201).json({ success: true, candidate });
   }));
 
-  app.patch('/api/v1/candidates/:id', can('candidates:edit'), h(async (req, res) => {
-    const { db } = ctx(req);
-    const b = req.body ?? {};
+  // Validates the fields present in a candidate body (shared by the edit and the correction routes).
+  const parseCandidatePatch = (b: Record<string, unknown>): Record<string, unknown> => {
     const patch: Record<string, unknown> = {};
     if (has(b, 'name')) patch.name = required(b.name, 'name');
     if (has(b, 'email')) {
-      const email = required(b.email, 'email');
+      const email = required(b.email, 'email').toLowerCase();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ValidationError('E-mail inválido.');
       patch.email = email;
     }
@@ -863,9 +863,84 @@ async function startServer() {
     if (has(b, 'skills')) patch.skills = csv(b.skills);
     if (has(b, 'languages')) patch.languages = csv(b.languages);
     if (has(b, 'tags')) patch.tags = csv(b.tags);
-    const candidate = await db.candidates.update(req.params.id, patch);
-    if (!candidate) throw new NotFoundError('Candidato não encontrado');
+    return patch;
+  };
+  const DECLARED = new Set<string>(CANDIDATE_DECLARED_FIELDS);
+  const auditActor = (req: Request) => ({ by: req.auth!.name, byId: req.auth!.id });
+
+  // Edit. What the candidate declared in the portal form is protected: it changes only through a justified correction.
+  app.patch('/api/v1/candidates/:id', can('candidates:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const current = await db.candidates.get(req.params.id);
+    if (!current) throw new NotFoundError('Candidato não encontrado');
+    const patch = parseCandidatePatch(req.body ?? {});
+    if (current.dataOrigin === 'candidate') {
+      const locked = Object.keys(patch).filter(k => DECLARED.has(k));
+      if (locked.length > 0) {
+        throw new AppError(
+          'Estes dados foram informados pelo próprio candidato e não podem ser editados. Use "Registrar correção" informando o motivo.',
+          409, 'DECLARED_DATA_LOCKED'
+        );
+      }
+    }
+    const { candidate } = await db.updateCandidate(req.params.id, patch, { kind: 'update', ...auditActor(req) });
     res.json({ success: true, candidate });
+  }));
+
+  // Justified correction of declared data: keeps the original value, the new one, who, when and why.
+  app.post('/api/v1/candidates/:id/corrections', can('candidates:edit'), h(async (req, res) => {
+    const { db, tenant } = ctx(req);
+    const body = req.body ?? {};
+    const reason = required(body.reason, 'motivo da correção');
+    if (reason.length < 10) throw new ValidationError('Descreva o motivo da correção com pelo menos 10 caracteres.');
+    const changes = body.changes && typeof body.changes === 'object' && !Array.isArray(body.changes) ? body.changes as Record<string, unknown> : {};
+    const fields = Object.keys(changes);
+    if (fields.length === 0) throw new ValidationError('Informe ao menos um campo a corrigir.');
+    const notDeclared = fields.filter(f => !DECLARED.has(f));
+    if (notDeclared.length > 0) throw new ValidationError(`Só dados informados pelo candidato passam por correção. Edite normalmente: ${notDeclared.join(', ')}.`);
+
+    const { candidate, changedFields } = await db.updateCandidate(req.params.id, parseCandidatePatch(changes), { kind: 'correction', reason, ...auditActor(req) });
+    if (changedFields.length === 0) throw new ValidationError('Nenhum valor foi alterado: os dados informados são iguais aos atuais.');
+
+    await router.logMasterAudit({
+      tenantId: tenant.id,
+      userId: req.auth!.id,
+      userName: req.auth!.name,
+      action: 'CANDIDATE_DATA_CORRECTED',
+      category: 'CANDIDATE_DATA',
+      details: `Correção de dados do candidato ${candidate.name} (${changedFields.join(', ')}). Motivo: ${reason}`,
+      ipAddress: req.ip || '127.0.0.1',
+      databaseAffected: tenant.dbConfig.dbName
+    });
+    res.status(201).json({ success: true, candidate, changedFields });
+  }));
+
+  // Archive keeps everything (applications, evaluations, history); the profile just leaves the main list.
+  app.post('/api/v1/candidates/:id/archive', can('candidates:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const reason = required(req.body?.reason, 'motivo do arquivamento');
+    if (reason.length < 10) throw new ValidationError('Descreva o motivo do arquivamento com pelo menos 10 caracteres.');
+    const current = await db.candidates.get(req.params.id);
+    if (!current) throw new NotFoundError('Candidato não encontrado');
+    if (current.archived) throw new ValidationError('Este perfil já está arquivado.');
+    const { candidate } = await db.updateCandidate(req.params.id, { archived: true }, { kind: 'update', reason, ...auditActor(req) });
+    res.json({ success: true, candidate });
+  }));
+
+  app.post('/api/v1/candidates/:id/unarchive', can('candidates:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const current = await db.candidates.get(req.params.id);
+    if (!current) throw new NotFoundError('Candidato não encontrado');
+    if (!current.archived) throw new ValidationError('Este perfil não está arquivado.');
+    const reason = typeof req.body?.reason === 'string' && req.body.reason.trim() ? req.body.reason.trim() : 'Perfil reativado.';
+    const { candidate } = await db.updateCandidate(req.params.id, { archived: false }, { kind: 'update', reason, ...auditActor(req) });
+    res.json({ success: true, candidate });
+  }));
+
+  app.get('/api/v1/candidates/:id/history', can('candidates:view'), h(async (req, res) => {
+    const { db } = ctx(req);
+    if (!(await db.candidates.get(req.params.id))) throw new NotFoundError('Candidato não encontrado');
+    res.json({ success: true, changes: await db.listCandidateChanges(req.params.id) });
   }));
 
   // ---------------------------------------------------------
@@ -880,6 +955,9 @@ async function startServer() {
     const { db } = ctx(req);
     const candidateId = required(req.body.candidateId, 'candidateId');
     const jobOpeningId = required(req.body.jobOpeningId, 'jobOpeningId');
+    if ((await db.candidates.get(candidateId))?.archived) {
+      throw new ValidationError('Este perfil está arquivado. Reative o perfil no Banco de Talentos antes de inscrevê-lo em uma vaga.');
+    }
     const application = await db.createApplication(candidateId, jobOpeningId, newId('app'));
     res.status(201).json({ success: true, application });
   }));

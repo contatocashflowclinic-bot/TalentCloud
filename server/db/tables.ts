@@ -33,8 +33,14 @@ export const TABLES = {
     table: 'candidates',
     columns: [
       'id', 'name', 'email', 'phone', 'location', 'linkedinUrl', 'currentRole', 'yearsOfExperience', 'education',
-      'resumeSummary', 'skills', 'languages', 'registeredAt', 'tags'
+      'resumeSummary', 'skills', 'languages', 'registeredAt', 'tags', 'dataOrigin', 'archived'
     ]
+  },
+  candidateChanges: {
+    table: 'candidate_changes',
+    json: ['oldValue', 'newValue'],
+    orderBy: 'seq desc',
+    columns: ['id', 'candidateId', 'field', 'oldValue', 'newValue', 'kind', 'reason', 'changedBy', 'changedById', 'changedAt']
   },
   applications: {
     table: 'selection_applications',

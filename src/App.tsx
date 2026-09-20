@@ -163,6 +163,7 @@ const MainLayout: React.FC = () => {
               {activeModule === 7 && (
                 <ModuleCandidates
                   onSelectCandidateForAI={handleNavigateToAI}
+                  onNavigateToProcess={handleNavigateToProcess}
                   initialSearchTerm={targetSearchTerm}
                   initialSelectedCandidateId={targetCandidateId}
                 />
@@ -172,6 +173,7 @@ const MainLayout: React.FC = () => {
                   initialJobId={targetJobId}
                   initialCandidateId={targetCandidateId}
                   onNavigateToAI={handleNavigateToAI}
+                  onNavigateToCandidate={handleNavigateToCandidate}
                 />
               )}
               {activeModule === 9 && (

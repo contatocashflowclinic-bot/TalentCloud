@@ -10,7 +10,8 @@ export const ModuleSelectionProcess: React.FC<{
   initialJobId?: string;
   initialCandidateId?: string;
   onNavigateToAI?: (candidateId: string, jobId: string) => void;
-}> = ({ initialJobId, initialCandidateId, onNavigateToAI }) => {
+  onNavigateToCandidate?: (candidateId: string, searchTerm?: string) => void;
+}> = ({ initialJobId, initialCandidateId, onNavigateToAI, onNavigateToCandidate }) => {
   const { activeTenant } = useTenant();
   const [openings, setOpenings] = useState<JobOpening[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string>('');
@@ -75,6 +76,25 @@ export const ModuleSelectionProcess: React.FC<{
       } catch (err: any) {
         alert(`Erro ao avançar etapa: ${err.message}`);
       }
+    }
+  };
+
+  // Archiving keeps the record (status "rejected") and the reason in the process history; it can be reactivated.
+  const handleArchive = async (app: SelectionApplication, reason: string) => {
+    try {
+      await TenantApi.updateApplicationStage(app.id, undefined, `Candidatura arquivada. Motivo: ${reason}`, 'rejected');
+      await loadData();
+    } catch (err: any) {
+      alert(`Erro ao arquivar: ${err.message}`);
+    }
+  };
+
+  const handleReactivate = async (app: SelectionApplication) => {
+    try {
+      await TenantApi.updateApplicationStage(app.id, undefined, 'Candidatura reativada.', 'in_review');
+      await loadData();
+    } catch (err: any) {
+      alert(`Erro ao reativar: ${err.message}`);
     }
   };
 
@@ -148,7 +168,7 @@ export const ModuleSelectionProcess: React.FC<{
                         <div
                           key={app.id}
                           onClick={() => setSummaryAppId(app.id)}
-                          className={`p-4 rounded-2xl bg-white border transition-all space-y-3 group cursor-pointer ${
+                          className={`p-4 rounded-2xl bg-white border transition-all space-y-3 group cursor-pointer ${app.status === 'rejected' ? 'opacity-70 ' : ''}${
                             isHighlighted
                               ? 'border-indigo-500 ring-4 ring-indigo-500/20 shadow-md bg-indigo-50/30'
                               : 'border-slate-200/90 shadow-2xs hover:shadow-md hover:border-indigo-300'
@@ -167,6 +187,15 @@ export const ModuleSelectionProcess: React.FC<{
                                   <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-indigo-100 text-indigo-800">
                                     Busca
                                   </span>
+                                )}
+                                {app.status === 'hired' && (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-emerald-100 text-emerald-800">Contratado</span>
+                                )}
+                                {app.status === 'rejected' && (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-rose-100 text-rose-700">Arquivada</span>
+                                )}
+                                {app.status === 'hold' && (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-bold uppercase bg-amber-100 text-amber-800">Em espera</span>
                                 )}
                               </div>
                               <div className="text-xs text-slate-500 truncate mt-0.5">
@@ -216,7 +245,7 @@ export const ModuleSelectionProcess: React.FC<{
                               </button>
                             )}
 
-                            {sIdx < activeJob.stages.length - 1 && (
+                            {sIdx < activeJob.stages.length - 1 && app.status !== 'rejected' && app.status !== 'hired' && (
                               <button
                                 onClick={() => handleAdvanceStage(app.id, stage.id)}
                                 className="px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 text-xs font-medium flex items-center gap-1 transition-colors"
@@ -253,11 +282,17 @@ export const ModuleSelectionProcess: React.FC<{
           job={activeJob}
           evaluation={aiEvaluations.find(e => e.candidateId === summaryApp.candidateId && e.jobOpeningId === activeJob.id)}
           interviews={interviews.filter(i => i.candidateId === summaryApp.candidateId && i.jobOpeningId === activeJob.id)}
-          canAdvance={!!user?.permissions.includes('selection:edit')}
+          canEdit={!!user?.permissions.includes('selection:edit')}
           onAdvance={async () => {
             await handleAdvanceStage(summaryApp.id, summaryApp.currentStageId);
             setSummaryAppId(null);
           }}
+          onArchive={async (reason) => { await handleArchive(summaryApp, reason); }}
+          onReactivate={async () => { await handleReactivate(summaryApp); }}
+          onOpenProfile={onNavigateToCandidate ? () => {
+            const candidate = candidates.find(c => c.id === summaryApp.candidateId);
+            onNavigateToCandidate(summaryApp.candidateId, candidate?.name);
+          } : undefined}
           onOpenAI={onNavigateToAI ? () => onNavigateToAI(summaryApp.candidateId, activeJob.id) : undefined}
           organizationName={activeTenant?.name}
           printedBy={user?.name}

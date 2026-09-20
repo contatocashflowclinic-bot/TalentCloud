@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { TenantApi } from '../../services/api.js';
 import {
-  AIAssistedEvaluation, Candidate, Department, JobOpening, JobPosition, SelectionApplication, TenantUser
+  Department, JobOpening, JobPosition, SelectionApplication, TenantUser
 } from '../../types.js';
 import { formatDateSP } from '../../utils/dateUtils.js';
 
@@ -90,9 +90,6 @@ const Muted: React.FC<{ children: React.ReactNode }> = ({ children }) => <p clas
 
 const JOB_STATUS: Record<JobOpening['status'], string> = {
   draft: 'Rascunho', open: 'Aberta / Ativa', in_progress: 'Em andamento', offer: 'Em proposta', filled: 'Preenchida', cancelled: 'Cancelada'
-};
-const APPLICATION_STATUS: Record<SelectionApplication['status'], string> = {
-  in_review: 'Em análise', advancing: 'Avançando', hold: 'Em espera', rejected: 'Reprovado', hired: 'Contratado'
 };
 const CAREER_TRACK: Record<JobPosition['careerTrack'], string> = {
   Y_TECNICO: 'Carreira em Y (técnica)', 'GESTÃO': 'Gestão', OPERACIONAL: 'Operacional'
@@ -336,99 +333,6 @@ export const OpeningSummaryModal: React.FC<{
           <ul className="space-y-0.5 text-slate-700 list-disc pl-4">{job.customQuestions.map((q, i) => <li key={i}>{q}</li>)}</ul>
         </Section>
       )}
-    </Shell>
-  );
-};
-
-// ---------------------------------------------------------------------------------------------
-// Banco de Talentos
-// ---------------------------------------------------------------------------------------------
-export const CandidateSummaryModal: React.FC<{
-  candidate: Candidate;
-  evaluations: AIAssistedEvaluation[];
-  openings: JobOpening[];
-  onOpenAI?: () => void;
-  onEdit?: () => void;
-  onClose: () => void;
-}> = ({ candidate, evaluations, openings, onOpenAI, onEdit, onClose }) => {
-  const applications = useRelated(() => TenantApi.getApplications(), [] as SelectionApplication[]);
-  const mine = (applications ?? []).filter(a => a.candidateId === candidate.id);
-  const myEvals = evaluations.filter(e => e.candidateId === candidate.id);
-  const initials = candidate.name.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase() || 'CD';
-  const decisionLabel = (d?: AIAssistedEvaluation['humanReviewerDecision']) =>
-    d === 'APPROVED' ? 'Aprovado' : d === 'REJECTED' ? 'Reprovado' : d === 'REQUEST_ADDITIONAL_INTERVIEW' ? 'Nova entrevista' : d === 'OVERRIDDEN' ? 'Decisão substituída' : 'Em análise';
-
-  return (
-    <Shell
-      kicker="Resumo do candidato"
-      title={candidate.name}
-      subtitle={<>{candidate.currentRole} • {candidate.yearsOfExperience}a de experiência</>}
-      badge={<div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-600 text-white font-bold text-xs flex items-center justify-center">{initials}</div>}
-      footer={onOpenAI && (
-        <button onClick={onOpenAI} className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs flex items-center gap-1.5">
-          <Sparkles className="w-3.5 h-3.5" /> {myEvals.length > 0 ? 'Ver avaliação com IA' : 'Avaliar com IA assistida'}
-        </button>
-      )}
-      onEdit={onEdit}
-      onClose={onClose}
-    >
-      <Section title="Contato e perfil">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-slate-600">
-          {candidate.email && <div className="flex items-center gap-1.5 min-w-0"><Mail className="w-3 h-3 text-slate-400 shrink-0" /><span className="truncate">{candidate.email}</span></div>}
-          {candidate.phone && <div className="flex items-center gap-1.5"><Phone className="w-3 h-3 text-slate-400 shrink-0" />{candidate.phone}</div>}
-          {candidate.location && <div className="flex items-center gap-1.5"><MapPin className="w-3 h-3 text-slate-400 shrink-0" />{candidate.location}</div>}
-          {candidate.education && <div className="flex items-center gap-1.5 min-w-0"><GraduationCap className="w-3 h-3 text-slate-400 shrink-0" /><span className="truncate">{candidate.education}</span></div>}
-          {candidate.linkedinUrl && (
-            <div className="flex items-center gap-1.5 min-w-0"><Linkedin className="w-3 h-3 text-slate-400 shrink-0" />
-              <a href={candidate.linkedinUrl} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline truncate">LinkedIn</a>
-            </div>
-          )}
-        </div>
-        <div className="text-slate-400">Cadastrado em {formatDateSP(candidate.registeredAt)}</div>
-      </Section>
-
-      {candidate.resumeSummary && <Section title="Resumo profissional"><p className="text-slate-700 leading-relaxed">{candidate.resumeSummary}</p></Section>}
-      <Section title="Competências"><Chips items={candidate.skills} /></Section>
-      {(candidate.languages.length > 0 || candidate.tags.length > 0) && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {candidate.languages.length > 0 && <Section title="Idiomas"><Chips items={candidate.languages} /></Section>}
-          {candidate.tags.length > 0 && <Section title="Tags"><Chips items={candidate.tags} tone="bg-indigo-50 text-indigo-700" /></Section>}
-        </div>
-      )}
-
-      <Section title={`Candidaturas (${applications === null ? '…' : mine.length})`}>
-        {applications === null ? <Muted>Carregando…</Muted> : mine.length === 0 ? <Muted>Este talento ainda não está em nenhum processo seletivo.</Muted> : (
-          <ul className="space-y-1.5">
-            {mine.map(a => {
-              const job = openings.find(o => o.id === a.jobOpeningId);
-              const stage = job?.stages.find(s => s.id === a.currentStageId);
-              return (
-                <li key={a.id} className="flex items-center justify-between gap-2 p-2 rounded-lg border border-slate-200">
-                  <span className="font-medium text-slate-800 truncate">{job?.title ?? 'Vaga'}</span>
-                  <span className="text-slate-500 shrink-0">{stage?.name ?? '—'} · {APPLICATION_STATUS[a.status]}</span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Section>
-
-      <Section title="Avaliação assistida por IA">
-        {myEvals.length === 0 ? <Muted>Nenhuma avaliação por IA realizada.</Muted> : (
-          <div className="space-y-1.5">
-            {myEvals.map(e => (
-              <div key={e.id} className="p-3 rounded-xl bg-indigo-50/60 border border-indigo-100 flex flex-wrap items-center justify-between gap-2">
-                <span className="font-medium text-slate-800">{openings.find(o => o.id === e.jobOpeningId)?.title ?? 'Vaga'}</span>
-                <span className="flex items-center gap-2">
-                  <span className="font-mono font-bold text-indigo-700">Fit {e.overallFitScore}%</span>
-                  <span className="text-slate-500">Téc. {e.technicalFitScore}% · Cult. {e.culturalFitScore}%</span>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-white text-slate-700 border border-slate-200">{decisionLabel(e.humanReviewerDecision)}</span>
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </Section>
     </Shell>
   );
 };

@@ -102,7 +102,7 @@ async function seedFidelity() {
     check(`[${slug}] departments`, sameData(await repo.departments.list(), seed.departments));
     check(`[${slug}] positions`, sameData(await repo.positions.list(), seed.positions));
     check(`[${slug}] openings`, sameData(await repo.openings.list(), seed.openings));
-    check(`[${slug}] candidates`, sameData(await repo.candidates.list(), seed.candidates));
+    check(`[${slug}] candidates`, sameData(await repo.candidates.list(), seed.candidates.map((c: any) => ({ dataOrigin: 'rh', archived: false, ...c }))));
     check(`[${slug}] applications`, sameData(await repo.applications.list(), seed.applications));
     check(`[${slug}] aiEvaluations`, sameData(await repo.aiEvaluations.list(), [...(seed.aiEvaluations ?? [])].reverse()));
     check(`[${slug}] interviews`, sameData(await repo.interviews.list(), seed.interviews ?? []));
@@ -398,6 +398,11 @@ async function main() {
     check('move application', moved.json.application?.currentStageId === 'stg-3' && moved.json.application.notes.length === 2, moved.json);
     check('invalid stage -> 400', (await A('PATCH', `/api/v1/applications/${appId}/stage`, { stageId: 'stg-99' })).status === 400);
     check('invalid status -> 400', (await A('PATCH', `/api/v1/applications/${appId}/stage`, { status: 'flying' })).status === 400);
+    const archivedApp = await A('PATCH', `/api/v1/applications/${appId}/stage`, { status: 'rejected', note: 'Candidatura arquivada. Motivo: perfil fora do requisito' });
+    check('archive an application: status rejected, stage kept, reason in the history', archivedApp.json.application?.status === 'rejected' && archivedApp.json.application.currentStageId === 'stg-3' && /Motivo: perfil fora/.test(archivedApp.json.application.notes.at(-1)), archivedApp.json);
+    const reactivated = await A('PATCH', `/api/v1/applications/${appId}/stage`, { status: 'in_review', note: 'Candidatura reativada.' });
+    check('reactivate an archived application', reactivated.json.application?.status === 'in_review' && reactivated.json.application.currentStageId === 'stg-3' && reactivated.json.application.notes.length === archivedApp.json.application.notes.length + 1, reactivated.json);
+    check('RBAC: only selection:edit can archive', (await R('INTERVIEWER', 'PATCH', `/api/v1/applications/${appId}/stage`, { status: 'rejected', note: 'x' })).status === 403);
 
     const ev = await A('POST', '/api/v1/ai/evaluate-candidate', { candidateId: candId, jobOpeningId: jobId });
     check('AI evaluation (Gemini or fallback)', ev.status === 201 && typeof ev.json.evaluation?.overallFitScore === 'number', ev.json);
@@ -664,13 +669,92 @@ async function main() {
     check('public portal exposes no salary bands / internal ids / thresholds', !/minSalary|maxSalary|hiringManagerId|recruiterId|culturalFitThreshold|undesiredBehaviors|passwordHash/.test(pubText), pubText.slice(0, 200));
     check('public portal: unknown org -> 404', (await api('GET', '/api/public/nao-existe/careers')).status === 404);
 
-    const applyBody = { jobOpeningId: jobId, name: 'Candidata Pública', email: `publica-${suffix}@smoke.test`, currentRole: 'Dev', yearsOfExperience: 4, skills: 'Go, SQL', tags: ['admin-only'], status: 'hired' };
+    const applyBody = { jobOpeningId: jobId, name: 'Candidata Pública', email: `publica-${suffix}@smoke.test`, currentRole: 'Dev', yearsOfExperience: 4, skills: 'Go, SQL', tags: ['admin-only'], status: 'hired', dataOrigin: 'rh' };
     const applied = await api('POST', `/api/public/${slugA}/apply`, { body: applyBody });
     check('public apply -> 201 with protocol', applied.status === 201 && !!applied.json.applicationId, applied.json);
     const pubCand = (await A('GET', '/api/v1/candidates')).json.candidates.find((c: any) => c.email === `publica-${suffix}@smoke.test`);
     check('public application landed in the org (candidate + tags forced server-side)', !!pubCand && pubCand.tags.includes('Candidatura Portal Público') && !pubCand.tags.includes('admin-only'), pubCand);
     const pubApp = (await A('GET', '/api/v1/applications')).json.applications.find((a: any) => a.candidateId === pubCand?.id);
     check('public application starts in review on the first stage (cannot self-approve)', pubApp?.status === 'in_review' && pubApp.currentStageId === 'stg-1', pubApp);
+
+    // ---- Origem dos dados do candidato: declarados no portal = protegidos; correção só com motivo ------
+    check('data origin: portal candidate is marked as declared by the candidate (body cannot change it)', pubCand?.dataOrigin === 'candidate', pubCand?.dataOrigin);
+    check('data origin: candidate created by the RH is marked as RH', (await A('GET', '/api/v1/candidates')).json.candidates.find((c: any) => c.id === candId)?.dataOrigin === 'rh');
+    const pc = `/api/v1/candidates/${pubCand.id}`;
+    const locked = await A('PATCH', pc, { name: 'Nome Reescrito' });
+    check('declared data cannot be edited (409 DECLARED_DATA_LOCKED)', locked.status === 409 && locked.json.code === 'DECLARED_DATA_LOCKED', locked.json);
+    for (const [field, value] of [['email', 'novo@smoke.test'], ['phone', '000'], ['location', 'Lugar'], ['currentRole', 'CEO'], ['yearsOfExperience', 20], ['education', 'PhD'], ['resumeSummary', 'reescrito'], ['skills', ['X']], ['linkedinUrl', 'https://x.com']] as const) {
+      check(`declared field "${field}" is locked`, (await A('PATCH', pc, { [field]: value })).status === 409);
+    }
+    check('declared data is unchanged after the blocked attempts', (await A('GET', '/api/v1/candidates')).json.candidates.find((c: any) => c.id === pubCand.id)?.name === 'Candidata Pública');
+    const okEdit = await A('PATCH', pc, { languages: ['Português (Nativo)', 'Inglês (Fluente)'], tags: ['Triagem OK'] });
+    check('RH-owned fields of a portal candidate stay editable', okEdit.status === 200 && okEdit.json.candidate.tags.join() === 'Triagem OK' && okEdit.json.candidate.languages.length === 2, okEdit.json);
+
+    const corr = `${pc}/corrections`;
+    check('correction without reason -> 400', (await A('POST', corr, { changes: { phone: '+55 11 90000-0001' } })).status === 400);
+    check('correction with a too short reason -> 400', (await A('POST', corr, { changes: { phone: '+55 11 90000-0001' }, reason: 'erro' })).status === 400);
+    check('correction without fields -> 400', (await A('POST', corr, { changes: {}, reason: 'Candidato pediu por e-mail' })).status === 400);
+    check('correction of a non declared field -> 400', (await A('POST', corr, { changes: { tags: ['x'] }, reason: 'Candidato pediu por e-mail' })).status === 400);
+    check('correction with an invalid value -> 400', (await A('POST', corr, { changes: { email: 'sem-arroba' }, reason: 'Candidato pediu por e-mail' })).status === 400);
+    check('correction that changes nothing -> 400', (await A('POST', corr, { changes: { name: 'Candidata Pública' }, reason: 'Candidato pediu por e-mail' })).status === 400);
+    const before = (await A('GET', '/api/v1/candidates')).json.candidates.find((c: any) => c.id === pubCand.id);
+    const done = await A('POST', corr, { changes: { phone: '+55 11 90000-0001', currentRole: 'Tech Lead' }, reason: 'Candidato pediu a correção por e-mail em 12/03' });
+    check('justified correction is applied', done.status === 201 && done.json.candidate.phone === '+55 11 90000-0001' && done.json.candidate.currentRole === 'Tech Lead' && done.json.changedFields.length === 2, done.json);
+    const hist = (await A('GET', `${pc}/history`)).json.changes ?? [];
+    const phoneChange = hist.find((h: any) => h.field === 'phone' && h.kind === 'correction');
+    check('history keeps the ORIGINAL value, the new one, who, when and why',
+      phoneChange?.oldValue === before.phone && phoneChange.newValue === '+55 11 90000-0001' && phoneChange.reason?.includes('12/03') && !!phoneChange.changedBy && !!phoneChange.changedAt, phoneChange);
+    check('history has one row per changed field, newest first', hist.filter((h: any) => h.kind === 'correction').length === 2 && hist[0].changedAt >= hist[hist.length - 1].changedAt);
+    check('history also records the RH-owned edit', hist.some((h: any) => h.field === 'tags' && h.kind === 'update'));
+    const archived = (await A('GET', '/api/v1/candidates')).json.candidates.find((c: any) => c.id === pubCand.id);
+    check('the corrected value is what the system now shows', archived.phone === '+55 11 90000-0001');
+    let trailImmutable = false;
+    try { await getPool().query(`update public.candidate_changes set new_value = '"forjado"' where candidate_id = $1`, [pubCand.id]); } catch { trailImmutable = true; }
+    check('history is append-only (the database refuses to rewrite it)', trailImmutable);
+    check('RBAC: HIRING_MANAGER cannot correct candidate data', (await R('HIRING_MANAGER', 'POST', corr, { changes: { phone: '1' }, reason: 'tentativa sem permissão' })).status === 403);
+    check('RBAC: INTERVIEWER can read the history but not correct', (await R('INTERVIEWER', 'GET', `${pc}/history`)).status === 200 && (await R('INTERVIEWER', 'POST', corr, { changes: { phone: '1' }, reason: 'tentativa sem permissão' })).status === 403);
+    check('correction: unknown candidate -> 404', (await A('POST', '/api/v1/candidates/cand-nope/corrections', { changes: { phone: '1' }, reason: 'não existe candidato' })).status === 404);
+    check('history: unknown candidate -> 404', (await A('GET', '/api/v1/candidates/cand-nope/history')).status === 404);
+    check('isolation: org B cannot read the history of an org A candidate', (await B('GET', `${pc}/history`)).status === 404);
+    check('isolation: org B cannot correct an org A candidate', (await B('POST', corr, { changes: { phone: '1' }, reason: 'tentativa de outra organização' })).status === 404);
+
+
+    // ---- Arquivar perfil no Banco de Talentos (nada é apagado; motivo e autor no histórico) ---------
+    const arch = `${pc}/archive`;
+    check('archive: patch cannot flip the archived flag', (await A('PATCH', pc, { archived: true })).json.candidate?.archived === false);
+    check('archive without reason -> 400', (await A('POST', arch, {})).status === 400);
+    check('archive with a too short reason -> 400', (await A('POST', arch, { reason: 'sair' })).status === 400);
+    check('RBAC: HIRING_MANAGER cannot archive', (await R('HIRING_MANAGER', 'POST', arch, { reason: 'tentativa sem permissão' })).status === 403);
+    check('archive: unknown candidate -> 404', (await A('POST', '/api/v1/candidates/cand-nope/archive', { reason: 'não existe candidato' })).status === 404);
+    check('isolation: org B cannot archive an org A candidate', (await B('POST', arch, { reason: 'tentativa de outra organização' })).status === 404);
+    const archivedOk = await A('POST', arch, { reason: 'Candidato pediu para sair do banco de talentos' });
+    check('archive: the profile is archived', archivedOk.json.candidate?.archived === true, archivedOk.json);
+    const archHist = ((await A('GET', `${pc}/history`)).json.changes ?? []).find((h: any) => h.field === 'archived');
+    check('archive: history records who, why, and the flag change', archHist?.oldValue === false && archHist.newValue === true && /sair do banco/.test(archHist.reason) && !!archHist.changedBy, archHist);
+    check('archive: the candidate keeps every other field (nothing is deleted)', (await A('GET', '/api/v1/candidates')).json.candidates.find((c: any) => c.id === pubCand.id)?.name === 'Candidata Pública');
+    check('archive: already archived -> 400', (await A('POST', arch, { reason: 'segunda tentativa de arquivar' })).status === 400);
+    check('archived profile cannot enter a new selection process (RH)', (await A('POST', '/api/v1/applications', { candidateId: pubCand.id, jobOpeningId: jobId })).status === 400);
+    check('archived profile keeps its existing application', ((await A('GET', '/api/v1/applications')).json.applications ?? []).some((a: any) => a.candidateId === pubCand.id));
+    check('unarchive: not archived -> 400 (on a fresh RH candidate)', (await A('POST', `/api/v1/candidates/${candId}/unarchive`, {})).status === 400);
+    check('RBAC: HIRING_MANAGER cannot unarchive', (await R('HIRING_MANAGER', 'POST', `${pc}/unarchive`, {})).status === 403);
+    check('isolation: org B cannot unarchive an org A candidate', (await B('POST', `${pc}/unarchive`, {})).status === 404);
+    // a new application sent by the candidate through the portal reactivates the profile
+    const job2 = await A('POST', '/api/v1/openings', { title: 'Segunda Vaga Smoke', positionId: posId, departmentId: deptId });
+    const reapply = await api('POST', `/api/public/${slugA}/apply`, { body: { ...applyBody, jobOpeningId: job2.json.opening.id } });
+    check('portal: a new application from an archived candidate is accepted', reapply.status === 201, reapply.json);
+    check('portal: it reactivates the profile and logs it', (await A('GET', '/api/v1/candidates')).json.candidates.find((c: any) => c.id === pubCand.id)?.archived === false
+      && ((await A('GET', `${pc}/history`)).json.changes ?? []).some((h: any) => h.field === 'archived' && h.newValue === false && h.changedBy === 'Portal Público de Vagas'));
+    const reArch = await A('POST', arch, { reason: 'Arquivado novamente para testar a reativação manual' });
+    const unarch = await A('POST', `${pc}/unarchive`, { reason: 'Candidato voltou a ter interesse' });
+    check('unarchive: the profile is active again, with the reason in the history', reArch.status === 200 && unarch.json.candidate?.archived === false
+      && ((await A('GET', `${pc}/history`)).json.changes ?? []).some((h: any) => h.field === 'archived' && h.newValue === false && /voltou a ter interesse/.test(h.reason ?? '')));
+
+    // RH-registered candidates stay editable (declared fields included) but every change is logged
+    const rhHist = (await A('GET', `/api/v1/candidates/${candId}/history`)).json.changes ?? [];
+    check('RH-registered candidate: edits are logged as updates', rhHist.length > 0 && rhHist.every((h: any) => h.kind === 'update') && rhHist.some((h: any) => h.field === 'name'), rhHist.length);
+    const rhCorr = await A('POST', `/api/v1/candidates/${candId}/corrections`, { changes: { education: 'Mestrado' }, reason: 'Diploma conferido pelo RH' });
+    check('RH-registered candidate: a correction with a reason is also accepted', rhCorr.status === 201);
+
     check('public duplicate application -> 409', (await api('POST', `/api/public/${slugA}/apply`, { body: applyBody })).status === 409);
     check('public apply invalid e-mail -> 400', (await api('POST', `/api/public/${slugA}/apply`, { body: { ...applyBody, email: 'nope' } })).status === 400);
     check('public apply unknown job -> 404', (await api('POST', `/api/public/${slugA}/apply`, { body: { ...applyBody, email: `x-${suffix}@smoke.test`, jobOpeningId: 'job-nope' } })).status === 404);

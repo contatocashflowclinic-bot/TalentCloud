@@ -1,7 +1,7 @@
 import React from 'react';
 import { TenantApi } from '../../services/api.js';
 import {
-  Candidate, Department, JobOffer, JobOpening, JobPosition, TenantUser
+  CANDIDATE_DECLARED_FIELDS, Candidate, Department, JobOffer, JobOpening, JobPosition, TenantUser
 } from '../../types.js';
 import { EditFormModal, FieldDef } from './EditFormModal.js';
 
@@ -138,12 +138,9 @@ export const OpeningEditModal: React.FC<{
 };
 
 // ---- Banco de Talentos
-export const CandidateEditModal: React.FC<{
-  candidate: Candidate;
-  onSaved: () => Promise<void>;
-  onClose: () => void;
-}> = ({ candidate, onSaved, onClose }) => {
-  const fields: FieldDef[] = [
+const candidateFields = (declaredLocked: boolean): FieldDef[] => {
+  const lock = (f: FieldDef): FieldDef => (declaredLocked && (CANDIDATE_DECLARED_FIELDS as readonly string[]).includes(f.key) ? { ...f, readOnly: true, required: false } : f);
+  return ([
     { key: 'name', label: 'Nome', type: 'text', required: true },
     { key: 'email', label: 'E-mail', type: 'email', required: true, half: true },
     { key: 'phone', label: 'Telefone', type: 'text', half: true },
@@ -156,14 +153,57 @@ export const CandidateEditModal: React.FC<{
     { key: 'skills', label: 'Competências', type: 'list' },
     { key: 'languages', label: 'Idiomas', type: 'list', half: true },
     { key: 'tags', label: 'Tags', type: 'list', half: true }
-  ];
+  ] as FieldDef[]).map(lock);
+};
+
+/**
+ * Data the candidate declared on the public form is protected: it can only be changed through a justified
+ * correction (the original value stays in the history). Records created by the RH are editable, always with history.
+ */
+export const CandidateEditModal: React.FC<{
+  candidate: Candidate;
+  onSaved: () => Promise<void>;
+  onClose: () => void;
+}> = ({ candidate, onSaved, onClose }) => {
+  const [correcting, setCorrecting] = React.useState(false);
+  const declared = candidate.dataOrigin === 'candidate';
+
+  if (correcting) {
+    const fields: FieldDef[] = [
+      ...candidateFields(false).filter(f => (CANDIDATE_DECLARED_FIELDS as readonly string[]).includes(f.key)),
+      { key: 'reason', label: 'Motivo da correção', type: 'textarea', required: true, help: 'Obrigatório (mínimo 10 caracteres). Ex.: "Candidato informou por e-mail em 12/03 que o telefone mudou."' }
+    ];
+    return (
+      <EditFormModal
+        title={`Registrar correção — ${candidate.name}`}
+        subtitle="O valor original é preservado no histórico, com quem corrigiu, quando e por quê."
+        notice="Altere apenas o que o candidato pediu para corrigir. Cada campo alterado gera um registro permanente no histórico."
+        fields={fields}
+        initial={{ ...(candidate as unknown as Record<string, unknown>), reason: '' }}
+        saveLabel="Registrar correção"
+        onSave={async changes => {
+          const { reason, ...data } = changes;
+          if (Object.keys(data).length === 0) throw new Error('Altere ao menos um dado a corrigir.');
+          await TenantApi.correctCandidate(candidate.id, data, String(reason ?? ''));
+          await onSaved();
+          onClose();
+        }}
+        secondaryAction={{ label: '← Voltar', onClick: () => setCorrecting(false) }}
+        onClose={onClose}
+      />
+    );
+  }
 
   return (
     <EditFormModal
       title={candidate.name}
-      subtitle="Altere o cadastro do talento."
-      fields={fields}
+      subtitle={declared ? 'Cadastro feito pelo próprio candidato no portal.' : 'Cadastro feito pelo RH. Toda alteração fica registrada no histórico.'}
+      notice={declared ? (
+        <>Os dados marcados com cadeado foram <b>informados pelo candidato</b> e não podem ser editados. Se precisarem ser corrigidos, use <b>Registrar correção</b> e informe o motivo. Idiomas e tags podem ser editados normalmente.</>
+      ) : undefined}
+      fields={candidateFields(declared)}
       initial={candidate as unknown as Record<string, unknown>}
+      secondaryAction={declared ? { label: 'Registrar correção…', onClick: () => setCorrecting(true) } : undefined}
       onSave={async changes => { await TenantApi.updateCandidate(candidate.id, changes); await onSaved(); onClose(); }}
       onClose={onClose}
     />

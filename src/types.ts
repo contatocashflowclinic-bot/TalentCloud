@@ -214,7 +214,30 @@ export interface JobOpening {
 }
 
 // 7. Candidatos
+/** Campos que o candidato declara no formulário do portal: protegidos contra edição direta (só correção com motivo). */
+export const CANDIDATE_DECLARED_FIELDS = [
+  'name', 'email', 'phone', 'location', 'linkedinUrl', 'currentRole', 'yearsOfExperience', 'education', 'resumeSummary', 'skills'
+] as const;
+export type CandidateDeclaredField = typeof CANDIDATE_DECLARED_FIELDS[number];
+
+export interface CandidateChange {
+  id: string;
+  candidateId: string;
+  field: string;
+  oldValue?: unknown;
+  newValue?: unknown;
+  kind: 'correction' | 'update';
+  reason?: string;
+  changedBy: string;
+  changedById?: string;
+  changedAt: string;
+}
+
 export interface Candidate {
+  /** 'candidate': informado pelo próprio candidato no portal (campos declarados protegidos); 'rh': cadastrado pelo RH. */
+  dataOrigin: 'candidate' | 'rh';
+  /** Perfil arquivado: sai da lista principal do Banco de Talentos, sem apagar nada. */
+  archived: boolean;
   id: string;
   name: string;
   email: string;

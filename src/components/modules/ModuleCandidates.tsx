@@ -6,14 +6,15 @@ import { Candidate, JobOpening, AIAssistedEvaluation } from '../../types.js';
 import { ExportButton } from '../ExportButton.js';
 import { exportCandidatesToCSV, exportCandidatesToPDF } from '../../utils/exportUtils.js';
 import { useAuth } from '../../context/AuthContext.js';
-import { CandidateSummaryModal } from './EntitySummaryModals.js';
+import { CandidateSummaryModal } from './CandidateSummaryModal.js';
 import { CandidateEditModal } from './EntityEditModals.js';
 
 export const ModuleCandidates: React.FC<{
   onSelectCandidateForAI?: (candidateId: string, jobId?: string) => void;
+  onNavigateToProcess?: (jobId: string, candidateId?: string) => void;
   initialSearchTerm?: string;
   initialSelectedCandidateId?: string;
-}> = ({ onSelectCandidateForAI, initialSearchTerm, initialSelectedCandidateId }) => {
+}> = ({ onSelectCandidateForAI, onNavigateToProcess, initialSearchTerm, initialSelectedCandidateId }) => {
   const { activeTenant } = useTenant();
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [openings, setOpenings] = useState<JobOpening[]>([]);
@@ -23,6 +24,7 @@ export const ModuleCandidates: React.FC<{
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [summaryId, setSummaryId] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const { user } = useAuth();
   const canEdit = !!user?.permissions.includes('candidates:edit');
 
@@ -91,11 +93,13 @@ export const ModuleCandidates: React.FC<{
     }
   };
 
-  const filtered = candidates.filter(c =>
+  const archivedCount = candidates.filter(c => c.archived).length;
+
+  const filtered = candidates.filter(c => (showArchived || !c.archived) && (
     c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.currentRole.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.skills.some(s => s.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  ));
 
   const handleExportCSV = () => {
     exportCandidatesToCSV(filtered, evaluations, activeTenant?.name || 'TalentCloud');
@@ -154,6 +158,12 @@ export const ModuleCandidates: React.FC<{
             className="w-full pl-9 pr-4 py-2 rounded-xl border border-slate-200 text-xs focus:outline-hidden focus:border-indigo-500 bg-white"
           />
         </div>
+        {archivedCount > 0 && (
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600 whitespace-nowrap cursor-pointer">
+            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+            Mostrar arquivados ({archivedCount})
+          </label>
+        )}
       </div>
 
       {/* Candidates List - Expanded Responsive Grid */}
@@ -172,7 +182,7 @@ export const ModuleCandidates: React.FC<{
             <div
               key={cand.id}
               onClick={() => setSummaryId(cand.id)}
-              className={`p-6 rounded-3xl bg-white border transition-all duration-200 flex flex-col justify-between space-y-5 group relative cursor-pointer ${
+              className={`p-6 rounded-3xl bg-white border transition-all duration-200 flex flex-col justify-between space-y-5 group relative cursor-pointer ${cand.archived ? 'opacity-70 ' : ''}${
                 isHighlighted
                   ? 'border-indigo-500 ring-4 ring-indigo-500/20 shadow-lg'
                   : 'border-slate-200/90 shadow-xs hover:shadow-lg hover:border-indigo-300'
@@ -193,6 +203,11 @@ export const ModuleCandidates: React.FC<{
                       {isHighlighted && (
                         <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-800">
                           Foco
+                        </span>
+                      )}
+                      {cand.archived && (
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-rose-100 text-rose-700">
+                          Arquivado
                         </span>
                       )}
                     </div>
@@ -310,8 +325,27 @@ export const ModuleCandidates: React.FC<{
           candidate={candidates.find(c => c.id === summaryId)!}
           evaluations={evaluations}
           openings={openings}
-          onOpenAI={onSelectCandidateForAI ? () => onSelectCandidateForAI(summaryId, openings[0]?.id) : undefined}
+          canEdit={canEdit}
           onEdit={canEdit ? () => { setEditId(summaryId); setSummaryId(null); } : undefined}
+          onOpenAI={onSelectCandidateForAI ? (jobId) => onSelectCandidateForAI(summaryId, jobId ?? openings[0]?.id) : undefined}
+          onOpenApplication={onNavigateToProcess ? (jobId) => onNavigateToProcess(jobId, summaryId) : undefined}
+          onArchive={async (reason) => {
+            try {
+              await TenantApi.archiveCandidate(summaryId, reason);
+              await loadData();
+              setSummaryId(null);
+            } catch (err: any) {
+              alert(err.message || 'Erro ao arquivar o perfil');
+            }
+          }}
+          onUnarchive={async () => {
+            try {
+              await TenantApi.unarchiveCandidate(summaryId);
+              await loadData();
+            } catch (err: any) {
+              alert(err.message || 'Erro ao reativar o perfil');
+            }
+          }}
           onClose={() => setSummaryId(null)}
         />
       )}
