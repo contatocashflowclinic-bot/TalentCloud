@@ -40,7 +40,6 @@ const XL_COLS: Record<number, string> = { 1: 'xl:grid-cols-1', 2: 'xl:grid-cols-
 const AGENDA_PREVIEW = 5;
 const PENDING_PREVIEW = 3;
 
-const plainName = (name: string) => name.replace(/^\d+\.\s*/, '');
 
 // ---------------------------------------------------------------------------
 // Small building blocks
@@ -481,7 +480,7 @@ export const ModuleWelcome: React.FC<{ onNavigate: (moduleId: number) => void }>
                     <I className="w-5 h-5" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-bold text-slate-900 truncate">{plainName(mod.name)}</div>
+                    <div className="text-sm font-bold text-slate-900 truncate">{mod.name}</div>
                     <div className="text-xs text-slate-500 truncate">{mod.desc}</div>
                   </div>
                   <ChevronRight className="w-4 h-4 text-slate-400 shrink-0 group-hover:text-indigo-500 transition-colors" />

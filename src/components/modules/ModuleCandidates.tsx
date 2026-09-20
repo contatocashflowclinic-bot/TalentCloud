@@ -8,6 +8,7 @@ import { exportCandidatesToCSV, exportCandidatesToPDF } from '../../utils/export
 import { useAuth } from '../../context/AuthContext.js';
 import { CandidateSummaryModal } from './CandidateSummaryModal.js';
 import { CandidateEditModal } from './EntityEditModals.js';
+import { isLocalEstimate } from '../../utils/aiEvaluation.js';
 
 export const ModuleCandidates: React.FC<{
   onSelectCandidateForAI?: (candidateId: string, jobId?: string) => void;
@@ -119,10 +120,7 @@ export const ModuleCandidates: React.FC<{
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 7</span>
-          </div>
-          <h1 className="text-xl font-bold text-slate-900 mt-1">Banco de Talentos Isolado</h1>
+          <h1 className="text-xl font-bold text-slate-900">Banco de Talentos Isolado</h1>
           <p className="text-xs text-slate-500">
             Candidatos cadastrados exclusivamente na base da sua organização com sigilo corporativo.
           </p>
@@ -226,7 +224,7 @@ export const ModuleCandidates: React.FC<{
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5 font-semibold text-indigo-950">
                         <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                        <span className="text-xs">Fit Cultural & Técnico:</span>
+                        <span className="text-xs">{isLocalEstimate(evalItem) ? 'Estimativa local (não é IA):' : 'Fit Cultural & Técnico:'}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="font-mono font-bold text-indigo-700 text-xs">
@@ -302,7 +300,7 @@ export const ModuleCandidates: React.FC<{
                     className="w-full py-2.5 rounded-xl bg-indigo-50/90 hover:bg-indigo-100 text-indigo-700 font-semibold text-xs transition-all flex items-center justify-center gap-2 border border-indigo-200/80 group-hover:bg-indigo-600 group-hover:text-white group-hover:border-transparent active:scale-99"
                   >
                     <Sparkles className="w-3.5 h-3.5 text-indigo-600 group-hover:text-white" />
-                    <span>{evalItem ? 'Ver Avaliação com IA (Módulo 9)' : 'Avaliar com IA Assistida (Módulo 9)'}</span>
+                    <span>{evalItem ? 'Ver Avaliação com IA' : 'Avaliar com IA Assistida'}</span>
                     <ArrowRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
                   </button>
                 )}

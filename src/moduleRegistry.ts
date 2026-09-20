@@ -44,31 +44,31 @@ export const MODULE_SECTIONS: ModuleSection[] = [
   {
     title: 'Governança & Fundamentos',
     modules: [
-      { id: 2, name: '2. Usuários e Permissões', icon: Users, desc: 'Perfis e Acessos' },
-      { id: 3, name: '3. DNA Organizacional', icon: Dna, desc: 'Cultura e Pilares' },
-      { id: 4, name: '4. Estrutura Organizacional', icon: Network, desc: 'Departamentos e Squads' },
-      { id: 5, name: '5. Cargos', icon: Briefcase, desc: 'Competências e Faixas' }
+      { id: 2, name: 'Usuários e Permissões', icon: Users, desc: 'Perfis e Acessos' },
+      { id: 3, name: 'DNA Organizacional', icon: Dna, desc: 'Cultura e Pilares' },
+      { id: 4, name: 'Estrutura Organizacional', icon: Network, desc: 'Departamentos e Squads' },
+      { id: 5, name: 'Cargos', icon: Briefcase, desc: 'Competências e Faixas' }
     ]
   },
   {
     title: 'Atração & Seleção',
     modules: [
-      { id: 6, name: '6. Vagas', icon: Layers, desc: 'Abertura e Pipeline' },
+      { id: 6, name: 'Vagas', icon: Layers, desc: 'Abertura e Pipeline' },
       { id: 16, name: 'Divulgação & Portal', icon: Globe, badge: 'Social', desc: 'Instagram, WhatsApp, LinkedIn' },
-      { id: 7, name: '7. Candidatos', icon: UserCheck, desc: 'Banco de Talentos Isolado' },
-      { id: 8, name: '8. Processo Seletivo', icon: GitBranch, desc: 'Kanban e Etapas' },
-      { id: 9, name: '9. Avaliação Assistida por IA', icon: Sparkles, badge: 'Gemini', desc: 'Apoio à Decisão & Explicabilidade' },
-      { id: 10, name: '10. Entrevistas', icon: Calendar, desc: 'Scorecards e Roteiro' }
+      { id: 7, name: 'Candidatos', icon: UserCheck, desc: 'Banco de Talentos Isolado' },
+      { id: 8, name: 'Processo Seletivo', icon: GitBranch, desc: 'Kanban e Etapas' },
+      { id: 9, name: 'Avaliação Assistida por IA', icon: Sparkles, badge: 'Gemini', desc: 'Apoio à Decisão & Explicabilidade' },
+      { id: 10, name: 'Entrevistas', icon: Calendar, desc: 'Scorecards e Roteiro' }
     ]
   },
   {
     title: 'Ciclo do Colaborador',
     modules: [
-      { id: 11, name: '11. Proposta', icon: FileCheck, desc: 'Oferta e Aprovação' },
-      { id: 12, name: '12. Onboarding', icon: Rocket, desc: 'Checklist 30-60-90 dias' },
-      { id: 13, name: '13. Desenvolvimento', icon: TrendingUp, desc: 'PDI e Reuniões 1:1' },
-      { id: 14, name: '14. Retenção', icon: HeartHandshake, desc: 'eNPS & Risco de Turnover' },
-      { id: 15, name: '15. Indicadores', icon: BarChart3, desc: 'People Analytics' }
+      { id: 11, name: 'Proposta', icon: FileCheck, desc: 'Oferta e Aprovação' },
+      { id: 12, name: 'Onboarding', icon: Rocket, desc: 'Checklist 30-60-90 dias' },
+      { id: 13, name: 'Desenvolvimento', icon: TrendingUp, desc: 'PDI e Reuniões 1:1' },
+      { id: 14, name: 'Retenção', icon: HeartHandshake, desc: 'eNPS & Risco de Turnover' },
+      { id: 15, name: 'Indicadores', icon: BarChart3, desc: 'People Analytics' }
     ]
   }
 ];

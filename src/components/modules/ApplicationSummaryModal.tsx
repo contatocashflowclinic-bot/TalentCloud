@@ -11,6 +11,7 @@ import { formatDateSP } from '../../utils/dateUtils.js';
 import { Card, Pill } from './SummaryParts.js';
 import { ApplicationSummaryData, buildPrintHtml, buildSummaryText, printHtml } from '../../utils/applicationShare.js';
 import { useBackdropClose } from '../../hooks/useBackdropClose.js';
+import { LOCAL_ESTIMATE_NOTICE, isLocalEstimate } from '../../utils/aiEvaluation.js';
 
 const RECOMMENDATION: Record<NonNullable<InterviewSession['interviewerRecommendation']>, { label: string; cls: string }> = {
   STRONG_YES: { label: 'Fortemente recomendado', cls: 'bg-emerald-100 text-emerald-800' },
@@ -298,6 +299,9 @@ export const ApplicationSummaryModal: React.FC<Props> = ({
               <Card icon={<Sparkles className="w-4 h-4" />} title="Avaliação assistida por IA">
                 {evaluation ? (
                   <div className="space-y-3">
+                    {isLocalEstimate(evaluation) && (
+                      <p className="font-semibold text-amber-700">{LOCAL_ESTIMATE_NOTICE} Valide em entrevista.</p>
+                    )}
                     <div className="space-y-2.5">
                       <Score label="Fit geral" value={evaluation.overallFitScore} />
                       <Score label="Técnico" value={evaluation.technicalFitScore} />

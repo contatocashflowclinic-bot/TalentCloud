@@ -134,14 +134,15 @@ Tempo estimado: 20 minutos. Use uma janela anônima para a parte pública.
 | # | O que fazer | O que deve acontecer |
 | --- | --- | --- |
 | B1 | Saia e entre com o e-mail do administrador e a senha temporária. | O sistema **obriga a trocar a senha** antes de mostrar qualquer módulo. |
-| B2 | Troque a senha e navegue pelos módulos 1 a 15. | Cada módulo abre com um "Carregando…" curto na primeira vez e depois instantâneo. Nenhum erro em tela. |
+| B2 | Troque a senha e navegue por todos os módulos do menu. | Cada módulo abre com um "Carregando…" curto na primeira vez e depois instantâneo. Nenhum erro em tela. |
 | B3 | Recarregue a página (F5). | Você continua logado (sessão de 12 h). |
-| B4 | Cadastre uma vaga em **6. Vagas**. | A vaga aparece na lista e sobrevive ao F5. |
-| B5 | No módulo **11. Proposta** (abra uma proposta), anexe um **PDF de até 4 MB** e depois baixe-o. | O anexo aparece na lista e o download abre o mesmo arquivo. |
+| B4 | Cadastre uma vaga em **Vagas**. | A vaga aparece na lista e sobrevive ao F5. |
+| B5 | No módulo **Proposta** (abra uma proposta), anexe um **PDF de até 4 MB** e depois baixe-o. | O anexo aparece na lista e o download abre o mesmo arquivo. |
 | B6 | Tente anexar um arquivo de **5 MB**. | Mensagem "Arquivo maior que o limite de 4 MB" **antes** de enviar. |
-| B7 | Em **9. Avaliação Assistida por IA**, avalie um candidato. | Com `GEMINI_API_KEY`: resultado sem o aviso "ESTIMATIVA LOCAL". Sem a chave: o aviso aparece (comportamento esperado). |
-| B8 | Em **7. Candidatos** (ou outra lista), use **Exportar** em CSV e em PDF. | Os dois arquivos baixam e abrem (o PDF carrega uma biblioteca sob demanda na primeira vez). |
-| B9 | Em **6. Vagas**, abra a divulgação de uma vaga (**Divulgação & Portal**). | O QR Code aparece e o link usa o endereço do seu domínio. |
+| B7 | Em **Avaliação Assistida por IA**, avalie um candidato. | Com `GEMINI_API_KEY`: origem "Modelo de IA (Gemini)" e sem a faixa âmbar. Sem a chave: aparece a faixa "Estimativa local — esta NÃO é uma avaliação de IA" (comportamento esperado). Guia completo: `docs/validacao-avaliacao-ia.md`. |
+| B8 | Em **Candidatos** (ou outra lista), use **Exportar** em CSV e em PDF. | Os dois arquivos baixam e abrem (o PDF carrega uma biblioteca sob demanda na primeira vez). |
+| B9 | Em **Vagas**, abra a divulgação de uma vaga (**Divulgação & Portal**). | O QR Code aparece e o link usa o endereço do seu domínio. |
+| B10 | Na **Conta Mãe**, abra **Uso da IA** (menu lateral). | O painel carrega e, depois de uma avaliação com IA (B7), mostra o consumo e o gasto estimado. Exige a migration `20260920000019`. Guia completo: `docs/validacao-uso-ia.md`. |
 
 ### Parte C — Segurança e portal público (janela anônima)
 

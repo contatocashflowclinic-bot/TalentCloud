@@ -75,10 +75,7 @@ export const ModuleInterviews: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 10</span>
-          </div>
-          <h1 className="text-xl font-bold text-slate-900 mt-1">Entrevistas & Scorecards Estruturados</h1>
+          <h1 className="text-xl font-bold text-slate-900">Entrevistas & Scorecards Estruturados</h1>
           <p className="text-xs text-slate-500">
             Agenda de entrevistas, roteiros baseados em competências e avaliação humana imparcial.
           </p>

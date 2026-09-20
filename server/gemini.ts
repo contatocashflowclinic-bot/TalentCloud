@@ -6,6 +6,32 @@ import {
   JobPosition,
   OrganizationalDNA
 } from '../src/types.js';
+import type { AiSkipReason } from './aiCost.js';
+
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
+
+/** Model in use: the one chosen in the Conta Mãe panel, else GEMINI_MODEL, else the default. */
+export const resolveModel = (panelModel?: string): string => panelModel || process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
+
+export const isGeminiConfigured = (): boolean => Boolean(process.env.GEMINI_API_KEY);
+
+/** What one evaluation request consumed; feeds the credit control panel. Text volume comes from the provider's own count. */
+export interface AiCallUsage {
+  /** ai = the model answered; failed = it was called and failed; estimate = it was not called (paused, limit, no key). */
+  outcome: 'ai' | 'failed' | 'estimate';
+  reason?: AiSkipReason | 'not_configured' | 'error';
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  durationMs: number;
+}
+
+// Shown to the organization's user inside the evaluation text when the local estimate replaces the AI.
+const SKIP_TEXT: Record<AiSkipReason, string> = {
+  paused: 'a IA está pausada pela administração da plataforma',
+  limit_reached: 'o limite mensal de avaliações com IA desta organização foi atingido',
+  budget_reached: 'o orçamento mensal de IA da plataforma foi atingido'
+};
 
 let geminiClient: GoogleGenAI | null = null;
 
@@ -23,17 +49,51 @@ function getGeminiClient(): GoogleGenAI | null {
   return geminiClient;
 }
 
+/** A score must come from the model as a number; a missing/invalid one is a failed answer, never a made-up default. */
+function toScore(value: unknown, label: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`Resposta do modelo sem nota válida (${label})`);
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function toStrings(value: unknown, label: string): string[] {
+  if (!Array.isArray(value)) throw new Error(`Resposta do modelo sem lista válida (${label})`);
+  return value.filter((v): v is string => typeof v === 'string' && v.trim() !== '');
+}
+
+function toPillarScores(value: unknown): AIAssistedEvaluation['pillarScores'] {
+  if (!Array.isArray(value)) throw new Error('Resposta do modelo sem notas por pilar (pillarScores)');
+  return value.map((p, i) => {
+    if (!p || typeof p.pillarName !== 'string' || typeof p.analysis !== 'string') {
+      throw new Error(`Resposta do modelo com pilar inválido (pillarScores[${i}])`);
+    }
+    return { pillarName: p.pillarName, score: toScore(p.score, `pillarScores[${i}]`), analysis: p.analysis };
+  });
+}
+
 export async function evaluateCandidateWithAI(params: {
   candidate: Candidate;
   job: JobOpening;
   position?: JobPosition;
   dna: OrganizationalDNA;
-}): Promise<Omit<AIAssistedEvaluation, 'id' | 'evaluatedAt'>> {
-  const { candidate, job, position, dna } = params;
+  /** Model to call (see resolveModel). */
+  model: string;
+  /** When set, the model is NOT called and the labeled local estimate is used (AI paused / limit reached). */
+  skip?: AiSkipReason;
+}): Promise<{ evaluation: Omit<AIAssistedEvaluation, 'id' | 'evaluatedAt'>; usage: AiCallUsage }> {
+  const { candidate, job, position, dna, model, skip } = params;
   const client = getGeminiClient();
+  const startedAt = Date.now();
+  const usage: AiCallUsage = { outcome: 'estimate', reason: 'not_configured', model, inputTokens: 0, outputTokens: 0, durationMs: 0 };
 
-  // If Gemini API is available, invoke the model (GEMINI_MODEL, default gemini-3.8-flash) with a structured prompt
-  if (client) {
+  // Why the local estimate is used; shown to the user in the evaluation text.
+  let fallbackReason = 'o Gemini não está configurado neste ambiente (falta a chave GEMINI_API_KEY)';
+  if (skip) {
+    fallbackReason = SKIP_TEXT[skip];
+    usage.reason = skip;
+  }
+
+  // If Gemini API is available (and the platform allows it now), invoke the model with a structured prompt
+  if (client && !skip) {
     try {
       const prompt = `
 Você é o assistente de inteligência artificial de apoio à decisão humana da plataforma Vértice 360 - Ciclo de Talentos.
@@ -71,7 +131,7 @@ Retorne um JSON com a avaliação honesta, construtiva e fundamentada.
 `;
 
       const response = await client.models.generateContent({
-        model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+        model,
         contents: prompt,
         config: {
           systemInstruction: 'Você é um especialista em People Analytics e psicometria organizacional que avalia candidatos com rigor, transparência explicável e foco em apoiar a decisão humana sem viés.',
@@ -125,28 +185,42 @@ Retorne um JSON com a avaliação honesta, construtiva e fundamentada.
         }
       });
 
-      if (response.text) {
-        const parsed = JSON.parse(response.text);
-        return {
-          candidateId: candidate.id,
-          jobOpeningId: job.id,
-          overallFitScore: Math.min(100, Math.max(0, parsed.overallFitScore || 85)),
-          technicalFitScore: Math.min(100, Math.max(0, parsed.technicalFitScore || 85)),
-          culturalFitScore: Math.min(100, Math.max(0, parsed.culturalFitScore || 85)),
-          detailedExplanation: parsed.detailedExplanation || 'Avaliação gerada pelo modelo de IA.',
-          keyStrengths: parsed.keyStrengths || [],
-          potentialGaps: parsed.potentialGaps || [],
-          suggestedInterviewQuestions: parsed.suggestedInterviewQuestions || [],
-          pillarScores: parsed.pillarScores || []
-        };
-      }
+      // The provider bills what it processed even when the answer turns out unusable, so count it before validating.
+      // Thinking tokens are billed as output.
+      usage.inputTokens = response.usageMetadata?.promptTokenCount ?? 0;
+      usage.outputTokens = (response.usageMetadata?.candidatesTokenCount ?? 0) + (response.usageMetadata?.thoughtsTokenCount ?? 0);
+
+      if (!response.text) throw new Error('Resposta do modelo vazia');
+      const parsed = JSON.parse(response.text);
+      const evaluation: Omit<AIAssistedEvaluation, 'id' | 'evaluatedAt'> = {
+        candidateId: candidate.id,
+        jobOpeningId: job.id,
+        source: 'gemini',
+        overallFitScore: toScore(parsed.overallFitScore, 'overallFitScore'),
+        technicalFitScore: toScore(parsed.technicalFitScore, 'technicalFitScore'),
+        culturalFitScore: toScore(parsed.culturalFitScore, 'culturalFitScore'),
+        detailedExplanation: typeof parsed.detailedExplanation === 'string' && parsed.detailedExplanation.trim()
+          ? parsed.detailedExplanation
+          : 'Avaliação gerada pelo modelo de IA.',
+        keyStrengths: toStrings(parsed.keyStrengths, 'keyStrengths'),
+        potentialGaps: toStrings(parsed.potentialGaps, 'potentialGaps'),
+        suggestedInterviewQuestions: toStrings(parsed.suggestedInterviewQuestions, 'suggestedInterviewQuestions'),
+        pillarScores: toPillarScores(parsed.pillarScores)
+      };
+      usage.outcome = 'ai';
+      usage.reason = undefined;
+      usage.durationMs = Date.now() - startedAt;
+      return { evaluation, usage };
     } catch (err) {
-      console.warn('Gemini API call failed, using intelligent analytical fallback:', err);
+      console.error('[AI] A chamada ao Gemini falhou ou devolveu resposta inválida; usando estimativa local:', err);
+      fallbackReason = 'a chamada ao Gemini falhou ou devolveu uma resposta inválida (detalhes nos registros do servidor)';
+      usage.outcome = 'failed';
+      usage.reason = 'error';
     }
   }
 
-  // Local heuristic fallback. Its output is explicitly labeled as such so nobody mistakes it for an AI assessment.
-  console.warn('[AI] Gemini indisponível: usando estimativa heurística local (rotulada na resposta).');
+  // Local heuristic fallback. Its output is explicitly labeled as such (text + `source`) so nobody mistakes it for an AI assessment.
+  console.warn(`[AI] Usando estimativa heurística local: ${fallbackReason}.`);
   const techMatches = (position?.technicalRequirements || []).filter(req => 
     candidate.skills.some(s => s.toLowerCase().includes(req.toLowerCase()) || req.toLowerCase().includes(s.toLowerCase())) ||
     candidate.resumeSummary.toLowerCase().includes(req.toLowerCase())
@@ -166,13 +240,15 @@ Retorne um JSON com a avaliação honesta, construtiva e fundamentada.
     analysis: `O perfil do candidato demonstra compatibilidade com o pilar '${pillar.name}', especialmente pela vivência de ${candidate.yearsOfExperience} anos no cargo de ${candidate.currentRole}. Recomenda-se aprofundar na entrevista comportamental.`
   }));
 
-  return {
+  usage.durationMs = Date.now() - startedAt;
+  const evaluation: Omit<AIAssistedEvaluation, 'id' | 'evaluatedAt'> = {
     candidateId: candidate.id,
     jobOpeningId: job.id,
+    source: 'heuristic',
     overallFitScore: overall,
     technicalFitScore: techScore,
     culturalFitScore: cultureScore,
-    detailedExplanation: `⚠ ESTIMATIVA LOCAL — o Gemini não está configurado ou não respondeu. Estas notas vêm de regras simples (habilidades × requisitos e anos de experiência), NÃO de uma avaliação de IA. Use apenas como apoio e valide em entrevista. Análise assistida gerada para a vaga '${job.title}'. O candidato ${candidate.name} possui ${candidate.yearsOfExperience} anos de experiência sólida como '${candidate.currentRole}'. Foram identificadas correspondências fortes em ${techMatches.length > 0 ? techMatches.join(', ') : 'requisitos essenciais'}, com destaque para sua formação e consistência profissional. Aderência ao arquétipo cultural '${dna.archetype}' classificada em nível ${cultureScore >= 85 ? 'Excelente' : 'Bom'}.`,
+    detailedExplanation: `⚠ ESTIMATIVA LOCAL — ${fallbackReason}. Estas notas vêm de regras simples (habilidades × requisitos e anos de experiência), NÃO de uma avaliação de IA. Use apenas como apoio e valide em entrevista. Análise assistida gerada para a vaga '${job.title}'. O candidato ${candidate.name} possui ${candidate.yearsOfExperience} anos de experiência sólida como '${candidate.currentRole}'. Foram identificadas correspondências fortes em ${techMatches.length > 0 ? techMatches.join(', ') : 'requisitos essenciais'}, com destaque para sua formação e consistência profissional. Aderência ao arquétipo cultural '${dna.archetype}' classificada em nível ${cultureScore >= 85 ? 'Excelente' : 'Bom'}.`,
     keyStrengths: [
       `Experiência de ${candidate.yearsOfExperience} anos como ${candidate.currentRole}`,
       `Domínio nas competências centrais: ${candidate.skills.slice(0, 3).join(', ')}`,
@@ -189,4 +265,5 @@ Retorne um JSON com a avaliação honesta, construtiva e fundamentada.
     ],
     pillarScores
   };
+  return { evaluation, usage };
 }

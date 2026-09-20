@@ -10,6 +10,7 @@ import {
 import { formatDateSP } from '../../utils/dateUtils.js';
 import { Card, Pill } from './SummaryParts.js';
 import { useBackdropClose } from '../../hooks/useBackdropClose.js';
+import { LOCAL_ESTIMATE_NOTICE, isLocalEstimate } from '../../utils/aiEvaluation.js';
 
 const FIELD_LABEL: Record<string, string> = {
   name: 'Nome', email: 'E-mail', phone: 'Telefone', location: 'Localização', linkedinUrl: 'LinkedIn', currentRole: 'Cargo atual',
@@ -328,7 +329,9 @@ export const CandidateSummaryModal: React.FC<Props> = ({
                         <div><div className="text-slate-500">Cultural</div><div className="font-extrabold text-slate-900 text-base">{evaluation.culturalFitScore}%</div></div>
                       </div>
                     </div>
-                    <p className="text-[11px] text-slate-400">Resultado de apoio à decisão; validação humana necessária.</p>
+                    {isLocalEstimate(evaluation)
+                      ? <p className="text-[11px] font-semibold text-amber-700">{LOCAL_ESTIMATE_NOTICE} Valide em entrevista.</p>
+                      : <p className="text-[11px] text-slate-400">Resultado de apoio à decisão; validação humana necessária.</p>}
                     {myEvals.length > 1 && <p className="text-[11px] text-slate-400">Este talento tem {myEvals.length} avaliações (uma por vaga).</p>}
                   </div>
                 ) : (

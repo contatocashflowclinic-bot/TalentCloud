@@ -12,10 +12,7 @@ export const ModuleUsers: React.FC = () => {
   return (
     <div className="space-y-6">
       <div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 2</span>
-        </div>
-        <h1 className="text-xl font-bold text-slate-900 mt-1">Usuários e Permissões</h1>
+        <h1 className="text-xl font-bold text-slate-900">Usuários e Permissões</h1>
         <p className="text-xs text-slate-500">
           Cada pessoa é vinculada a uma ou mais organizações e recebe um perfil de acesso, que define o que ela pode ver e fazer em cada área do sistema.
           As senhas são guardadas de forma segura.

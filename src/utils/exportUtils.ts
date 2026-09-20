@@ -2,6 +2,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { Candidate, TenantIndicators, JobOpening, AIAssistedEvaluation } from '../types.js';
 import { formatDateTimeSP } from './dateUtils.js';
+import { isLocalEstimate } from './aiEvaluation.js';
 
 // Helper to trigger file download in browser
 export function downloadFile(blob: Blob, filename: string) {
@@ -39,7 +40,7 @@ export function exportCandidatesToCSV(
 
   const rows = candidates.map(c => {
     const ev = evaluations.find(e => e.candidateId === c.id);
-    const fitScore = ev ? `${ev.overallFitScore}%` : 'Não avaliado';
+    const fitScore = ev ? `${ev.overallFitScore}%${isLocalEstimate(ev) ? ' (estimativa local, não é IA)' : ''}` : 'Não avaliado';
     const decision = ev?.humanReviewerDecision
       ? ev.humanReviewerDecision === 'APPROVED' ? 'Aprovado' : ev.humanReviewerDecision === 'REJECTED' ? 'Reprovado' : 'Aprofundar'
       : 'Pendente';
@@ -125,7 +126,7 @@ export function exportCandidatesToPDF(
   // Table Data
   const tableData = candidates.map(c => {
     const ev = evaluations.find(e => e.candidateId === c.id);
-    const fit = ev ? `${ev.overallFitScore}%` : 'Pendente';
+    const fit = ev ? `${ev.overallFitScore}%${isLocalEstimate(ev) ? ' (est. local)' : ''}` : 'Pendente';
     const status = ev?.humanReviewerDecision
       ? ev.humanReviewerDecision === 'APPROVED' ? 'Aprovado' : ev.humanReviewerDecision === 'REJECTED' ? 'Reprovado' : 'Aprofundar'
       : (ev ? 'Revisão Pend.' : 'Triagem');

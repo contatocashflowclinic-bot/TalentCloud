@@ -82,10 +82,7 @@ export const ModulePositions: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 5</span>
-          </div>
-          <h1 className="text-xl font-bold text-slate-900 mt-1">Catálogo de Cargos & Competências</h1>
+          <h1 className="text-xl font-bold text-slate-900">Catálogo de Cargos & Competências</h1>
           <p className="text-xs text-slate-500">
             Estrutura de cargos, senioridades, faixas salariais balizadas e competências técnicas e comportamentais.
           </p>

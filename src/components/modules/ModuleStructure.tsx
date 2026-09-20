@@ -64,10 +64,7 @@ export const ModuleStructure: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 4</span>
-          </div>
-          <h1 className="text-xl font-bold text-slate-900 mt-1">Estrutura Organizacional</h1>
+          <h1 className="text-xl font-bold text-slate-900">Estrutura Organizacional</h1>
           <p className="text-xs text-slate-500">
             Diretorias, áreas de negócio, centros de custo e metas de capacidade de pessoal (Headcount).
           </p>

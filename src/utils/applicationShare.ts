@@ -2,6 +2,7 @@ import {
   AIAssistedEvaluation, Candidate, InterviewSession, JobOpening, SelectionApplication
 } from '../types.js';
 import { formatDateSP } from './dateUtils.js';
+import { LOCAL_ESTIMATE_NOTICE, isLocalEstimate } from './aiEvaluation.js';
 
 export interface ApplicationSummaryData {
   organization?: string;
@@ -55,7 +56,7 @@ export function buildSummaryText(d: ApplicationSummaryData): string {
   if (c?.education) lines.push(`Formação: ${c.education}`);
   if (d.evaluation) {
     const e = d.evaluation;
-    lines.push('', `Avaliação por IA: fit geral ${e.overallFitScore}% (técnico ${e.technicalFitScore}%, cultural ${e.culturalFitScore}%)`);
+    lines.push('', `${isLocalEstimate(e) ? 'Estimativa local (NÃO é avaliação de IA)' : 'Avaliação por IA'}: fit geral ${e.overallFitScore}% (técnico ${e.technicalFitScore}%, cultural ${e.culturalFitScore}%)`);
     if (e.keyStrengths.length) lines.push(`Pontos fortes: ${e.keyStrengths.join('; ')}`);
     if (e.potentialGaps.length) lines.push(`Pontos de atenção: ${e.potentialGaps.join('; ')}`);
     lines.push(e.humanReviewerDecision ? `Revisão humana: ${DECISION[e.humanReviewerDecision]}` : 'Revisão humana: pendente (a IA apoia a decisão, não a substitui).');
@@ -127,7 +128,7 @@ export function buildPrintHtml(d: ApplicationSummaryData, printedBy?: string): s
   ${c.languages.length ? `<div class="muted">Idiomas: ${esc(c.languages.join(', '))}</div>` : ''}` : ''}
 
   <h2>Avaliação assistida por IA</h2>
-  ${e ? `<div class="grid">
+  ${e ? `${isLocalEstimate(e) ? `<p><b>${esc(LOCAL_ESTIMATE_NOTICE)}</b> Valide em entrevista.</p>` : ''}<div class="grid">
       <div class="box"><div class="muted">Fit geral</div><div class="score">${e.overallFitScore}%</div></div>
       <div class="box"><div class="muted">Técnico</div><div class="score">${e.technicalFitScore}%</div></div>
       <div class="box"><div class="muted">Cultural</div><div class="score">${e.culturalFitScore}%</div></div>

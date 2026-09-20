@@ -118,10 +118,7 @@ export const ModuleOffers: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 11</span>
-          </div>
-          <h1 className="text-xl font-bold text-slate-900 mt-1">Gestão de Propostas & Admissão</h1>
+          <h1 className="text-xl font-bold text-slate-900">Gestão de Propostas & Admissão</h1>
           <p className="text-xs text-slate-500">
             Formalização de ofertas salariais, controle de alçadas de aprovação e aceite do candidato.
           </p>

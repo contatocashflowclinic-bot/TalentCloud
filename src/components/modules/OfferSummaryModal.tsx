@@ -174,7 +174,7 @@ export const OfferSummaryModal: React.FC<Props> = ({ offer, candidate, job, canE
                 <Rocket className="w-5 h-5" />
               </span>
               <span className="text-emerald-900">
-                <b>Candidato contratado.</b> A jornada de onboarding foi aberta no Módulo 12.
+                <b>Candidato contratado.</b> A jornada de onboarding foi aberta no módulo Onboarding.
               </span>
             </div>
           )}

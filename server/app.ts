@@ -1,9 +1,11 @@
 import express, { Request, Response, NextFunction, RequestHandler } from 'express';
 import { TenantConnectionRouter, TenantConnectionContext } from './tenant/TenantConnectionRouter.js';
 import { evaluateCandidateWithAI } from './gemini.js';
+import { assessAllowance, getAiSettings, getUsageOverview, isPeriod, recordUsage, setOrgLimit, updateAiSettings } from './aiUsage.js';
+import { parseOrgLimit, parseSettingsPatch } from './aiCost.js';
 import { getPool } from './db/pool.js';
 import { newId } from './ids.js';
-import { AppError, ConflictError, ForbiddenError, NotFoundError, ValidationError, toHttpError } from './errors.js';
+import { AppError, ConflictError, ForbiddenError, NotFoundError, TooManyRequestsError, ValidationError, toHttpError } from './errors.js';
 import { ALL_PERMISSIONS } from '../src/access.js';
 import { sessionCache } from './cache.js';
 import { AuthService } from './auth/AuthService.js';
@@ -438,6 +440,47 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
       tenantId: req.query.tenantId ? String(req.query.tenantId) : undefined
     });
     res.json({ success: true, logs, nextCursor });
+  }));
+
+  // ---------------------------------------------------------
+  // Uso da IA: créditos, consumo e limites (somente Conta Mãe)
+  // ---------------------------------------------------------
+  const aiAudit = (req: Request, tenantId: string, action: string, details: string) =>
+    logAudit({
+      tenantId,
+      userId: req.auth!.id,
+      userName: req.auth!.name,
+      action,
+      category: 'AI_EXECUTION',
+      details,
+      ipAddress: req.ip || '127.0.0.1',
+      databaseAffected: 'ai_settings'
+    });
+
+  app.get('/api/master/ai/overview', h(async (req, res) => {
+    const period = isPeriod(req.query.period) ? req.query.period : 'this_month';
+    res.json({ success: true, overview: await getUsageOverview(period) });
+  }));
+
+  app.patch('/api/master/ai/settings', h(async (req, res) => {
+    const change = parseSettingsPatch(req.body);
+    const settings = await updateAiSettings(change, req.auth!.name);
+    await aiAudit(req, '', 'AI_SETTINGS_UPDATED', `Regras de uso da IA alteradas pela Conta Mãe: ${change.labels.join(', ')}.`);
+    res.json({ success: true, settings });
+  }));
+
+  app.put('/api/master/ai/organizations/:tenantId/limit', h(async (req, res) => {
+    const tenant = await orgOr404(req.params.tenantId);
+    const limit = parseOrgLimit(req.body?.monthlyLimit);
+    await setOrgLimit(tenant.id, limit, req.auth!.name);
+    const settings = await getAiSettings();
+    await aiAudit(
+      req, tenant.id, 'AI_ORG_LIMIT_UPDATED',
+      limit === null
+        ? `Limite próprio de IA removido de '${tenant.name}' (vale o padrão da plataforma).`
+        : `Limite mensal de IA de '${tenant.name}' definido em ${limit} ${limit === 1 ? 'avaliação' : 'avaliações'}.`
+    );
+    res.json({ success: true, monthlyLimit: limit ?? settings.defaultOrgMonthlyLimit ?? null });
   }));
 
   // =========================================================================
@@ -1021,14 +1064,36 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     const [position, dna] = await Promise.all([db.positions.get(job.positionId), db.getDna()]);
     if (!dna) throw new NotFoundError('DNA organizacional não configurado para este tenant.');
 
-    // Perform AI Assisted Evaluation server-side via Gemini API
-    const aiResult = await evaluateCandidateWithAI({ candidate, job, position, dna });
+    // Credit control: pause switch, this organization's monthly limit and the platform ceiling (see the Uso da IA panel)
+    const { decision, settings: aiSettings, model } = await assessAllowance(tenant.id);
+    const who = { tenantId: tenant.id, userId: req.auth!.id, userName: req.auth!.name, candidateId, jobOpeningId, model };
+    if (decision.mode === 'block') {
+      await recordUsage({ ...who, outcome: 'blocked', reason: decision.reason }, aiSettings);
+      throw new TooManyRequestsError(decision.message);
+    }
+
+    // Perform AI Assisted Evaluation server-side via Gemini API (or the labeled local estimate when the AI is not allowed/available)
+    const { evaluation: aiResult, usage } = await evaluateCandidateWithAI({
+      candidate, job, position, dna, model,
+      skip: decision.mode === 'estimate' ? decision.reason : undefined
+    });
 
     const evaluation = await db.saveAIEvaluation({
       id: newId('eval'),
       evaluatedAt: new Date().toISOString(),
       ...aiResult
     });
+
+    await recordUsage({
+      ...who,
+      evaluationId: evaluation.id,
+      model: usage.model,
+      outcome: usage.outcome,
+      reason: usage.reason,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      durationMs: usage.durationMs
+    }, aiSettings);
 
     await router.logMasterAudit({
       tenantId: tenant.id,
@@ -1045,16 +1110,35 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   }));
 
   // Human Review & Override (Princípio: Decisão Humana)
+  const HUMAN_DECISIONS = ['APPROVED', 'REJECTED', 'REQUEST_ADDITIONAL_INTERVIEW', 'OVERRIDDEN'] as const;
+
   app.patch('/api/v1/ai/evaluations/:id/human-decision', can('ai_evaluation:edit'), h(async (req, res) => {
-    const { db } = ctx(req);
-    const { decision, humanNotes, reviewerName } = req.body;
+    const { db, tenant } = ctx(req);
+    const decision = required(req.body.decision, 'decision');
+    if (!(HUMAN_DECISIONS as readonly string[]).includes(decision)) {
+      throw new ValidationError(`Decisão inválida. Use: ${HUMAN_DECISIONS.join(', ')}.`);
+    }
+    const humanNotes = typeof req.body.humanNotes === 'string' ? req.body.humanNotes.trim() : undefined;
+    // The reviewer is always the logged-in user: it comes from the session, never from the request body.
     const evaluation = await db.aiEvaluations.update(req.params.id, {
-      humanReviewerDecision: required(decision, 'decision'),
+      humanReviewerDecision: decision,
       humanNotes,
-      reviewedBy: reviewerName || 'Recrutador Responsável',
+      reviewedBy: req.auth!.name,
       reviewedAt: new Date().toISOString()
     });
     if (!evaluation) throw new NotFoundError('Avaliação não encontrada');
+
+    await router.logMasterAudit({
+      tenantId: tenant.id,
+      userId: req.auth!.id,
+      userName: req.auth!.name,
+      action: 'AI_HUMAN_REVIEW_RECORDED',
+      category: 'AI_EXECUTION',
+      details: `Decisão humana registrada sobre a avaliação de IA ${evaluation.id}: ${decision}.`,
+      ipAddress: req.ip || '127.0.0.1',
+      databaseAffected: tenant.dbConfig.dbName
+    });
+
     res.json({ success: true, evaluation });
   }));
 

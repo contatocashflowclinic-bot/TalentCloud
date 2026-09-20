@@ -7,19 +7,45 @@ import {
   HelpCircle,
   ThumbsUp,
   ThumbsDown,
-  User,
-  Layers,
-  ChevronRight,
-  TrendingUp,
   Brain,
   MessageSquareQuote,
-  Clock,
-  RotateCw
+  RotateCw,
+  Undo2,
+  X,
+  type LucideIcon
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { Candidate, JobOpening, AIAssistedEvaluation, OrganizationalDNA } from '../../types.js';
 import { formatDateTimeSP } from '../../utils/dateUtils.js';
+import { FIT_LEVEL_LABEL, fitLevel, isLocalEstimate, type FitLevel } from '../../utils/aiEvaluation.js';
+
+type HumanDecision = NonNullable<AIAssistedEvaluation['humanReviewerDecision']>;
+
+const DECISION_OPTIONS: { value: HumanDecision; label: string; Icon: LucideIcon; active: string; icon: string }[] = [
+  { value: 'APPROVED', label: 'Aprovar para Próxima Etapa', Icon: ThumbsUp, active: 'bg-emerald-50 border-emerald-300 text-emerald-900', icon: 'text-emerald-600' },
+  { value: 'REQUEST_ADDITIONAL_INTERVIEW', label: 'Aprofundar em Entrevista', Icon: HelpCircle, active: 'bg-amber-50 border-amber-300 text-amber-900', icon: 'text-amber-600' },
+  { value: 'REJECTED', label: 'Desqualificar com Feedback', Icon: ThumbsDown, active: 'bg-rose-50 border-rose-300 text-rose-900', icon: 'text-rose-600' },
+  { value: 'OVERRIDDEN', label: 'Divergir da Avaliação da IA', Icon: Undo2, active: 'bg-violet-50 border-violet-300 text-violet-900', icon: 'text-violet-600' }
+];
+
+const DECISION_STATUS: Record<HumanDecision, { label: string; cls: string }> = {
+  APPROVED: { label: 'Aprovado para a próxima etapa', cls: 'bg-emerald-100 text-emerald-800' },
+  REJECTED: { label: 'Desqualificado', cls: 'bg-rose-100 text-rose-800' },
+  REQUEST_ADDITIONAL_INTERVIEW: { label: 'Aprofundar em entrevista', cls: 'bg-amber-100 text-amber-800' },
+  OVERRIDDEN: { label: 'Divergiu da avaliação da IA', cls: 'bg-violet-100 text-violet-800' }
+};
+
+const FIT_BADGE: Record<FitLevel, string> = {
+  high: 'bg-emerald-500/30 text-emerald-300 border border-emerald-500/40',
+  medium: 'bg-amber-500/30 text-amber-300 border border-amber-500/40',
+  low: 'bg-rose-500/30 text-rose-300 border border-rose-500/40'
+};
+
+const SOURCE_LABEL: Record<NonNullable<AIAssistedEvaluation['source']>, string> = {
+  gemini: 'Modelo de IA (Gemini)',
+  heuristic: 'Estimativa local por regras — não é IA'
+};
 
 export const ModuleAIEvaluation: React.FC<{
   preselectedCandidateId?: string;
@@ -37,14 +63,16 @@ export const ModuleAIEvaluation: React.FC<{
   const [selectedJobId, setSelectedJobId] = useState<string>('');
   const [isEvaluating, setIsEvaluating] = useState(false);
 
-  // Human Review Form
-  const [humanDecision, setHumanDecision] = useState<'APPROVED' | 'REJECTED' | 'REQUEST_ADDITIONAL_INTERVIEW' | 'OVERRIDDEN'>('APPROVED');
+  // Human Review Form. No decision is pre-selected: choosing one is the reviewer's own act.
+  const [humanDecision, setHumanDecision] = useState<HumanDecision | null>(null);
   const [humanNotes, setHumanNotes] = useState('');
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const loadData = async () => {
     try {
       setLoading(true);
+      setActionError(null);
       const [cands, ops, evals, dnaData] = await Promise.all([
         TenantApi.getCandidates(),
         TenantApi.getOpenings(),
@@ -62,6 +90,7 @@ export const ModuleAIEvaluation: React.FC<{
       setSelectedJobId(targetJob);
     } catch (err) {
       console.error('Failed to load AI evaluation data:', err);
+      setActionError('Não foi possível carregar os dados da avaliação assistida. Atualize a página e tente novamente.');
     } finally {
       setLoading(false);
     }
@@ -82,16 +111,24 @@ export const ModuleAIEvaluation: React.FC<{
     e => e.candidateId === selectedCandidateId && e.jobOpeningId === selectedJobId
   );
 
+  // Show the decision already on record (if any) and start with an empty justification whenever the evaluation shown changes.
+  useEffect(() => {
+    setHumanDecision(activeEvaluation?.humanReviewerDecision ?? null);
+    setHumanNotes('');
+  }, [activeEvaluation?.id]);
+
   const handleRunEvaluation = async () => {
     if (!selectedCandidateId || !selectedJobId) return;
     try {
       setIsEvaluating(true);
-      const result = await TenantApi.evaluateCandidateWithAI(selectedCandidateId, selectedJobId);
+      setActionError(null);
+      await TenantApi.evaluateCandidateWithAI(selectedCandidateId, selectedJobId);
       // Reload evaluations
       const updatedEvals = await TenantApi.getAIEvaluations();
       setEvaluations(updatedEvals);
     } catch (err: any) {
-      alert(`Falha na avaliação com IA: ${err.message}`);
+      // A limit set by the platform is not a failure: show its message as it is
+      setActionError(err.status === 429 ? err.message : `Falha na avaliação com IA: ${err.message}`);
     } finally {
       setIsEvaluating(false);
     }
@@ -99,24 +136,23 @@ export const ModuleAIEvaluation: React.FC<{
 
   const handleSubmitHumanReview = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeEvaluation) return;
+    if (!activeEvaluation || !humanDecision) return;
     try {
       setIsSubmittingReview(true);
-      await TenantApi.submitHumanReview(
-        activeEvaluation.id,
-        humanDecision,
-        humanNotes,
-        'Recrutador / Gestor Humano'
-      );
+      setActionError(null);
+      await TenantApi.submitHumanReview(activeEvaluation.id, humanDecision, humanNotes);
       const updatedEvals = await TenantApi.getAIEvaluations();
       setEvaluations(updatedEvals);
       setHumanNotes('');
     } catch (err: any) {
-      alert(`Erro ao submeter decisão humana: ${err.message}`);
+      setActionError(`Erro ao registrar a decisão humana: ${err.message}`);
     } finally {
       setIsSubmittingReview(false);
     }
   };
+
+  const localEstimate = isLocalEstimate(activeEvaluation);
+  const culturalCut = dna?.culturalFitThreshold || 75;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
@@ -124,10 +160,7 @@ export const ModuleAIEvaluation: React.FC<{
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 9</span>
-          </div>
-          <h1 className="text-xl font-bold text-slate-900 mt-1">Avaliação Assistida por IA</h1>
+          <h1 className="text-xl font-bold text-slate-900">Avaliação Assistida por IA</h1>
           <p className="text-xs text-slate-500">
             Apoio preditivo explicável com pilares do DNA cultural da organização e garantia de decisão final humana.
           </p>
@@ -187,18 +220,53 @@ export const ModuleAIEvaluation: React.FC<{
         </button>
       </div>
 
+      {actionError && (
+        <div role="alert" className="flex items-start gap-3 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs">
+          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+          <p className="flex-1 leading-relaxed">{actionError}</p>
+          <button
+            type="button"
+            onClick={() => setActionError(null)}
+            aria-label="Fechar aviso"
+            className="p-0.5 rounded-md text-rose-500 hover:bg-rose-100 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Evaluation Results or Empty State */}
       {activeEvaluation ? (
         <div className="space-y-6">
-          
+
+          {/* Transparência: quando a nota NÃO vem de um modelo de IA, isso aparece antes de qualquer número */}
+          {localEstimate && (
+            <div role="alert" className="flex items-start gap-3 p-4 sm:p-5 rounded-2xl bg-amber-50 border-2 border-amber-300 text-amber-950">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div className="space-y-1 text-xs sm:text-sm leading-relaxed">
+                <p className="font-bold">Estimativa local — esta NÃO é uma avaliação de IA</p>
+                <p>
+                  As notas abaixo vêm de regras simples (habilidades × requisitos e anos de experiência). O motivo aparece no início do
+                  parecer. Use apenas como ponto de partida e valide em entrevista. Quando a IA estiver disponível, clique em
+                  "Re-analisar com IA".
+                </p>
+              </div>
+            </div>
+          )}
+
+          <p className="text-[11px] text-slate-500 font-mono" title="Fuso horário oficial: América/São Paulo">
+            Avaliação de {formatDateTimeSP(activeEvaluation.evaluatedAt)} · Origem:{' '}
+            {activeEvaluation.source ? SOURCE_LABEL[activeEvaluation.source] : 'não registrada (avaliação anterior ao registro de origem)'}
+          </p>
+
           {/* Top Score Cards - Elevated Visuals */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
-            
+
             {/* Overall Fit Score */}
             <div className="p-6 rounded-3xl bg-gradient-to-br from-indigo-950 via-slate-900 to-indigo-900 text-white shadow-lg space-y-3 relative overflow-hidden border border-indigo-800/40">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold uppercase tracking-wider text-indigo-300">
-                  Fit Geral Ponderado
+                  {localEstimate ? 'Fit Geral (estimativa local)' : 'Fit Geral Ponderado'}
                 </span>
                 <Sparkles className="w-4 h-4 text-indigo-400" />
               </div>
@@ -206,10 +274,8 @@ export const ModuleAIEvaluation: React.FC<{
                 <span className="text-5xl font-extrabold text-white font-mono tracking-tight">
                   {activeEvaluation.overallFitScore}%
                 </span>
-                <span className={`text-xs font-bold px-2.5 py-1 rounded-full uppercase tracking-wider ${
-                  activeEvaluation.overallFitScore >= 80 ? 'bg-emerald-500/30 text-emerald-300 border border-emerald-500/40' : 'bg-amber-500/30 text-amber-300 border border-amber-500/40'
-                }`}>
-                  {activeEvaluation.overallFitScore >= 80 ? 'Alta Aderência' : 'Aderência Média'}
+                <span className={`text-xs font-bold px-2.5 py-1 rounded-full uppercase tracking-wider ${FIT_BADGE[fitLevel(activeEvaluation.overallFitScore)]}`}>
+                  {FIT_LEVEL_LABEL[fitLevel(activeEvaluation.overallFitScore)]}
                 </span>
               </div>
               <p className="text-xs text-slate-300 leading-relaxed">
@@ -245,12 +311,19 @@ export const ModuleAIEvaluation: React.FC<{
                   Aderência ao DNA Cultural
                 </span>
                 <span className="text-xs text-slate-500 font-medium font-mono">
-                  Corte: {dna?.culturalFitThreshold || 75}%
+                  Corte: {culturalCut}%
                 </span>
               </div>
-              <div className="flex items-baseline gap-2">
+              <div className="flex items-baseline gap-3">
                 <span className="text-5xl font-extrabold text-indigo-600 font-mono tracking-tight">
                   {activeEvaluation.culturalFitScore}%
+                </span>
+                <span className={`text-xs font-bold px-2.5 py-1 rounded-full uppercase tracking-wider ${
+                  activeEvaluation.culturalFitScore >= culturalCut
+                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                    : 'bg-rose-50 text-rose-700 border border-rose-200'
+                }`}>
+                  {activeEvaluation.culturalFitScore >= culturalCut ? 'Acima do corte' : 'Abaixo do corte'}
                 </span>
               </div>
               <div className="w-full h-2.5 rounded-full bg-slate-100 overflow-hidden mt-2">
@@ -271,7 +344,9 @@ export const ModuleAIEvaluation: React.FC<{
                 <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wider">
                   Explicabilidade Detalhada da Avaliação
                 </h3>
-                <p className="text-xs text-slate-500">Parecer qualitativo fundamentado gerado pelo motor analítico</p>
+                <p className="text-xs text-slate-500">
+                  {localEstimate ? 'Parecer gerado por regras simples (estimativa local)' : 'Parecer qualitativo fundamentado gerado pelo motor analítico'}
+                </p>
               </div>
             </div>
             <p className="text-xs sm:text-sm text-slate-700 leading-relaxed bg-slate-50/90 p-5 rounded-2xl border border-slate-100 font-normal">
@@ -333,7 +408,7 @@ export const ModuleAIEvaluation: React.FC<{
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 space-y-3">
             <h3 className="font-bold text-slate-900 text-sm uppercase tracking-wider flex items-center gap-2">
               <HelpCircle className="w-4 h-4 text-indigo-600" />
-              Perguntas Sugeridas pela IA para Validação Humana
+              {localEstimate ? 'Perguntas Sugeridas para Validação Humana' : 'Perguntas Sugeridas pela IA para Validação Humana'}
             </h3>
             <div className="space-y-2">
               {activeEvaluation.suggestedInterviewQuestions.map((q, idx) => (
@@ -363,55 +438,36 @@ export const ModuleAIEvaluation: React.FC<{
               </div>
 
               {activeEvaluation.humanReviewerDecision && (
-                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                  activeEvaluation.humanReviewerDecision === 'APPROVED'
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : activeEvaluation.humanReviewerDecision === 'REJECTED'
-                    ? 'bg-rose-100 text-rose-800'
-                    : 'bg-amber-100 text-amber-800'
-                }`}>
-                  Status: {activeEvaluation.humanReviewerDecision}
+                <span className={`px-3 py-1 rounded-full text-xs font-bold ${DECISION_STATUS[activeEvaluation.humanReviewerDecision].cls}`}>
+                  Status: {DECISION_STATUS[activeEvaluation.humanReviewerDecision].label}
                 </span>
               )}
             </div>
 
+            {activeEvaluation.humanReviewerDecision && activeEvaluation.humanNotes && (
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1">
+                <div className="font-semibold text-slate-700">Parecer humano registrado</div>
+                <p className="text-slate-600 leading-relaxed whitespace-pre-line">{activeEvaluation.humanNotes}</p>
+              </div>
+            )}
+
             <form onSubmit={handleSubmitHumanReview} className="space-y-4 text-xs pt-2">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <label
-                  onClick={() => setHumanDecision('APPROVED')}
-                  className={`p-3 rounded-xl border cursor-pointer flex items-center gap-2.5 transition-all ${
-                    humanDecision === 'APPROVED'
-                      ? 'bg-emerald-50 border-emerald-300 font-semibold text-emerald-900'
-                      : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                  }`}
-                >
-                  <ThumbsUp className="w-4 h-4 text-emerald-600" />
-                  <span>Aprovar para Próxima Etapa</span>
-                </label>
-
-                <label
-                  onClick={() => setHumanDecision('REQUEST_ADDITIONAL_INTERVIEW')}
-                  className={`p-3 rounded-xl border cursor-pointer flex items-center gap-2.5 transition-all ${
-                    humanDecision === 'REQUEST_ADDITIONAL_INTERVIEW'
-                      ? 'bg-amber-50 border-amber-300 font-semibold text-amber-900'
-                      : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                  }`}
-                >
-                  <HelpCircle className="w-4 h-4 text-amber-600" />
-                  <span>Aprofundar em Entrevista</span>
-                </label>
-
-                <label
-                  onClick={() => setHumanDecision('REJECTED')}
-                  className={`p-3 rounded-xl border cursor-pointer flex items-center gap-2.5 transition-all ${
-                    humanDecision === 'REJECTED'
-                      ? 'bg-rose-50 border-rose-300 font-semibold text-rose-900'
-                      : 'border-slate-200 hover:bg-slate-50 text-slate-700'
-                  }`}
-                >
-                  <ThumbsDown className="w-4 h-4 text-rose-600" />
-                  <span>Desqualificar com Feedback</span>
-                </label>
+              <div role="radiogroup" aria-label="Decisão humana" className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                {DECISION_OPTIONS.map(({ value, label, Icon, active, icon }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    role="radio"
+                    aria-checked={humanDecision === value}
+                    onClick={() => setHumanDecision(value)}
+                    className={`p-3 rounded-xl border cursor-pointer flex items-center gap-2.5 text-left transition-all ${
+                      humanDecision === value ? `${active} font-semibold` : 'border-slate-200 hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <Icon className={`w-4 h-4 shrink-0 ${icon}`} />
+                    <span>{label}</span>
+                  </button>
+                ))}
               </div>
 
               <div>
@@ -430,19 +486,23 @@ export const ModuleAIEvaluation: React.FC<{
 
               <div className="flex items-center justify-between pt-2">
                 <div className="text-[11px] text-slate-400 font-mono">
-                  {activeEvaluation.reviewedAt && (
+                  {activeEvaluation.reviewedAt ? (
                     <span title="Fuso horário oficial: América/São Paulo">
                       Última revisão humana: {formatDateTimeSP(activeEvaluation.reviewedAt)} por {activeEvaluation.reviewedBy}
+                      {' · '}registrar de novo substitui o parecer anterior
                     </span>
+                  ) : (
+                    <span>O revisor registrado será o usuário logado.</span>
                   )}
                 </div>
 
                 <button
                   type="submit"
-                  disabled={isSubmittingReview}
-                  className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs transition-colors"
+                  disabled={isSubmittingReview || !humanDecision}
+                  title={humanDecision ? undefined : 'Escolha uma decisão para registrar o parecer'}
+                  className="px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {isSubmittingReview ? 'Gravando Decisão...' : 'Registrar Parecer Humano'}
+                  {isSubmittingReview ? 'Gravando Decisão...' : activeEvaluation.humanReviewerDecision ? 'Atualizar Parecer Humano' : 'Registrar Parecer Humano'}
                 </button>
               </div>
             </form>

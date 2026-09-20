@@ -5,6 +5,7 @@ import { TenantApi } from '../../services/api.js';
 import { SelectionApplication, JobOpening, Candidate, AIAssistedEvaluation, InterviewSession } from '../../types.js';
 import { useAuth } from '../../context/AuthContext.js';
 import { ApplicationSummaryModal } from './ApplicationSummaryModal.js';
+import { isLocalEstimate } from '../../utils/aiEvaluation.js';
 
 export const ModuleSelectionProcess: React.FC<{
   initialJobId?: string;
@@ -103,10 +104,7 @@ export const ModuleSelectionProcess: React.FC<{
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 8</span>
-          </div>
-          <h1 className="text-xl font-bold text-slate-900 mt-1">Processo Seletivo & Pipeline Kanban</h1>
+          <h1 className="text-xl font-bold text-slate-900">Processo Seletivo & Pipeline Kanban</h1>
           <p className="text-xs text-slate-500">
             Acompanhamento visual de candidatos ao longo do funil de seleção com rastreabilidade auditável.
           </p>
@@ -210,7 +208,7 @@ export const ModuleSelectionProcess: React.FC<{
                               <div className="flex items-center justify-between">
                                 <span className="flex items-center gap-1 font-semibold text-indigo-950 text-[11px]">
                                   <Sparkles className="w-3 h-3 text-indigo-600" />
-                                  Fit Preditivo IA:
+                                  {isLocalEstimate(evalItem) ? 'Estimativa local (não é IA):' : 'Fit Preditivo IA:'}
                                 </span>
                                 <span className="font-mono font-bold text-indigo-700 text-xs">
                                   {evalItem.overallFitScore}%

@@ -275,11 +275,15 @@ export interface PillarScore {
   analysis: string;
 }
 
+export type AIEvaluationSource = 'gemini' | 'heuristic';
+
 export interface AIAssistedEvaluation {
   id: string;
   candidateId: string;
   jobOpeningId: string;
   evaluatedAt: string;
+  /** 'gemini' = modelo de IA; 'heuristic' = estimativa local por regras (NÃO é IA). Ausente = origem não registrada. */
+  source?: AIEvaluationSource;
   overallFitScore: number; // 0 - 100
   technicalFitScore: number;
   culturalFitScore: number;
@@ -293,6 +297,84 @@ export interface AIAssistedEvaluation {
   humanNotes?: string;
   reviewedBy?: string;
   reviewedAt?: string;
+}
+
+// 9.1 Controle de créditos e consumo da IA (Conta Mãe)
+/** O que fazer quando um limite mensal é atingido: seguir com a estimativa local (sem custo) ou barrar o pedido. */
+export type AiLimitPolicy = 'estimate' | 'block';
+
+export type AiUsagePeriod = 'this_month' | 'last_month' | 'last_30';
+
+/** Regras da plataforma para o uso da IA. Campos ausentes = não definido. */
+export interface AiSettings {
+  /** false = IA pausada: todas as avaliações usam a estimativa local. */
+  enabled: boolean;
+  /** Modelo definido no painel; ausente = o do ambiente. */
+  model?: string;
+  /** Teto de gasto estimado do mês, em R$, somando todas as organizações. */
+  monthlyBudgetBrl?: number;
+  /** Avaliações com IA por mês para cada organização sem limite próprio. */
+  defaultOrgMonthlyLimit?: number;
+  onLimit: AiLimitPolicy;
+  /** Preços usados para ESTIMAR o custo (US$ por 1 milhão de unidades de texto). */
+  priceInputUsd?: number;
+  priceOutputUsd?: number;
+  usdBrlRate?: number;
+  pricesUpdatedAt?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface AiOrgUsage {
+  tenantId: string;
+  name: string;
+  slug: string;
+  /** Avaliações que usaram a IA no período escolhido. */
+  evaluations: number;
+  costBrl: number;
+  /** Pedidos do período que NÃO usaram a IA (estimativa local, falha ou bloqueio). */
+  withoutAi: number;
+  /** Avaliações com IA no mês corrente (é o que conta para o limite). */
+  monthEvaluations: number;
+  monthlyLimit: number | null;
+  limitSource: 'custom' | 'default' | 'none';
+}
+
+export interface AiUsageOverview {
+  period: AiUsagePeriod;
+  periodLabel: string;
+  settings: AiSettings;
+  /** Modelo realmente usado agora (painel > ambiente > padrão). */
+  effectiveModel: string;
+  /** A chave do Google está configurada no servidor. */
+  connectionConfigured: boolean;
+  lastSuccessAt?: string;
+  lastFailureAt?: string;
+  /** Preços e cotação informados: sem isso não há como estimar o valor em R$. */
+  pricesReady: boolean;
+  totals: {
+    evaluations: number;
+    estimates: number;
+    failures: number;
+    blocked: number;
+    costBrl: number;
+    avgCostBrl: number | null;
+    /** Avaliações que repetiram um candidato+vaga já avaliado com IA antes. */
+    repeated: number;
+    repeatedCostBrl: number;
+    /** Avaliações com IA que nenhuma pessoa revisou. */
+    unreviewed: number;
+    /** Avaliações com IA sem custo calculado por falta de preço. */
+    unpriced: number;
+  };
+  /** Só no período "este mês": total do mês passado inteiro e previsão para o fim deste mês. */
+  lastMonthCostBrl: number | null;
+  projectionBrl: number | null;
+  /** Sempre o mês corrente (é a base do teto de gasto). */
+  month: { costBrl: number; evaluations: number; budgetBrl: number | null; budgetPercent: number | null };
+  daily: Array<{ day: string; evaluations: number; costBrl: number }>;
+  organizations: AiOrgUsage[];
+  organizationsTruncated: boolean;
 }
 
 // 10. Entrevistas

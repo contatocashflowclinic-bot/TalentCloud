@@ -27,7 +27,7 @@ import { OrganizationEditor } from './platform/OrganizationEditor.js';
 import { OrgAccessModal } from './platform/OrgAccessModal.js';
 import { ActionsMenu } from './platform/ActionsMenu.js';
 
-export type PlatformSection = 'overview' | 'organizations' | 'users' | 'audit';
+export type PlatformSection = 'overview' | 'organizations' | 'users' | 'ai' | 'audit';
 
 const STATUS_LABEL: Record<Tenant['status'], string> = {
   active: 'Ativo',

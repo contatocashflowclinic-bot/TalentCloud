@@ -406,11 +406,46 @@ async function main() {
 
     const ev = await A('POST', '/api/v1/ai/evaluate-candidate', { candidateId: candId, jobOpeningId: jobId });
     check('AI evaluation (Gemini or fallback)', ev.status === 201 && typeof ev.json.evaluation?.overallFitScore === 'number', ev.json);
+    check('AI evaluation states its origin; a local estimate is labeled in the text too', ['gemini', 'heuristic'].includes(ev.json.evaluation?.source) && (ev.json.evaluation.source !== 'heuristic' || /^⚠ ESTIMATIVA LOCAL/.test(ev.json.evaluation.detailedExplanation)), ev.json);
     const evId = ev.json.evaluation?.id;
     const appAfter = (await A('GET', '/api/v1/applications')).json.applications.find((a: any) => a.id === appId);
     check('evaluation linked to application', appAfter?.aiEvaluationId === evId, appAfter);
-    check('human review', (await A('PATCH', `/api/v1/ai/evaluations/${evId}/human-decision`, { decision: 'APPROVED', humanNotes: 'ok', reviewerName: 'Tester' })).json.evaluation?.humanReviewerDecision === 'APPROVED');
+    const reviewerName = (await A('GET', '/api/auth/me')).json.user?.name;
+    const review = await A('PATCH', `/api/v1/ai/evaluations/${evId}/human-decision`, { decision: 'APPROVED', humanNotes: 'ok', reviewerName: 'Tester' });
+    check('human review', review.json.evaluation?.humanReviewerDecision === 'APPROVED');
+    check('human review is signed by the logged-in user, never by a name sent in the request', !!reviewerName && review.json.evaluation?.reviewedBy === reviewerName, review.json);
+    check('OVERRIDDEN is an accepted human decision', (await A('PATCH', `/api/v1/ai/evaluations/${evId}/human-decision`, { decision: 'OVERRIDDEN', humanNotes: 'divergi da IA' })).json.evaluation?.humanReviewerDecision === 'OVERRIDDEN');
     check('invalid human decision -> 400', (await A('PATCH', `/api/v1/ai/evaluations/${evId}/human-decision`, { decision: 'MAYBE' })).status === 400);
+
+    // ---- Uso da IA (Conta Mãe): consumo registrado, limites por organização, pausa e regras
+    const tenantAId = provA.json.tenant.id as string;
+    const SU = (method: string, path: string, body?: unknown) => api(method, path, { token: adminToken, body });
+    const aiRow = async () => (await SU('GET', '/api/master/ai/overview?period=this_month')).json.overview?.organizations?.find((o: any) => o.tenantId === tenantAId);
+    const ov0 = await SU('GET', '/api/master/ai/overview?period=this_month');
+    const row0 = ov0.json.overview?.organizations?.find((o: any) => o.tenantId === tenantAId);
+    check('AI usage panel: SuperAdmin reads it and the evaluation above was recorded for the organization', ov0.status === 200 && !!row0 && row0.evaluations + row0.withoutAi >= 1 && typeof ov0.json.overview.totals.costBrl === 'number', row0);
+    check('AI usage panel: an organization admin cannot open it (403)', (await A('GET', '/api/master/ai/overview')).status === 403 && (await A('PATCH', '/api/master/ai/settings', { enabled: false })).status === 403);
+    check('AI usage panel: invalid rules are refused (400)', (await SU('PATCH', '/api/master/ai/settings', { monthlyBudgetBrl: -5 })).status === 400 && (await SU('PATCH', '/api/master/ai/settings', {})).status === 400 && (await SU('PATCH', '/api/master/ai/settings', { onLimit: 'x' })).status === 400);
+    check('AI usage panel: limit of an unknown organization -> 404; invalid limit -> 400', (await SU('PUT', '/api/master/ai/organizations/nao-existe/limit', { monthlyLimit: 3 })).status === 404 && (await SU('PUT', `/api/master/ai/organizations/${tenantAId}/limit`, { monthlyLimit: -1 })).status === 400);
+
+    const policyBefore = ov0.json.overview.settings.onLimit;
+    await SU('PATCH', '/api/master/ai/settings', { onLimit: 'estimate' });
+    check('limit 0 for the organization is saved', (await SU('PUT', `/api/master/ai/organizations/${tenantAId}/limit`, { monthlyLimit: 0 })).status === 200);
+    const capped = await A('POST', '/api/v1/ai/evaluate-candidate', { candidateId: candId, jobOpeningId: jobId });
+    check('over the limit (policy "estimate"): the evaluation still comes back as the labeled local estimate and says why', capped.status === 201 && capped.json.evaluation?.source === 'heuristic' && /limite mensal/.test(capped.json.evaluation.detailedExplanation), capped.json);
+    await SU('PATCH', '/api/master/ai/settings', { onLimit: 'block' });
+    const overLimit = await A('POST', '/api/v1/ai/evaluate-candidate', { candidateId: candId, jobOpeningId: jobId });
+    check('over the limit (policy "block"): 429 with a plain message and no evaluation created', overLimit.status === 429 && /limite mensal/.test(overLimit.json.error ?? ''), overLimit.json);
+    await SU('PATCH', '/api/master/ai/settings', { onLimit: policyBefore });
+    const rowCapped = await aiRow();
+    check('AI usage panel: the organization shows its own limit and the attempts that did not use the AI', rowCapped?.monthlyLimit === 0 && rowCapped.limitSource === 'custom' && rowCapped.withoutAi >= 2, rowCapped);
+    check('removing the organization limit brings the platform default back', (await SU('PUT', `/api/master/ai/organizations/${tenantAId}/limit`, { monthlyLimit: null })).status === 200 && (await aiRow())?.limitSource !== 'custom');
+
+    await SU('PATCH', '/api/master/ai/settings', { enabled: false });
+    const paused = await A('POST', '/api/v1/ai/evaluate-candidate', { candidateId: candId, jobOpeningId: jobId });
+    check('AI paused by the platform: evaluations still work, as the labeled local estimate', paused.status === 201 && paused.json.evaluation?.source === 'heuristic' && /pausada/.test(paused.json.evaluation.detailedExplanation), paused.json);
+    check('AI usage panel: pause switch is reflected and can be turned back on', (await SU('PATCH', '/api/master/ai/settings', { enabled: true })).json.settings?.enabled === true);
+
     const intv = await A('POST', '/api/v1/interviews', { jobOpeningId: jobId, candidateId: candId });
     check('create interview', intv.status === 201, intv.json);
     check('INTERVIEWER can fill a scorecard', (await api('PATCH', `/api/v1/interviews/${intv.json.interview.id}/scorecard`, { token: tokens.INTERVIEWER, body: { scorecard: [{ competency: 'X', score: 5, notes: 'top' }], recommendation: 'STRONG_YES', overallFeedback: 'ótimo' } })).json.interview?.status === 'completed');

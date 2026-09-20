@@ -93,10 +93,7 @@ export const ModuleOpenings: React.FC<{
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider">Módulo 6</span>
-          </div>
-          <h1 className="text-xl font-bold text-slate-900 mt-1">Gestão de Vagas & Requisições</h1>
+          <h1 className="text-xl font-bold text-slate-900">Gestão de Vagas & Requisições</h1>
           <p className="text-xs text-slate-500">
             Abertura, SLAs de contratação, divulgação social de cargos e portal público de carreiras.
           </p>

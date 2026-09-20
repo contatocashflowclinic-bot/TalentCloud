@@ -52,7 +52,7 @@ export const TABLES = {
     orderBy: 'seq desc',
     columns: [
       'id', 'candidateId', 'jobOpeningId', 'evaluatedAt', 'overallFitScore', 'technicalFitScore', 'culturalFitScore',
-      'detailedExplanation', 'keyStrengths', 'potentialGaps', 'suggestedInterviewQuestions', 'pillarScores',
+      'detailedExplanation', 'keyStrengths', 'potentialGaps', 'suggestedInterviewQuestions', 'pillarScores', 'source',
       'humanReviewerDecision', 'humanNotes', 'reviewedBy', 'reviewedAt'
     ]
   },

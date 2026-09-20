@@ -31,7 +31,10 @@ import {
   TenantIndicators,
   AgendaEvent,
   AgendaDirectoryMember,
-  AuthUser
+  AuthUser,
+  AiSettings,
+  AiUsageOverview,
+  AiUsagePeriod
 } from '../types.js';
 
 // ---- Session (token kept in localStorage; server stores only its hash) ----
@@ -273,7 +276,22 @@ export const MasterApi = {
       `/api/master/tenants/${tenantId}/reset-admin-password`,
       { method: 'POST', body: JSON.stringify({ userId }) }
     );
-  }
+  },
+  // Uso da IA: créditos, consumo e limites
+  getAiUsage: async (period: AiUsagePeriod) =>
+    (await request<{ success: boolean; overview: AiUsageOverview }>(`/api/master/ai/overview${qs({ period })}`)).overview,
+  /** Only the fields present are changed; null / empty clears an optional field. */
+  updateAiSettings: async (patch: Partial<Record<keyof Omit<AiSettings, 'pricesUpdatedAt' | 'updatedAt' | 'updatedBy'>, unknown>>) =>
+    (await request<{ success: boolean; settings: AiSettings }>('/api/master/ai/settings', {
+      method: 'PATCH',
+      body: JSON.stringify(patch)
+    })).settings,
+  /** monthlyLimit null = go back to the platform default. */
+  setAiOrgLimit: async (tenantId: string, monthlyLimit: number | null) =>
+    (await request<{ success: boolean; monthlyLimit: number | null }>(`/api/master/ai/organizations/${tenantId}/limit`, {
+      method: 'PUT',
+      body: JSON.stringify({ monthlyLimit })
+    })).monthlyLimit
 };
 
 // Authentication
@@ -424,9 +442,10 @@ export const TenantApi = {
     method: 'POST',
     body: JSON.stringify({ candidateId, jobOpeningId })
   })).evaluation,
-  submitHumanReview: async (evaluationId: string, decision: AIAssistedEvaluation['humanReviewerDecision'], humanNotes: string, reviewerName: string) => (await request<{ success: boolean; evaluation: AIAssistedEvaluation }>(`/api/v1/ai/evaluations/${evaluationId}/human-decision`, {
+  /** The reviewer is the logged-in user; the server takes it from the session. */
+  submitHumanReview: async (evaluationId: string, decision: AIAssistedEvaluation['humanReviewerDecision'], humanNotes: string) => (await request<{ success: boolean; evaluation: AIAssistedEvaluation }>(`/api/v1/ai/evaluations/${evaluationId}/human-decision`, {
     method: 'PATCH',
-    body: JSON.stringify({ decision, humanNotes, reviewerName })
+    body: JSON.stringify({ decision, humanNotes })
   })).evaluation,
 
   // 10. Entrevistas
