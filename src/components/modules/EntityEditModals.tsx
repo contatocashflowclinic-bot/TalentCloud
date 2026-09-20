@@ -75,8 +75,8 @@ export const PositionEditModal: React.FC<{
       { value: 'Y_TECNICO', label: 'Carreira em Y (técnica)' }, { value: 'GESTÃO', label: 'Gestão' }, { value: 'OPERACIONAL', label: 'Operacional' }
     ] },
     { key: 'status', label: 'Situação', type: 'select', required: true, half: true, options: [{ value: 'active', label: 'Ativo' }, { value: 'archived', label: 'Arquivado' }] },
-    { key: 'minSalary', label: 'Salário mínimo (R$)', type: 'number', min: 0, half: true },
-    { key: 'maxSalary', label: 'Salário máximo (R$)', type: 'number', min: 0, half: true },
+    { key: 'minSalary', label: 'Salário mínimo (R$)', type: 'currency', half: true },
+    { key: 'maxSalary', label: 'Salário máximo (R$)', type: 'currency', half: true },
     { key: 'description', label: 'Descrição', type: 'textarea' },
     { key: 'technicalRequirements', label: 'Requisitos técnicos', type: 'list' },
     { key: 'behavioralCompetencies', label: 'Competências comportamentais', type: 'list' }
@@ -116,8 +116,8 @@ export const OpeningEditModal: React.FC<{
     { key: 'location', label: 'Local', type: 'text', required: true, half: true },
     { key: 'slaDays', label: 'SLA (dias)', type: 'number', min: 1, half: true },
     { key: 'targetFillDate', label: 'Meta de preenchimento', type: 'date', half: true },
-    { key: 'salaryOfferedMin', label: 'Salário oferecido — mínimo (R$)', type: 'number', min: 0, nullable: true, half: true },
-    { key: 'salaryOfferedMax', label: 'Salário oferecido — máximo (R$)', type: 'number', min: 0, nullable: true, half: true },
+    { key: 'salaryOfferedMin', label: 'Salário oferecido — mínimo (R$)', type: 'currency', nullable: true, half: true },
+    { key: 'salaryOfferedMax', label: 'Salário oferecido — máximo (R$)', type: 'currency', nullable: true, half: true },
     ...(users.length ? [
       { key: 'hiringManagerId', label: 'Gestor da vaga', type: 'select' as const, required: true, options: userOptions(users), half: true },
       { key: 'recruiterId', label: 'Recrutador(a)', type: 'select' as const, required: true, options: userOptions(users), half: true }
@@ -218,7 +218,7 @@ export const OfferEditModal: React.FC<{
   onClose: () => void;
 }> = ({ offer, candidateName, onSaved, onClose }) => {
   const fields: FieldDef[] = [
-    { key: 'baseSalary', label: 'Salário base (R$)', type: 'number', min: 0, half: true },
+    { key: 'baseSalary', label: 'Salário base (R$)', type: 'currency', half: true },
     { key: 'contractType', label: 'Tipo de contrato', type: 'select', required: true, options: opt(['CLT', 'PJ']), half: true },
     { key: 'startDate', label: 'Data de início', type: 'date', required: true, half: true },
     { key: 'benefits', label: 'Benefícios', type: 'list', help: 'Separe por vírgula. Os itens do catálogo são cadastrados em "Benefícios".' },

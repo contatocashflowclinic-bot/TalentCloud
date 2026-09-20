@@ -6,6 +6,7 @@ import { JobPosition, Department } from '../../types.js';
 import { useAuth } from '../../context/AuthContext.js';
 import { PositionSummaryModal } from './EntitySummaryModals.js';
 import { PositionEditModal } from './EntityEditModals.js';
+import { CurrencyInput } from '../CurrencyInput.js';
 
 export const ModulePositions: React.FC = () => {
   const { activeTenant } = useTenant();
@@ -254,22 +255,12 @@ export const ModulePositions: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Salário Mínimo (R$)</label>
-                  <input
-                    type="number"
-                    value={minSalary}
-                    onChange={(e) => setMinSalary(Number(e.target.value))}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm"
-                  />
+                  <CurrencyInput value={minSalary} onChange={setMinSalary} />
                 </div>
 
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Salário Máximo (R$)</label>
-                  <input
-                    type="number"
-                    value={maxSalary}
-                    onChange={(e) => setMaxSalary(Number(e.target.value))}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm"
-                  />
+                  <CurrencyInput value={maxSalary} onChange={setMaxSalary} />
                 </div>
               </div>
 

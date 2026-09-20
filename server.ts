@@ -1449,6 +1449,89 @@ async function startServer() {
     res.json({ success: true, indicators });
   }));
 
+  // ---------------------------------------------------------
+  // MÓDULO 17: Agenda Corporativa
+  // Sem rotina de permissão: reuniões e tarefas são comuns a todos os colaboradores da
+  // organização, do mesmo jeito que o Portal de Vagas — ver e participar não depende de perfil.
+  // ---------------------------------------------------------
+  const AGENDA_STATUSES = ['scheduled', 'in_progress', 'done', 'cancelled'];
+  const assertDate = (value: unknown, label: string): void => {
+    if (Number.isNaN(new Date(value as string).getTime())) throw new ValidationError(`${label} inválida.`);
+  };
+
+  app.get('/api/v1/agenda', h(async (req, res) => {
+    res.json({ success: true, events: await ctx(req).db.agendaEvents.list() });
+  }));
+
+  // Diretório mínimo (id, nome, cargo) dos colaboradores ativos: monta convidados/responsáveis mesmo
+  // para quem não tem a permissão `users:view` — todos podem agendar e atribuir na Agenda.
+  app.get('/api/v1/agenda/directory', h(async (req, res) => {
+    const members = await AccessService.listMembers(getPool(), ctx(req).tenant.id);
+    res.json({
+      success: true,
+      members: members.filter(m => m.active).map(m => ({ id: m.id, name: m.name, jobTitle: m.jobTitle }))
+    });
+  }));
+
+  app.post('/api/v1/agenda', h(async (req, res) => {
+    const { db } = ctx(req);
+    const b = req.body ?? {};
+    const startsAt = required(b.startsAt, 'startsAt');
+    assertDate(startsAt, 'Data/hora de início');
+    if (b.endsAt) assertDate(b.endsAt, 'Data/hora de término');
+
+    const members = await db.users.list();
+    const validIds = new Set(members.map(m => m.id));
+    const assigneeIds = csv(b.assigneeIds).filter((id: string) => validIds.has(id));
+
+    const event = await db.agendaEvents.insert({
+      id: newId('agd'),
+      type: b.type === 'task' ? 'task' : 'meeting',
+      title: required(b.title, 'title'),
+      description: typeof b.description === 'string' ? b.description.trim() : '',
+      status: 'scheduled',
+      startsAt,
+      endsAt: b.endsAt || undefined,
+      location: (typeof b.location === 'string' && b.location.trim()) || undefined,
+      agenda: csvLines(b.agenda ?? []),
+      assigneeIds,
+      createdById: req.auth!.id,
+      createdByName: req.auth!.name
+    });
+    res.status(201).json({ success: true, event });
+  }));
+
+  app.patch('/api/v1/agenda/:id', h(async (req, res) => {
+    const { db } = ctx(req);
+    const b = req.body ?? {};
+    const patch: Record<string, unknown> = {};
+    if (has(b, 'title')) patch.title = required(b.title, 'title');
+    if (has(b, 'description')) patch.description = String(b.description ?? '').trim();
+    if (has(b, 'status')) {
+      if (!AGENDA_STATUSES.includes(b.status)) throw new ValidationError('Status inválido.');
+      patch.status = b.status;
+    }
+    if (has(b, 'startsAt')) {
+      assertDate(b.startsAt, 'Data/hora de início');
+      patch.startsAt = b.startsAt;
+    }
+    if (has(b, 'endsAt')) {
+      if (b.endsAt) assertDate(b.endsAt, 'Data/hora de término');
+      patch.endsAt = b.endsAt || null;
+    }
+    if (has(b, 'location')) patch.location = (typeof b.location === 'string' && b.location.trim()) || null;
+    if (has(b, 'agenda')) patch.agenda = csvLines(b.agenda);
+    if (has(b, 'summary')) patch.summary = (typeof b.summary === 'string' && b.summary.trim()) || null;
+    if (has(b, 'assigneeIds')) {
+      const members = await db.users.list();
+      const validIds = new Set(members.map(m => m.id));
+      patch.assigneeIds = csv(b.assigneeIds).filter((id: string) => validIds.has(id));
+    }
+    const event = await db.agendaEvents.update(req.params.id, patch);
+    if (!event) throw new NotFoundError('Compromisso não encontrado.');
+    res.json({ success: true, event });
+  }));
+
   // Unknown API routes must not fall through to the SPA
   app.use('/api', (req, res) => {
     console.warn(`[api] rota inexistente: ${req.method} ${req.originalUrl}`);

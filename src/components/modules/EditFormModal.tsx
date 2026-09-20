@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { X, Lock } from 'lucide-react';
+import { centsToBRLText, digitsToCents, parseBRLText } from '../../utils/currencyUtils.js';
+import { DateInputBR } from '../DateInputBR.js';
 
 export interface FieldDef {
   key: string;
   label: string;
-  type: 'text' | 'email' | 'url' | 'number' | 'textarea' | 'select' | 'date' | 'list' | 'lines';
+  type: 'text' | 'email' | 'url' | 'number' | 'currency' | 'textarea' | 'select' | 'date' | 'list' | 'lines';
   options?: { value: string; label: string }[];
   required?: boolean;
   /** An emptied number/select becomes null (clears the value) instead of being left out. */
@@ -37,6 +39,10 @@ interface Props {
 
 const toText = (field: FieldDef, value: unknown): string => {
   if (value === null || value === undefined) return '';
+  if (field.type === 'currency') {
+    const cents = Math.round(Number(value) * 100);
+    return cents ? centsToBRLText(cents) : '';
+  }
   if (field.type === 'list') return Array.isArray(value) ? value.join(', ') : String(value);
   if (field.type === 'lines') return Array.isArray(value) ? value.join('\n') : String(value);
   if (field.type === 'date') return String(value).slice(0, 10);
@@ -45,6 +51,7 @@ const toText = (field: FieldDef, value: unknown): string => {
 
 const fromText = (field: FieldDef, text: string): unknown => {
   if (field.type === 'number') return text.trim() === '' ? (field.nullable ? null : undefined) : Number(text);
+  if (field.type === 'currency') return text.trim() === '' ? (field.nullable ? null : undefined) : parseBRLText(text);
   if (field.type === 'list') return text.split(',').map(s => s.trim()).filter(Boolean);
   if (field.type === 'lines') return text.split('\n').map(s => s.trim()).filter(Boolean);
   if (field.type === 'select') return text === '' ? (field.nullable ? null : undefined) : text;
@@ -132,6 +139,32 @@ export const EditFormModal: React.FC<Props> = ({ title, subtitle, fields, initia
                     {!f.required && <option value="">— nenhum —</option>}
                     {f.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
+                ) : f.type === 'currency' ? (
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-medium select-none pointer-events-none">R$</span>
+                    <input
+                      id={`f-${f.key}`}
+                      type="text"
+                      inputMode="numeric"
+                      required={f.required && !f.readOnly}
+                      disabled={f.readOnly}
+                      value={values[f.key]}
+                      placeholder={f.placeholder ?? '0,00'}
+                      onChange={(e) => {
+                        const cents = digitsToCents(e.target.value);
+                        setValues({ ...values, [f.key]: cents ? centsToBRLText(cents) : '' });
+                      }}
+                      className={`${inputCls} pl-9 ${f.readOnly ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                    />
+                  </div>
+                ) : f.type === 'date' ? (
+                  <DateInputBR
+                    id={`f-${f.key}`}
+                    required={f.required && !f.readOnly}
+                    value={values[f.key]}
+                    onChange={(v) => setValues({ ...values, [f.key]: v })}
+                    className={`${inputCls} pl-9 ${f.readOnly ? 'bg-slate-50 text-slate-500 cursor-not-allowed' : ''}`}
+                  />
                 ) : (
                   <input
                     id={`f-${f.key}`}

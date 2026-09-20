@@ -4,6 +4,7 @@ import {
   ChevronDown,
   Check,
   Globe,
+  CalendarClock,
   PanelLeftClose,
   Menu,
   PanelLeft,
@@ -18,17 +19,21 @@ import { GlobalCandidateSearchBar } from './search/GlobalCandidateSearchBar.js';
 
 export const Header: React.FC<{
   onOpenCareersPortal?: () => void;
+  onOpenAgenda?: () => void;
   onNavigateToCandidate?: (candidateId: string, searchTerm?: string) => void;
   onNavigateToProcess?: (jobId: string, candidateId?: string) => void;
   onNavigateToAI?: (candidateId: string, jobId?: string) => void;
+  onNavigateHome?: () => void;
   isSidebarCollapsed?: boolean;
   onToggleSidebar?: () => void;
   onOpenChangePassword?: () => void;
 }> = ({
   onOpenCareersPortal,
+  onOpenAgenda,
   onNavigateToCandidate,
   onNavigateToProcess,
   onNavigateToAI,
+  onNavigateHome,
   isSidebarCollapsed,
   onToggleSidebar,
   onOpenChangePassword
@@ -66,17 +71,24 @@ export const Header: React.FC<{
               </button>
             )}
 
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-700 via-indigo-600 to-blue-500 flex items-center justify-center text-white shadow-md shadow-indigo-100">
-              <Building2 className="w-5 h-5" />
-            </div>
-            <div className="hidden sm:block">
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-slate-900 text-lg tracking-tight">TalentCloud</span>
+            <button
+              onClick={onNavigateHome}
+              disabled={!onNavigateHome}
+              className="flex items-center gap-2.5 sm:gap-3 text-left disabled:cursor-default"
+              title={onNavigateHome ? 'Ir para a página inicial' : undefined}
+            >
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-700 via-indigo-600 to-blue-500 flex items-center justify-center text-white shadow-md shadow-indigo-100">
+                <Building2 className="w-5 h-5" />
               </div>
-              <p className="text-[11px] text-slate-500 leading-none">
-                Gestão do ciclo de talentos
-              </p>
-            </div>
+              <div className="hidden sm:block">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-slate-900 text-lg tracking-tight">TalentCloud</span>
+                </div>
+                <p className="text-[11px] text-slate-500 leading-none">
+                  Gestão do ciclo de talentos
+                </p>
+              </div>
+            </button>
           </div>
 
           {/* Global Intelligent Candidate Search Bar */}
@@ -94,6 +106,18 @@ export const Header: React.FC<{
           <div className="hidden 2xl:block shrink-0">
             <SaoPauloClockBadge />
           </div>
+
+          {/* Agenda Corporativa Quick Button */}
+          {onOpenAgenda && (
+            <button
+              onClick={onOpenAgenda}
+              className="hidden lg:flex shrink-0 whitespace-nowrap items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-semibold transition-colors"
+              title="Abrir o calendário da Agenda Corporativa"
+            >
+              <CalendarClock className="w-3.5 h-3.5" />
+              <span>Calendário</span>
+            </button>
+          )}
 
           {/* Careers Portal Quick Button */}
           {onOpenCareersPortal && (

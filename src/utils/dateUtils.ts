@@ -91,6 +91,32 @@ export function formatFullDateTimeWithTimezoneSP(
 }
 
 /**
+ * ISO -> valor de <input type="datetime-local">, no horário de São Paulo (o mesmo que o resto do app exibe,
+ * não importa o fuso do navegador da pessoa).
+ */
+export function toDateTimeLocalSP(input: string | number | Date | null | undefined): string {
+  const d = parseDate(input);
+  if (!d) return '';
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: SAO_PAULO_TIMEZONE,
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
+    }).formatToParts(d).map(p => [p.type, p.value])
+  );
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+/** Valor de <input type="datetime-local"> (sem fuso) -> ISO, lido como horário de São Paulo (UTC-3 fixo, sem horário de verão desde 2019). */
+export function fromDateTimeLocalSP(value: string): string {
+  return value ? new Date(`${value}:00-03:00`).toISOString() : '';
+}
+
+/** Chave de dia (AAAA-MM-DD) no horário de São Paulo — para agrupar/comparar por dia independente do fuso do navegador. */
+export function spDateKey(input: string | number | Date | null | undefined): string {
+  return toDateTimeLocalSP(input).slice(0, 10);
+}
+
+/**
  * Converte data relativa amigável em português
  */
 export function formatRelativeTimeSP(input: string | number | Date | null | undefined): string {

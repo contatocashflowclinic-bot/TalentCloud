@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import {
   AdmissionItem,
   AdmissionTemplate,
+  AgendaEvent,
   AIAssistedEvaluation,
   BenefitCatalogItem,
   CandidateChange,
@@ -77,6 +78,7 @@ export class TenantRepository {
   readonly development: Entity<CollaboratorDevelopment>;
   readonly climateSurveys: Entity<ClimateSurveyResponse>;
   readonly turnoverAlerts: Entity<TurnoverRiskAlert>;
+  readonly agendaEvents: Entity<AgendaEvent>;
 
   constructor(public readonly tenantId: string) {
     this.users = new Entity(TABLES.users, tenantId);
@@ -96,6 +98,7 @@ export class TenantRepository {
     this.development = new Entity(TABLES.development, tenantId);
     this.climateSurveys = new Entity(TABLES.climateSurveys, tenantId);
     this.turnoverAlerts = new Entity(TABLES.turnoverAlerts, tenantId);
+    this.agendaEvents = new Entity(TABLES.agendaEvents, tenantId);
   }
 
   // ---- DNA (one row per tenant) -------------------------------------

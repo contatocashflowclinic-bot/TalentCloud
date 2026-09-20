@@ -7,6 +7,8 @@ import { BenefitCatalogModal } from './BenefitCatalogModal.js';
 import { useAuth } from '../../context/AuthContext.js';
 import { OfferEditModal } from './EntityEditModals.js';
 import { formatDateSP } from '../../utils/dateUtils.js';
+import { CurrencyInput } from '../CurrencyInput.js';
+import { DateInputBR } from '../DateInputBR.js';
 
 export const ModuleOffers: React.FC = () => {
   const { activeTenant } = useTenant();
@@ -399,22 +401,12 @@ export const ModuleOffers: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Salário Base (R$)</label>
-                  <input
-                    type="number"
-                    value={baseSalary}
-                    onChange={(e) => setBaseSalary(Number(e.target.value))}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm font-mono"
-                  />
+                  <CurrencyInput value={baseSalary} onChange={setBaseSalary} className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 text-sm font-mono focus:outline-hidden focus:border-indigo-500" />
                 </div>
 
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Data de Início</label>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => setStartDate(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm"
-                  />
+                  <DateInputBR value={startDate} onChange={setStartDate} />
                 </div>
               </div>
 

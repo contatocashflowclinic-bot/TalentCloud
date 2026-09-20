@@ -113,5 +113,13 @@ export const TABLES = {
       'id', 'collaboratorId', 'collaboratorName', 'department', 'riskLevel', 'earlyWarningSignals', 'suggestedActions',
       'lastActionTaken'
     ]
+  },
+  agendaEvents: {
+    table: 'agenda_events',
+    orderBy: 'starts_at asc',
+    columns: [
+      'id', 'type', 'title', 'description', 'status', 'startsAt', 'endsAt', 'location', 'agenda', 'summary',
+      'assigneeIds', 'createdById', 'createdByName', 'createdAt'
+    ]
   }
 } as const satisfies Record<string, TableSpec>;

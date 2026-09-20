@@ -28,6 +28,8 @@ import {
   ClimateSurveyResponse,
   TurnoverRiskAlert,
   TenantIndicators,
+  AgendaEvent,
+  AgendaDirectoryMember,
   AuthUser
 } from '../types.js';
 
@@ -535,5 +537,17 @@ export const TenantApi = {
   })).alert,
 
   // 15. Indicadores
-  getIndicators: async () => (await request<{ success: boolean; indicators: TenantIndicators }>('/api/v1/indicators')).indicators
+  getIndicators: async () => (await request<{ success: boolean; indicators: TenantIndicators }>('/api/v1/indicators')).indicators,
+
+  // 17. Agenda Corporativa
+  getAgendaEvents: async () => (await request<{ success: boolean; events: AgendaEvent[] }>('/api/v1/agenda')).events,
+  getAgendaDirectory: async () => (await request<{ success: boolean; members: AgendaDirectoryMember[] }>('/api/v1/agenda/directory')).members,
+  createAgendaEvent: async (payload: Record<string, unknown>) => (await request<{ success: boolean; event: AgendaEvent }>('/api/v1/agenda', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })).event,
+  updateAgendaEvent: async (id: string, payload: Record<string, unknown>) => (await request<{ success: boolean; event: AgendaEvent }>(`/api/v1/agenda/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).event
 };

@@ -519,6 +519,36 @@ export interface TenantIndicators {
   };
 }
 
+// Agenda Corporativa: reuniões e tarefas comuns a toda a organização (sem rotina de permissão associada)
+export interface AgendaEvent {
+  id: string;
+  type: 'meeting' | 'task';
+  title: string;
+  description?: string;
+  status: 'scheduled' | 'in_progress' | 'done' | 'cancelled';
+  /** Quando a reunião ocorre / a tarefa vence. */
+  startsAt: string;
+  endsAt?: string;
+  /** Sala, endereço ou link da reunião. */
+  location?: string;
+  /** Pauta: tópicos planejados antes do compromisso. */
+  agenda: string[];
+  /** Resumo do que foi alinhado — preenchido após o compromisso. */
+  summary?: string;
+  /** Ids de TenantUser: participantes (reunião) ou responsáveis (tarefa). */
+  assigneeIds: string[];
+  createdById: string;
+  createdByName: string;
+  createdAt: string;
+}
+
+/** Diretório mínimo de colaboradores ativos, usado para montar convidados/responsáveis na Agenda — sem exigir a permissão `users:view`. */
+export interface AgendaDirectoryMember {
+  id: string;
+  name: string;
+  jobTitle: string;
+}
+
 // Master Audit Logs for Cross-Tenant & SuperAdmin Activities
 export interface SystemAuditLog {
   id: string;

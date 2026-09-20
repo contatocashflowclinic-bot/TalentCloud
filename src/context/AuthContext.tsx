@@ -6,10 +6,14 @@ interface AuthContextValue {
   user: AuthUser | null;
   /** false while the stored session is being validated on first load */
   isReady: boolean;
+  /** True right after a fresh login when the person has more than one organization to choose from. */
+  needsOrgSelection: boolean;
   login: (email: string, password: string, tenantSlug?: string) => Promise<void>;
   logout: () => Promise<void>;
   /** Moves the session to another organization the person is linked to. */
   switchOrganization: (tenantId: string) => Promise<void>;
+  /** Keeps the organization the login already picked, dismissing the post-login picker. */
+  confirmOrganization: () => void;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
 }
 
@@ -18,6 +22,7 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isReady, setIsReady] = useState<boolean>(!getAuthToken());
+  const [needsOrgSelection, setNeedsOrgSelection] = useState(false);
 
   // Validate a stored session on first load
   useEffect(() => {
@@ -63,6 +68,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const res = await AuthApi.login(email, password, tenantSlug);
     setAuthToken(res.token);
     setUser(res.user);
+    setNeedsOrgSelection(res.user.type === 'tenant_user' && (res.user.memberships?.length ?? 0) > 1);
   }, []);
 
   const logout = useCallback(async () => {
@@ -73,10 +79,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     setAuthToken(null);
     setUser(null);
+    setNeedsOrgSelection(false);
   }, []);
 
   const switchOrganization = useCallback(async (tenantId: string) => {
     setUser(await AuthApi.switchOrganization(tenantId));
+    setNeedsOrgSelection(false);
+  }, []);
+
+  const confirmOrganization = useCallback(() => {
+    setNeedsOrgSelection(false);
   }, []);
 
   const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
@@ -85,7 +97,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, isReady, login, logout, switchOrganization, changePassword }}>
+    <AuthContext.Provider
+      value={{ user, isReady, needsOrgSelection, login, logout, switchOrganization, confirmOrganization, changePassword }}
+    >
       {children}
     </AuthContext.Provider>
   );

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { TenantProvider, useTenant } from './context/TenantContext.js';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
 import { LoginPage } from './components/auth/LoginPage.js';
+import { OrganizationPickerPage } from './components/auth/OrganizationPickerPage.js';
 import { ChangePasswordModal } from './components/auth/ChangePasswordModal.js';
 import { canAccessModule } from './access.js';
 import { ShieldAlert } from 'lucide-react';
@@ -10,7 +11,9 @@ import { Header } from './components/Header.js';
 import { Sidebar } from './components/Sidebar.js';
 import { CareersPortalPage } from './components/careers/CareersPortalPage.js';
 
-// Feature Modules 2 to 15
+// Feature Modules 1 to 15
+import { ModuleWelcome } from './components/modules/ModuleWelcome.js';
+import { ModuleAgenda } from './components/modules/ModuleAgenda.js';
 import { ModuleUsers } from './components/modules/ModuleUsers.js';
 import { ModuleDNA } from './components/modules/ModuleDNA.js';
 import { ModuleStructure } from './components/modules/ModuleStructure.js';
@@ -30,7 +33,7 @@ const MainLayout: React.FC = () => {
   const { activeTenant, isLoading, permissions } = useTenant();
   const { user } = useAuth();
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
-  const [activeModule, setActiveModule] = useState<number>(3); // Default to Module 3 (DNA) or 1
+  const [activeModule, setActiveModule] = useState<number>(1); // Default to Module 1 (Boas-vindas)
   const [isCareersView, setIsCareersView] = useState(false);
   const [careersSlugFromUrl, setCareersSlugFromUrl] = useState<string | undefined>(undefined);
 
@@ -84,6 +87,15 @@ const MainLayout: React.FC = () => {
     setIsCareersView(true);
   };
 
+  const handleSelectModule = (id: number) => {
+    if (id === 16) {
+      setIsCareersView(true);
+    } else {
+      setIsCareersView(false);
+      setActiveModule(id);
+    }
+  };
+
   if (isCareersView) {
     return (
       <CareersPortalPage
@@ -106,6 +118,8 @@ const MainLayout: React.FC = () => {
           setIsCareersView(true);
         }}
         onOpenChangePassword={() => setIsChangePasswordOpen(true)}
+        onNavigateHome={() => handleSelectModule(1)}
+        onOpenAgenda={() => handleSelectModule(17)}
         onNavigateToCandidate={handleNavigateToCandidate}
         onNavigateToProcess={handleNavigateToProcess}
         onNavigateToAI={handleNavigateToAI}
@@ -126,14 +140,7 @@ const MainLayout: React.FC = () => {
           mobileOpen={isMobileMenuOpen}
           onCloseMobile={() => setIsMobileMenuOpen(false)}
           onToggleCollapse={() => setIsSidebarCollapsed(prev => !prev)}
-          onSelectModule={(id) => {
-            if (id === 16) {
-              setIsCareersView(true);
-            } else {
-              setIsCareersView(false);
-              setActiveModule(id);
-            }
-          }}
+          onSelectModule={handleSelectModule}
         />
 
         {/* Content View */}
@@ -150,6 +157,7 @@ const MainLayout: React.FC = () => {
             </div>
           ) : (
             <>
+              {activeModule === 1 && <ModuleWelcome onNavigate={handleSelectModule} />}
               {activeModule === 2 && <ModuleUsers />}
               {activeModule === 3 && <ModuleDNA />}
               {activeModule === 4 && <ModuleStructure />}
@@ -188,6 +196,7 @@ const MainLayout: React.FC = () => {
               {activeModule === 13 && <ModuleDevelopment />}
               {activeModule === 14 && <ModuleRetention />}
               {activeModule === 15 && <ModuleIndicators />}
+              {activeModule === 17 && <ModuleAgenda />}
             </>
           )}
         </main>
@@ -212,7 +221,7 @@ function publicCareersSlug(): string | null {
 }
 
 function Gate() {
-  const { user, isReady } = useAuth();
+  const { user, isReady, needsOrgSelection } = useAuth();
   const slug = publicCareersSlug();
 
   if (!user && slug) {
@@ -222,6 +231,7 @@ function Gate() {
     return <div className="min-h-screen flex items-center justify-center text-slate-400 text-xs animate-pulse">Validando sessão...</div>;
   }
   if (!user) return <LoginPage />;
+  if (needsOrgSelection) return <OrganizationPickerPage />;
   if (user.mustChangePassword) {
     return (
       <div className="min-h-screen bg-slate-50">
