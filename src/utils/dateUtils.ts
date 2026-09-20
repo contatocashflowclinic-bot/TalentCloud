@@ -20,6 +20,11 @@ function parseDate(input: string | number | Date | null | undefined): Date | nul
  * Ex: 18/09/2026
  */
 export function formatDateSP(input: string | number | Date | null | undefined): string {
+  // Data de calendário (AAAA-MM-DD: início da proposta, admissão, prazos) não tem fuso: lida como meia-noite UTC,
+  // apareceria um dia antes no horário de São Paulo.
+  const calendarDate = typeof input === 'string' ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(input) : null;
+  if (calendarDate) return `${calendarDate[3]}/${calendarDate[2]}/${calendarDate[1]}`;
+
   const d = parseDate(input);
   if (!d) return '--/--/----';
   return new Intl.DateTimeFormat(BRAZIL_LOCALE, {

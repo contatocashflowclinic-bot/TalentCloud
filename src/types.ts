@@ -319,6 +319,24 @@ export interface InterviewSession {
 }
 
 // 11. Proposta
+/** Tipos de documento anexados a uma proposta (contrato assinado, aditivos etc.). */
+export const OFFER_DOCUMENT_CATEGORIES = ['Contrato assinado', 'Aditivo contratual', 'Carta-proposta assinada', 'Outros'] as const;
+export type OfferDocumentCategory = typeof OFFER_DOCUMENT_CATEGORIES[number];
+export const MAX_OFFER_DOCUMENTS = 20;
+
+/** Arquivo guardado no armazenamento privado; só os metadados ficam na proposta e o download passa pela API. */
+export interface OfferDocument {
+  id: string;
+  category: OfferDocumentCategory;
+  name: string;
+  mime: string;
+  size: number;
+  path: string;
+  description?: string;
+  uploadedAt: string;
+  uploadedBy: string;
+}
+
 export interface JobOffer {
   id: string;
   jobOpeningId: string;
@@ -332,6 +350,8 @@ export interface JobOffer {
   sentAt?: string;
   respondedAt?: string;
   notes?: string;
+  /** Contratos assinados, aditivos e demais anexos. Ausente em respostas de versões antigas do servidor. */
+  documents?: OfferDocument[];
 }
 
 export const BENEFIT_CATEGORIES = ['Saúde', 'Alimentação', 'Financeiro', 'Bem-estar', 'Trabalho', 'Outros'] as const;

@@ -161,7 +161,7 @@ export function buildWelcomeView(
         id: `offer-${o.id}`,
         kind: 'offer',
         title: name ? `Aprovar proposta de ${name}` : 'Aprovar proposta',
-        detail: [job, `início em ${formatDateSP(o.startDate + 'T12:00:00-03:00')}`].filter(Boolean).join(' • '),
+        detail: [job, `início em ${formatDateSP(o.startDate)}`].filter(Boolean).join(' • '),
         priority: o.startDate < todayKey ? 'late' : o.approverId === ctx.userId ? 'high' : 'normal',
         moduleId: 11
       });

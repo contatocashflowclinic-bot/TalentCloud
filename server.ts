@@ -23,7 +23,13 @@ import { actorOf } from './server/tenant/TenantConnectionRouter.js';
 import { withTransaction } from './server/db/pool.js';
 import { assertValidFile, getFile, putFile, removeFile, safeFileName } from './server/storage.js';
 import { reviewItem, type AdmissionAction } from './server/tenant/admission.js';
-import { CANDIDATE_DECLARED_FIELDS, type AdmissionItem, type OnboardingChecklistItem } from './src/types.js';
+import {
+  CANDIDATE_DECLARED_FIELDS,
+  OFFER_DOCUMENT_CATEGORIES,
+  type AdmissionItem,
+  type OfferDocumentCategory,
+  type OnboardingChecklistItem
+} from './src/types.js';
 
 // Augment Express Request interface with tenantContext
 declare global {
@@ -1163,6 +1169,62 @@ async function startServer() {
     const { status, notes } = req.body;
     const { db } = ctx(req);
     const offer = await db.setOfferStatus(req.params.id, required(status, 'status') as Parameters<typeof db.setOfferStatus>[1], notes);
+    res.json({ success: true, offer });
+  }));
+
+  // Documentos da proposta (contrato assinado, aditivos...). offers:view consulta/baixa; offers:edit anexa e remove.
+  // Upload: corpo bruto (PDF/JPG/PNG até 8 MB); nome, tipo e descrição vão na query (?name= &category= &description=).
+  app.post(
+    '/api/v1/offers/:id/documents',
+    can('offers:edit'),
+    express.raw({ type: () => true, limit: '9mb' }),
+    h(async (req, res) => {
+      const { db, tenant } = ctx(req);
+      const mime = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+      const content = assertValidFile(req.body, mime);
+      const category = String(req.query.category ?? 'Outros') as OfferDocumentCategory;
+      if (!OFFER_DOCUMENT_CATEGORIES.includes(category)) throw new ValidationError('Tipo de documento inválido.');
+      const description = String(req.query.description ?? '').trim().slice(0, 200);
+      const offer = await db.offers.get(req.params.id);
+      if (!offer) throw new NotFoundError('Proposta não encontrada');
+
+      const id = newId('odc');
+      const name = safeFileName(String(req.query.name ?? 'documento'));
+      const storagePath = `${tenant.id}/offers/${offer.id}/${id}-${name}`;
+      await putFile(storagePath, content, mime);
+      try {
+        const updated = await db.addOfferDocument(offer.id, {
+          id, category, name, mime, size: content.length, path: storagePath,
+          ...(description ? { description } : {}),
+          uploadedAt: new Date().toISOString(),
+          uploadedBy: req.auth!.name
+        });
+        res.status(201).json({ success: true, offer: updated });
+      } catch (err) {
+        void removeFile(storagePath);
+        throw err;
+      }
+    })
+  );
+
+  // Download through the API (permission + tenant checked); the storage is never exposed by URL
+  app.get('/api/v1/offers/:id/documents/:docId/file', can('offers:view'), h(async (req, res) => {
+    const { db, tenant } = ctx(req);
+    const offer = await db.offers.get(req.params.id);
+    const document = offer?.documents?.find(d => d.id === req.params.docId);
+    if (!offer || !document || !document.path.startsWith(`${tenant.id}/offers/${offer.id}/`)) throw new NotFoundError('Documento não encontrado');
+    const content = await getFile(document.path);
+    res.setHeader('Content-Type', document.mime);
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(document.name)}`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(content);
+  }));
+
+  app.delete('/api/v1/offers/:id/documents/:docId', can('offers:edit'), h(async (req, res) => {
+    const { db, tenant } = ctx(req);
+    const { offer, removed } = await db.removeOfferDocument(req.params.id, req.params.docId);
+    if (removed.path.startsWith(`${tenant.id}/offers/${offer.id}/`)) void removeFile(removed.path);
     res.json({ success: true, offer });
   }));
 

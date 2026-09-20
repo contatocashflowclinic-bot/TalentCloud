@@ -17,6 +17,7 @@ import {
   AIAssistedEvaluation,
   InterviewSession,
   JobOffer,
+  OfferDocumentCategory,
   OnboardingJourney,
   AdmissionTemplate,
   AdmissionItem,
@@ -118,6 +119,21 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 
   return data as T;
+}
+
+/** Files sit behind the API (permission + tenant checked): they are fetched with the session token (not linked) and handed to the browser as a download. */
+async function downloadAuthenticatedFile(endpoint: string, fileName: string): Promise<void> {
+  const response = await fetch(endpoint, { headers: authToken ? { Authorization: `Bearer ${authToken}` } : {} });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new ApiError(data.error || 'Não foi possível baixar o documento.', response.status);
+  }
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 const qs = (q: Record<string, unknown>) => {
@@ -447,6 +463,15 @@ export const TenantApi = {
     method: 'PATCH',
     body: JSON.stringify({ status, notes })
   })).offer,
+  /** Contrato assinado, aditivos etc. Devolve a proposta já com a lista de documentos atualizada. */
+  uploadOfferDocument: async (offerId: string, file: File, category: OfferDocumentCategory, description?: string) => (await request<{ success: boolean; offer: JobOffer }>(`/api/v1/offers/${offerId}/documents${qs({ name: file.name, category, description })}`, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type },
+    body: file
+  })).offer,
+  downloadOfferDocument: (offerId: string, documentId: string, fileName: string) =>
+    downloadAuthenticatedFile(`/api/v1/offers/${offerId}/documents/${documentId}/file`, fileName),
+  deleteOfferDocument: async (offerId: string, documentId: string) => (await request<{ success: boolean; offer: JobOffer }>(`/api/v1/offers/${offerId}/documents/${documentId}`, { method: 'DELETE' })).offer,
 
   // 12.1 Admissão
   getAdmissionTemplates: async () => (await request<{ success: boolean; templates: AdmissionTemplate[] }>('/api/v1/admission-templates')).templates,
@@ -477,22 +502,8 @@ export const TenantApi = {
     headers: { 'Content-Type': file.type },
     body: file
   })).onboarding,
-  /** The file needs the session token, so it is fetched (not linked) and handed to the browser as a download. */
-  downloadAdmissionFile: async (journeyId: string, itemId: string, fileName: string) => {
-    const response = await fetch(`/api/v1/onboardings/${journeyId}/admission/${itemId}/file`, {
-      headers: authToken ? { Authorization: `Bearer ${authToken}` } : {}
-    });
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      throw new ApiError(data.error || 'Não foi possível baixar o documento.', response.status);
-    }
-    const url = URL.createObjectURL(await response.blob());
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  },
+  downloadAdmissionFile: (journeyId: string, itemId: string, fileName: string) =>
+    downloadAuthenticatedFile(`/api/v1/onboardings/${journeyId}/admission/${itemId}/file`, fileName),
 
   // 12.2 Checklist de Integração
   getIntegrationTemplates: async () => (await request<{ success: boolean; templates: IntegrationTemplate[] }>('/api/v1/integration-templates')).templates,

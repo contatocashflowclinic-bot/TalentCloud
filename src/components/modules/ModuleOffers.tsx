@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Gift, Pencil, CheckCircle2, Send, Calendar, X, Mail, Phone, Briefcase, Rocket } from 'lucide-react';
+import { Plus, Gift, Pencil, CheckCircle2, Send, Calendar, Paperclip } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { JobOffer, Candidate, JobOpening, BenefitCatalogItem, JobPosition } from '../../types.js';
 import { BenefitCatalogModal } from './BenefitCatalogModal.js';
+import { OfferSummaryModal } from './OfferSummaryModal.js';
 import { useAuth } from '../../context/AuthContext.js';
 import { OfferEditModal } from './EntityEditModals.js';
 import { formatDateSP } from '../../utils/dateUtils.js';
@@ -99,12 +100,6 @@ export const ModuleOffers: React.FC = () => {
     }
   };
 
-  const statusLabel = (status: JobOffer['status']) =>
-    status === 'accepted' ? 'Aceita pelo Candidato' :
-    status === 'sent' ? 'Enviada ao Candidato' :
-    status === 'approved' ? 'Aprovada Internamente' :
-    status === 'declined' ? 'Recusada' : 'Aprovação Pendente';
-
   const selectedOffer = offers.find(o => o.id === selectedOfferId);
   const selectedCandidate = candidates.find(c => c.id === selectedOffer?.candidateId);
   const selectedJob = openings.find(j => j.id === selectedOffer?.jobOpeningId);
@@ -194,6 +189,12 @@ export const ModuleOffers: React.FC = () => {
                   <div className="text-[11px] text-slate-500 line-clamp-2">
                     Benefícios: {offer.benefits.join(', ')}
                   </div>
+                  {(offer.documents?.length ?? 0) > 0 && (
+                    <div className="flex items-center gap-1 text-[11px] text-slate-500 font-medium">
+                      <Paperclip className="w-3 h-3 text-indigo-600" />
+                      {offer.documents!.length} {offer.documents!.length === 1 ? 'documento anexado' : 'documentos anexados'}
+                    </div>
+                  )}
                 </div>
                 {isEditable(offer) && (
                   <div className="flex">
@@ -257,102 +258,16 @@ export const ModuleOffers: React.FC = () => {
 
       {/* Offer summary modal */}
       {selectedOffer && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
-          onClick={() => setSelectedOfferId(null)}
-        >
-          <div
-            className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto border border-slate-200 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-3">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Resumo da Proposta</span>
-                <h3 className="text-base font-bold text-slate-900 mt-0.5">{selectedCandidate?.name || 'Candidato'}</h3>
-                <div className="text-xs text-slate-500 font-medium">{selectedJob?.title}</div>
-              </div>
-              <button
-                onClick={() => setSelectedOfferId(null)}
-                aria-label="Fechar"
-                className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-700">
-                  {statusLabel(selectedOffer.status)}
-                </span>
-                <span className="font-mono text-base font-bold text-slate-900">
-                  R$ {selectedOffer.baseSalary.toLocaleString('pt-BR')}/mês
-                </span>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                  <div className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1"><Briefcase className="w-3 h-3" /> Contrato</div>
-                  <div className="font-semibold text-slate-800 mt-0.5">{selectedOffer.contractType}</div>
-                </div>
-                <div className="p-3 rounded-xl bg-slate-50 border border-slate-100">
-                  <div className="text-[10px] uppercase font-bold text-slate-400 flex items-center gap-1"><Calendar className="w-3 h-3" /> Início previsto</div>
-                  <div className="font-semibold text-slate-800 mt-0.5">{formatDateSP(selectedOffer.startDate)}</div>
-                </div>
-              </div>
-
-              {selectedCandidate && (
-                <div className="space-y-1 text-slate-600">
-                  <div className="text-[10px] uppercase font-bold text-slate-400">Candidato</div>
-                  {selectedCandidate.currentRole && <div>{selectedCandidate.currentRole}</div>}
-                  {selectedCandidate.email && <div className="flex items-center gap-1.5"><Mail className="w-3 h-3 text-slate-400" /> {selectedCandidate.email}</div>}
-                  {selectedCandidate.phone && <div className="flex items-center gap-1.5"><Phone className="w-3 h-3 text-slate-400" /> {selectedCandidate.phone}</div>}
-                </div>
-              )}
-
-              <div>
-                <div className="text-[10px] uppercase font-bold text-slate-400 mb-1">Benefícios ({selectedOffer.benefits.length})</div>
-                <ul className="space-y-1 text-slate-700">
-                  {selectedOffer.benefits.map((b, i) => (
-                    <li key={i} className="flex items-start gap-1.5"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 mt-px shrink-0" /> {b}</li>
-                  ))}
-                </ul>
-              </div>
-
-              {(selectedOffer.sentAt || selectedOffer.respondedAt) && (
-                <div className="space-y-0.5 text-slate-500">
-                  {selectedOffer.sentAt && <div>Enviada em {formatDateSP(selectedOffer.sentAt)}</div>}
-                  {selectedOffer.respondedAt && <div>Respondida em {formatDateSP(selectedOffer.respondedAt)}</div>}
-                </div>
-              )}
-
-              {selectedOffer.notes && (
-                <div className="p-3 rounded-xl bg-amber-50/60 border border-amber-100 text-slate-700">
-                  <div className="text-[10px] uppercase font-bold text-amber-700 mb-0.5">Observações</div>
-                  {selectedOffer.notes}
-                </div>
-              )}
-
-              {isEditable(selectedOffer) && (
-                <div className="flex justify-end">
-                  <button
-                    onClick={() => { setEditOfferId(selectedOffer.id); setSelectedOfferId(null); }}
-                    className="px-3 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold flex items-center gap-1.5"
-                  >
-                    <Pencil className="w-3.5 h-3.5" /> Editar proposta
-                  </button>
-                </div>
-              )}
-
-              {selectedOffer.status === 'accepted' && (
-                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-start gap-2">
-                  <Rocket className="w-4 h-4 shrink-0 mt-px" />
-                  <span>Candidato contratado. A jornada de onboarding foi aberta no Módulo 12.</span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <OfferSummaryModal
+          offer={selectedOffer}
+          candidate={selectedCandidate}
+          job={selectedJob}
+          canEdit={canEdit}
+          editable={isEditable(selectedOffer)}
+          onClose={() => setSelectedOfferId(null)}
+          onEdit={() => { setEditOfferId(selectedOffer.id); setSelectedOfferId(null); }}
+          onOfferChanged={(updated) => setOffers(list => list.map(o => (o.id === updated.id ? updated : o)))}
+        />
       )}
 
       {editOfferId && offers.some(o => o.id === editOfferId) && (

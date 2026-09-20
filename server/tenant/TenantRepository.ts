@@ -16,6 +16,8 @@ import {
   JobOffer,
   JobOpening,
   JobPosition,
+  MAX_OFFER_DOCUMENTS,
+  OfferDocument,
   OnboardingJourney,
   OrganizationalDNA,
   PDIGoal,
@@ -270,6 +272,31 @@ export class TenantRepository {
       if (!offer) throw new NotFoundError('Proposta não encontrada');
       if (status === 'accepted') await this.registerHire(offer, tx);
       return offer;
+    });
+  }
+
+  /** Attaches a document to an offer. Read-modify-write with the row locked, so two simultaneous uploads never overwrite each other. */
+  async addOfferDocument(offerId: string, document: OfferDocument): Promise<JobOffer> {
+    return withTransaction(async tx => {
+      const offer = await getRow<JobOffer>(TABLES.offers, this.tenantId, offerId, tx, true);
+      if (!offer) throw new NotFoundError('Proposta não encontrada');
+      const documents = offer.documents ?? [];
+      if (documents.length >= MAX_OFFER_DOCUMENTS) {
+        throw new ValidationError(`Esta proposta já tem o máximo de ${MAX_OFFER_DOCUMENTS} documentos. Remova algum antes de anexar outro.`);
+      }
+      return (await this.offers.update(offerId, { documents: [...documents, document] }, tx))!;
+    });
+  }
+
+  /** Detaches a document; the caller deletes the stored file afterwards (only once this has committed). */
+  async removeOfferDocument(offerId: string, documentId: string): Promise<{ offer: JobOffer; removed: OfferDocument }> {
+    return withTransaction(async tx => {
+      const offer = await getRow<JobOffer>(TABLES.offers, this.tenantId, offerId, tx, true);
+      if (!offer) throw new NotFoundError('Proposta não encontrada');
+      const removed = (offer.documents ?? []).find(d => d.id === documentId);
+      if (!removed) throw new NotFoundError('Documento não encontrado');
+      const updated = await this.offers.update(offerId, { documents: (offer.documents ?? []).filter(d => d.id !== documentId) }, tx);
+      return { offer: updated!, removed };
     });
   }
 

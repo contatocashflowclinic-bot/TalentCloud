@@ -66,9 +66,10 @@ export const TABLES = {
   },
   offers: {
     table: 'job_offers',
+    json: ['documents'],
     columns: [
       'id', 'jobOpeningId', 'candidateId', 'baseSalary', 'benefits', 'startDate', 'contractType', 'status',
-      'approverId', 'sentAt', 'respondedAt', 'notes'
+      'approverId', 'sentAt', 'respondedAt', 'notes', 'documents'
     ]
   },
   benefits: {
