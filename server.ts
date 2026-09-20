@@ -51,6 +51,9 @@ const csv = (value: unknown): string[] =>
     ? value
     : String(value ?? '').split(',').map(s => s.trim()).filter(Boolean);
 
+const csvLines = (value: unknown): string[] =>
+  Array.isArray(value) ? value.map(v => String(v).trim()).filter(Boolean) : String(value ?? '').split('\n').map(s => s.trim()).filter(Boolean);
+
 const required = (value: unknown, label: string): string => {
   if (typeof value !== 'string' || !value.trim()) throw new ValidationError(`Campo obrigatório: ${label}`);
   return value.trim();
@@ -627,6 +630,56 @@ async function startServer() {
     res.status(201).json({ success: true, department });
   }));
 
+  // Shared helpers for the edit (PATCH) routes: only fields present in the body are validated and changed.
+  const has = (body: Record<string, unknown>, key: string) => body[key] !== undefined;
+  const intIn = (value: unknown, label: string, min: number, max: number): number => {
+    const n = Number(value);
+    if (!Number.isInteger(n) || n < min || n > max) throw new ValidationError(`${label} deve ser um número inteiro entre ${min} e ${max}.`);
+    return n;
+  };
+  const moneyOf = (value: unknown, label: string): number => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0 || n > 99_999_999) throw new ValidationError(`${label} inválido.`);
+    return n;
+  };
+  const optionalMoney = (value: unknown, label: string): number | null =>
+    value === null || value === '' ? null : moneyOf(value, label);
+  const requireUser = async (db: TenantConnectionContext['db'], id: unknown, label: string): Promise<string> => {
+    const userId = required(id, label);
+    if (!(await db.users.list()).some(u => u.id === userId)) throw new ValidationError(`${label}: usuário não encontrado nesta organização.`);
+    return userId;
+  };
+
+  app.patch('/api/v1/departments/:id', can('structure:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const b = req.body ?? {};
+    const patch: Record<string, unknown> = {};
+    if (has(b, 'name')) patch.name = required(b.name, 'name');
+    if (has(b, 'code')) patch.code = required(b.code, 'code');
+    if (has(b, 'costCenter')) patch.costCenter = required(b.costCenter, 'costCenter');
+    if (has(b, 'headcountTarget')) patch.headcountTarget = intIn(b.headcountTarget, 'Meta de headcount', 0, 100000);
+    if (has(b, 'currentHeadcount')) patch.currentHeadcount = intIn(b.currentHeadcount, 'Headcount atual', 0, 100000);
+    if (has(b, 'managerId')) patch.managerId = b.managerId === null || b.managerId === '' ? null : await requireUser(db, b.managerId, 'managerId');
+    if (has(b, 'parentId')) {
+      if (b.parentId === null || b.parentId === '') {
+        patch.parentId = null;
+      } else {
+        const parentId = required(b.parentId, 'parentId');
+        const all = await db.departments.list();
+        if (!all.some(d => d.id === parentId)) throw new ValidationError('Departamento superior não encontrado.');
+        // a department can never sit under itself or under one of its own descendants
+        for (let cursor: string | undefined = parentId, guard = 0; cursor && guard < 100; guard++) {
+          if (cursor === req.params.id) throw new ValidationError('Um departamento não pode ficar subordinado a si mesmo ou a uma de suas subáreas.');
+          cursor = all.find(d => d.id === cursor)?.parentId;
+        }
+        patch.parentId = parentId;
+      }
+    }
+    const department = await db.departments.update(req.params.id, patch);
+    if (!department) throw new NotFoundError('Departamento não encontrado');
+    res.json({ success: true, department });
+  }));
+
   // ---------------------------------------------------------
   // MÓDULO 5: Cargos
   // ---------------------------------------------------------
@@ -652,6 +705,28 @@ async function startServer() {
       status: 'active'
     });
     res.status(201).json({ success: true, position });
+  }));
+
+  app.patch('/api/v1/positions/:id', can('positions:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const b = req.body ?? {};
+    const current = await db.positions.get(req.params.id);
+    if (!current) throw new NotFoundError('Cargo não encontrado');
+    const patch: Record<string, unknown> = {};
+    if (has(b, 'title')) patch.title = required(b.title, 'title');
+    if (has(b, 'departmentId')) patch.departmentId = required(b.departmentId, 'departmentId');
+    if (has(b, 'level')) patch.level = oneOfList(b.level, POSITION_LEVELS, 'Nível');
+    if (has(b, 'description')) patch.description = String(b.description ?? '').trim();
+    if (has(b, 'technicalRequirements')) patch.technicalRequirements = csv(b.technicalRequirements);
+    if (has(b, 'behavioralCompetencies')) patch.behavioralCompetencies = csv(b.behavioralCompetencies);
+    if (has(b, 'careerTrack')) patch.careerTrack = oneOfList(b.careerTrack, ['Y_TECNICO', 'GESTÃO', 'OPERACIONAL'], 'Trilha de carreira');
+    if (has(b, 'status')) patch.status = oneOfList(b.status, ['active', 'archived'], 'Situação');
+    if (has(b, 'minSalary')) patch.minSalary = moneyOf(b.minSalary, 'Salário mínimo');
+    if (has(b, 'maxSalary')) patch.maxSalary = moneyOf(b.maxSalary, 'Salário máximo');
+    if (Number(patch.maxSalary ?? current.maxSalary) < Number(patch.minSalary ?? current.minSalary)) {
+      throw new ValidationError('O salário máximo não pode ser menor que o mínimo.');
+    }
+    res.json({ success: true, position: await db.positions.update(req.params.id, patch) });
   }));
 
   // ---------------------------------------------------------
@@ -700,6 +775,41 @@ async function startServer() {
     res.status(201).json({ success: true, opening });
   }));
 
+  app.patch('/api/v1/openings/:id', can('openings:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const b = req.body ?? {};
+    const current = await db.openings.get(req.params.id);
+    if (!current) throw new NotFoundError('Vaga não encontrada');
+    const patch: Record<string, unknown> = {};
+    if (has(b, 'title')) patch.title = required(b.title, 'title');
+    if (has(b, 'positionId')) patch.positionId = required(b.positionId, 'positionId');
+    if (has(b, 'departmentId')) patch.departmentId = required(b.departmentId, 'departmentId');
+    if (has(b, 'hiringManagerId')) patch.hiringManagerId = await requireUser(db, b.hiringManagerId, 'hiringManagerId');
+    if (has(b, 'recruiterId')) patch.recruiterId = await requireUser(db, b.recruiterId, 'recruiterId');
+    if (has(b, 'status')) patch.status = oneOfList(b.status, ['draft', 'open', 'in_progress', 'offer', 'filled', 'cancelled'], 'Situação');
+    if (has(b, 'workModel')) patch.workModel = oneOfList(b.workModel, ['Presencial', 'Híbrido', 'Remoto'], 'Modelo de trabalho');
+    if (has(b, 'location')) patch.location = required(b.location, 'location');
+    if (has(b, 'slaDays')) patch.slaDays = intIn(b.slaDays, 'SLA', 1, 730);
+    if (has(b, 'openingsCount')) {
+      patch.openingsCount = intIn(b.openingsCount, 'Número de posições', 1, 10000);
+      if (Number(patch.openingsCount) < current.filledCount) {
+        throw new ValidationError(`A vaga já tem ${current.filledCount} posição(ões) preenchida(s); o total não pode ser menor.`);
+      }
+    }
+    if (has(b, 'targetFillDate')) {
+      const date = new Date(String(b.targetFillDate));
+      if (Number.isNaN(date.getTime())) throw new ValidationError('Meta de preenchimento inválida.');
+      patch.targetFillDate = date.toISOString();
+    }
+    if (has(b, 'salaryOfferedMin')) patch.salaryOfferedMin = optionalMoney(b.salaryOfferedMin, 'Salário oferecido (mínimo)');
+    if (has(b, 'salaryOfferedMax')) patch.salaryOfferedMax = optionalMoney(b.salaryOfferedMax, 'Salário oferecido (máximo)');
+    const min = (patch.salaryOfferedMin ?? current.salaryOfferedMin) as number | null | undefined;
+    const max = (patch.salaryOfferedMax ?? current.salaryOfferedMax) as number | null | undefined;
+    if (min != null && max != null && max < min) throw new ValidationError('O salário máximo oferecido não pode ser menor que o mínimo.');
+    if (has(b, 'customQuestions')) patch.customQuestions = csvLines(b.customQuestions);
+    res.json({ success: true, opening: await db.openings.update(req.params.id, patch) });
+  }));
+
   // ---------------------------------------------------------
   // MÓDULO 7: Candidatos
   // ---------------------------------------------------------
@@ -727,6 +837,35 @@ async function startServer() {
       tags: Array.isArray(tags) ? tags : ['Novo Candidato']
     });
     res.status(201).json({ success: true, candidate });
+  }));
+
+  app.patch('/api/v1/candidates/:id', can('candidates:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const b = req.body ?? {};
+    const patch: Record<string, unknown> = {};
+    if (has(b, 'name')) patch.name = required(b.name, 'name');
+    if (has(b, 'email')) {
+      const email = required(b.email, 'email');
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ValidationError('E-mail inválido.');
+      patch.email = email;
+    }
+    if (has(b, 'phone')) patch.phone = String(b.phone ?? '').trim();
+    if (has(b, 'location')) patch.location = String(b.location ?? '').trim();
+    if (has(b, 'linkedinUrl')) {
+      const url = String(b.linkedinUrl ?? '').trim();
+      if (url && !/^https?:\/\//i.test(url)) throw new ValidationError('O LinkedIn deve começar com http:// ou https://.');
+      patch.linkedinUrl = url || null;
+    }
+    if (has(b, 'currentRole')) patch.currentRole = required(b.currentRole, 'currentRole');
+    if (has(b, 'yearsOfExperience')) patch.yearsOfExperience = intIn(b.yearsOfExperience, 'Anos de experiência', 0, 70);
+    if (has(b, 'education')) patch.education = String(b.education ?? '').trim();
+    if (has(b, 'resumeSummary')) patch.resumeSummary = String(b.resumeSummary ?? '').trim();
+    if (has(b, 'skills')) patch.skills = csv(b.skills);
+    if (has(b, 'languages')) patch.languages = csv(b.languages);
+    if (has(b, 'tags')) patch.tags = csv(b.tags);
+    const candidate = await db.candidates.update(req.params.id, patch);
+    if (!candidate) throw new NotFoundError('Candidato não encontrado');
+    res.json({ success: true, candidate });
   }));
 
   // ---------------------------------------------------------
@@ -916,6 +1055,30 @@ async function startServer() {
     const benefit = await ctx(req).db.benefits.update(req.params.id, benefitFields(req.body, true));
     if (!benefit) throw new NotFoundError('Benefício não encontrado');
     res.json({ success: true, benefit });
+  }));
+
+  // Edit the terms of an offer that has not gone to the candidate yet; changing an approved offer sends it back to approval.
+  app.patch('/api/v1/offers/:id', can('offers:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const b = req.body ?? {};
+    const current = await db.offers.get(req.params.id);
+    if (!current) throw new NotFoundError('Proposta não encontrada');
+    if (!['draft', 'pending_approval', 'approved'].includes(current.status)) {
+      throw new ValidationError('Esta proposta já foi enviada ao candidato e não pode mais ser alterada.');
+    }
+    const patch: Record<string, unknown> = {};
+    if (has(b, 'baseSalary')) patch.baseSalary = moneyOf(b.baseSalary, 'Salário base');
+    if (has(b, 'benefits')) patch.benefits = csv(b.benefits);
+    if (has(b, 'startDate')) {
+      if (typeof b.startDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(b.startDate)) throw new ValidationError('Data de início inválida.');
+      patch.startDate = b.startDate;
+    }
+    if (has(b, 'contractType')) patch.contractType = oneOfList(b.contractType, ['CLT', 'PJ'], 'Tipo de contrato');
+    if (has(b, 'notes')) patch.notes = String(b.notes ?? '').trim() || null;
+    if (current.status === 'approved' && Object.keys(patch).some(k => k !== 'notes')) {
+      patch.status = 'pending_approval';
+    }
+    res.json({ success: true, offer: await db.offers.update(req.params.id, patch) });
   }));
 
   app.patch('/api/v1/offers/:id/status',can('offers:edit'), h(async (req, res) => {

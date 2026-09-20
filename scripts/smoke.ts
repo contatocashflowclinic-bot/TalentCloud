@@ -414,6 +414,90 @@ async function main() {
     check('offer sent sets sentAt', !!(await A('PATCH', `/api/v1/offers/${offer.json.offer.id}/status`, { status: 'sent' })).json.offer?.sentAt);
     check('invalid offer status -> 400', (await A('PATCH', `/api/v1/offers/${offer.json.offer.id}/status`, { status: 'bogus' })).status === 400);
 
+
+    // ---- Edição dos cards (PATCH) -------------------------------------------------------------
+    const someUserId = (await A('GET', '/api/v1/users')).json.users[0].id;
+    // the first recruiter session was killed by the password-reset check above: use a fresh recruiter for the edit checks
+    const rec2Email = `recruiter2-${suffix}@smoke.test`;
+    const rec2 = await A('POST', '/api/v1/users', { name: 'U RECRUITER2', email: rec2Email, profileId: 'recruiter', jobTitle: 'RECRUITER' });
+    tokens.RECRUITER = (await activateUser(slugA, rec2Email, rec2.json.tempPassword, 'Senha#REC2x9')).token;
+    check('fresh RECRUITER can activate', !!tokens.RECRUITER, rec2.json);
+    const dp = `/api/v1/departments/${deptId}`;
+    const ed = await A('PATCH', dp, { name: 'Depto Editado', headcountTarget: 25, costCenter: 'CC-777' });
+    check('edit department', ed.json.department?.name === 'Depto Editado' && ed.json.department.headcountTarget === 25 && ed.json.department.costCenter === 'CC-777' && ed.json.department.code, ed.json);
+    check('edit department: negative headcount -> 400', (await A('PATCH', dp, { headcountTarget: -5 })).status === 400);
+    check('edit department: non numeric headcount -> 400', (await A('PATCH', dp, { headcountTarget: 'abc' })).status === 400);
+    check('edit department: empty name -> 400', (await A('PATCH', dp, { name: '  ' })).status === 400);
+    check('edit department: itself as parent -> 400', (await A('PATCH', dp, { parentId: deptId })).status === 400);
+    const child = await A('POST', '/api/v1/departments', { name: 'Subarea Smoke' });
+    check('edit department: sub-area under a parent', (await A('PATCH', `/api/v1/departments/${child.json.department.id}`, { parentId: deptId })).json.department?.parentId === deptId);
+    check('edit department: cycle (parent under its own sub-area) -> 400', (await A('PATCH', dp, { parentId: child.json.department.id })).status === 400);
+    check('edit department: unknown parent -> 400', (await A('PATCH', dp, { parentId: 'dep-nope' })).status === 400);
+    check('edit department: unknown manager -> 400', (await A('PATCH', dp, { managerId: 'usr-nope' })).status === 400);
+    check('edit department: set and clear manager', (await A('PATCH', dp, { managerId: someUserId })).json.department?.managerId === someUserId && (await A('PATCH', dp, { managerId: null })).json.department?.managerId === undefined);
+    check('edit department: unknown id -> 404', (await A('PATCH', '/api/v1/departments/dep-nope', { name: 'x' })).status === 404);
+    check('RBAC: RECRUITER cannot edit departments', (await R('RECRUITER', 'PATCH', dp, { name: 'x' })).status === 403);
+    check('isolation: org B cannot edit org A department', (await B('PATCH', dp, { name: 'hack' })).status === 404);
+
+    const pp = `/api/v1/positions/${posId}`;
+    const ep = await A('PATCH', pp, { title: 'Dev Editado', level: 'Sênior', minSalary: 7000, maxSalary: 12000, technicalRequirements: ['Go', 'SQL'], status: 'active' });
+    check('edit position', ep.json.position?.title === 'Dev Editado' && ep.json.position.level === 'Sênior' && ep.json.position.maxSalary === 12000 && ep.json.position.technicalRequirements.join() === 'Go,SQL', ep.json);
+    check('edit position: max below min -> 400', (await A('PATCH', pp, { maxSalary: 1000 })).status === 400);
+    check('edit position: invalid level -> 400', (await A('PATCH', pp, { level: 'Deus' })).status === 400);
+    check('edit position: invalid career track -> 400', (await A('PATCH', pp, { careerTrack: 'X' })).status === 400);
+    check('edit position: unknown department -> 400', (await A('PATCH', pp, { departmentId: 'dep-nope' })).status === 400);
+    check('edit position: unknown id -> 404', (await A('PATCH', '/api/v1/positions/pos-nope', { title: 'x' })).status === 404);
+    check('RBAC: RECRUITER cannot edit positions', (await R('RECRUITER', 'PATCH', pp, { title: 'x' })).status === 403);
+    check('isolation: org B cannot edit org A position', (await B('PATCH', pp, { title: 'hack' })).status === 404);
+
+    const op = `/api/v1/openings/${jobId}`;
+    const eo = await A('PATCH', op, { title: 'Vaga Editada', slaDays: 45, workModel: 'Remoto', location: 'Curitiba', customQuestions: ['Por que nós?', 'Disponibilidade?'], salaryOfferedMin: 7000, salaryOfferedMax: 9000 });
+    check('edit opening', eo.json.opening?.title === 'Vaga Editada' && eo.json.opening.slaDays === 45 && eo.json.opening.workModel === 'Remoto' && eo.json.opening.customQuestions.length === 2, eo.json);
+    check('edit opening: stages are untouched', eo.json.opening?.stages?.length === 5);
+    check('edit opening: zero positions -> 400', (await A('PATCH', op, { openingsCount: 0 })).status === 400);
+    check('edit opening: invalid work model -> 400', (await A('PATCH', op, { workModel: 'Lua' })).status === 400);
+    check('edit opening: invalid status -> 400', (await A('PATCH', op, { status: 'voando' })).status === 400);
+    check('edit opening: salary max below min -> 400', (await A('PATCH', op, { salaryOfferedMax: 100 })).status === 400);
+    check('edit opening: unknown recruiter -> 400', (await A('PATCH', op, { recruiterId: 'usr-nope' })).status === 400);
+    check('edit opening: bad target date -> 400', (await A('PATCH', op, { targetFillDate: 'ontem' })).status === 400);
+    check('edit opening: clear the offered salary', (await A('PATCH', op, { salaryOfferedMin: null, salaryOfferedMax: null })).json.opening?.salaryOfferedMin === undefined);
+    check('edit opening: unknown id -> 404', (await A('PATCH', '/api/v1/openings/job-nope', { title: 'x' })).status === 404);
+    check('RBAC: RECRUITER can edit openings', (await R('RECRUITER', 'PATCH', op, { location: 'Recife' })).json.opening?.location === 'Recife');
+    check('RBAC: HIRING_MANAGER cannot edit openings', (await R('HIRING_MANAGER', 'PATCH', op, { location: 'x' })).status === 403);
+    check('isolation: org B cannot edit org A opening', (await B('PATCH', op, { title: 'hack' })).status === 404);
+
+    const cp = `/api/v1/candidates/${candId}`;
+    const ec = await A('PATCH', cp, { name: 'Candidata Editada', skills: ['React', 'Node'], linkedinUrl: 'https://linkedin.com/in/teste', yearsOfExperience: 8 });
+    check('edit candidate', ec.json.candidate?.name === 'Candidata Editada' && ec.json.candidate.skills.join() === 'React,Node' && ec.json.candidate.yearsOfExperience === 8 && ec.json.candidate.linkedinUrl, ec.json);
+    check('edit candidate: invalid e-mail -> 400', (await A('PATCH', cp, { email: 'sem-arroba' })).status === 400);
+    check('edit candidate: LinkedIn without protocol -> 400', (await A('PATCH', cp, { linkedinUrl: 'linkedin.com/in/x' })).status === 400);
+    check('edit candidate: negative experience -> 400', (await A('PATCH', cp, { yearsOfExperience: -1 })).status === 400);
+    check('edit candidate: clear LinkedIn', (await A('PATCH', cp, { linkedinUrl: '' })).json.candidate?.linkedinUrl === undefined);
+    check('edit candidate: unknown id -> 404', (await A('PATCH', '/api/v1/candidates/cand-nope', { name: 'x' })).status === 404);
+    check('RBAC: RECRUITER can edit candidates', (await R('RECRUITER', 'PATCH', cp, { location: 'Salvador' })).json.candidate?.location === 'Salvador');
+    check('RBAC: HIRING_MANAGER and INTERVIEWER cannot edit candidates', (await R('HIRING_MANAGER', 'PATCH', cp, { location: 'x' })).status === 403 && (await R('INTERVIEWER', 'PATCH', cp, { location: 'x' })).status === 403);
+    check('isolation: org B cannot edit org A candidate', (await B('PATCH', cp, { name: 'hack' })).status === 404);
+
+    const offer2 = await A('POST', '/api/v1/offers', { jobOpeningId: jobId, candidateId: candId, baseSalary: 9000, benefits: ['VR'] });
+    const o2 = `/api/v1/offers/${offer2.json.offer.id}`;
+    const eof = await A('PATCH', o2, { baseSalary: 9500, benefits: ['VR', 'VA'], contractType: 'PJ', startDate: '2027-01-10', notes: 'ajustada' });
+    check('edit offer while pending approval', eof.json.offer?.baseSalary === 9500 && eof.json.offer.contractType === 'PJ' && eof.json.offer.startDate === '2027-01-10' && eof.json.offer.benefits.join() === 'VR,VA' && eof.json.offer.status === 'pending_approval', eof.json);
+    check('edit offer: invalid contract -> 400', (await A('PATCH', o2, { contractType: 'MEI' })).status === 400);
+    check('edit offer: invalid start date -> 400', (await A('PATCH', o2, { startDate: '10/01/2027' })).status === 400);
+    check('edit offer: negative salary -> 400', (await A('PATCH', o2, { baseSalary: -1 })).status === 400);
+    await A('PATCH', `${o2}/status`, { status: 'approved' });
+    check('edit offer: changing terms of an approved offer sends it back to approval', (await A('PATCH', o2, { baseSalary: 10000 })).json.offer?.status === 'pending_approval');
+    await A('PATCH', `${o2}/status`, { status: 'approved' });
+    check('edit offer: only notes keeps the approval', (await A('PATCH', o2, { notes: 'só uma nota' })).json.offer?.status === 'approved');
+    await A('PATCH', `${o2}/status`, { status: 'sent' });
+    check('edit offer: a sent offer is locked -> 400', (await A('PATCH', o2, { baseSalary: 1 })).status === 400);
+    check('edit offer: the accepted/sent offer of the hire flow is locked too', (await A('PATCH', `/api/v1/offers/${offer.json.offer.id}`, { baseSalary: 1 })).status === 400);
+    check('edit offer: unknown id -> 404', (await A('PATCH', '/api/v1/offers/off-nope', { baseSalary: 1 })).status === 404);
+    check('RBAC: INTERVIEWER cannot edit offers', (await R('INTERVIEWER', 'PATCH', o2, { notes: 'x' })).status === 403);
+    check('isolation: org B cannot edit org A offer', (await B('PATCH', o2, { notes: 'hack' })).status === 404);
+    const recruiterMe = await api('GET', '/api/auth/me', { token: tokens.RECRUITER });
+    check('profile defaults: RECRUITER holds openings:edit + candidates:edit and not structure:edit', (recruiterMe.json.user?.permissions ?? []).filter((p: string) => ['openings:edit', 'candidates:edit', 'structure:edit', 'positions:edit'].includes(p)).sort().join() === 'candidates:edit,openings:edit', recruiterMe);
+
     // ---- Contratação: o aceite abre o onboarding + pasta de admissão -----------------
     const accepted = await A('PATCH', `/api/v1/offers/${offer.json.offer.id}/status`, { status: 'accepted' });
     check('accept offer', accepted.json.offer?.status === 'accepted', accepted.json);

@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Network, Plus, Users, DollarSign, Building, CheckCircle2 } from 'lucide-react';
+import { Network, Plus, Pencil } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { Department } from '../../types.js';
+import { useAuth } from '../../context/AuthContext.js';
 import { DepartmentSummaryModal } from './EntitySummaryModals.js';
+import { DepartmentEditModal } from './EntityEditModals.js';
 
 export const ModuleStructure: React.FC = () => {
   const { activeTenant } = useTenant();
@@ -11,6 +13,9 @@ export const ModuleStructure: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [summaryId, setSummaryId] = useState<string | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
+  const { user } = useAuth();
+  const canEdit = !!user?.permissions.includes('structure:edit');
 
   // Form states
   const [name, setName] = useState('');
@@ -123,6 +128,14 @@ export const ModuleStructure: React.FC = () => {
                   <div className="text-[10px] text-slate-400 text-right font-mono">{progress}% ocupado</div>
                 </div>
               </div>
+              {canEdit && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setEditId(dept.id); }}
+                  className="ml-auto text-[11px] font-semibold text-slate-500 hover:text-indigo-600 flex items-center gap-1"
+                >
+                  <Pencil className="w-3 h-3" /> Editar
+                </button>
+              )}
             </div>
           );
         })}
@@ -132,7 +145,17 @@ export const ModuleStructure: React.FC = () => {
         <DepartmentSummaryModal
           department={departments.find(d => d.id === summaryId)!}
           departments={departments}
+          onEdit={canEdit ? () => { setEditId(summaryId); setSummaryId(null); } : undefined}
           onClose={() => setSummaryId(null)}
+        />
+      )}
+
+      {editId && departments.some(d => d.id === editId) && (
+        <DepartmentEditModal
+          department={departments.find(d => d.id === editId)!}
+          departments={departments}
+          onSaved={loadData}
+          onClose={() => setEditId(null)}
         />
       )}
 

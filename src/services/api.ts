@@ -333,6 +333,10 @@ export const TenantApi = {
 
   // 4. Estrutura Organizacional
   getDepartments: async () => (await request<{ success: boolean; departments: Department[] }>('/api/v1/departments')).departments,
+  updateDepartment: async (id: string, payload: Record<string, unknown>) => (await request<{ success: boolean; department: Department }>(`/api/v1/departments/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).department,
   createDepartment: async (payload: Partial<Department>) => (await request<{ success: boolean; department: Department }>('/api/v1/departments', {
     method: 'POST',
     body: JSON.stringify(payload)
@@ -340,6 +344,10 @@ export const TenantApi = {
 
   // 5. Cargos
   getPositions: async () => (await request<{ success: boolean; positions: JobPosition[] }>('/api/v1/positions')).positions,
+  updatePosition: async (id: string, payload: Record<string, unknown>) => (await request<{ success: boolean; position: JobPosition }>(`/api/v1/positions/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).position,
   createPosition: async (payload: Partial<JobPosition>) => (await request<{ success: boolean; position: JobPosition }>('/api/v1/positions', {
     method: 'POST',
     body: JSON.stringify(payload)
@@ -347,6 +355,10 @@ export const TenantApi = {
 
   // 6. Vagas
   getOpenings: async () => (await request<{ success: boolean; openings: JobOpening[] }>('/api/v1/openings')).openings,
+  updateOpening: async (id: string, payload: Record<string, unknown>) => (await request<{ success: boolean; opening: JobOpening }>(`/api/v1/openings/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).opening,
   createOpening: async (payload: Partial<JobOpening>) => (await request<{ success: boolean; opening: JobOpening }>('/api/v1/openings', {
     method: 'POST',
     body: JSON.stringify(payload)
@@ -354,6 +366,10 @@ export const TenantApi = {
 
   // 7. Candidatos
   getCandidates: async () => (await request<{ success: boolean; candidates: Candidate[] }>('/api/v1/candidates')).candidates,
+  updateCandidate: async (id: string, payload: Record<string, unknown>) => (await request<{ success: boolean; candidate: Candidate }>(`/api/v1/candidates/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).candidate,
   createCandidate: async (payload: Partial<Candidate>) => (await request<{ success: boolean; candidate: Candidate }>('/api/v1/candidates', {
     method: 'POST',
     body: JSON.stringify(payload)
@@ -407,6 +423,10 @@ export const TenantApi = {
     method: 'PATCH',
     body: JSON.stringify(payload)
   })).benefit,
+  updateOffer: async (id: string, payload: Record<string, unknown>) => (await request<{ success: boolean; offer: JobOffer }>(`/api/v1/offers/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).offer,
   updateOfferStatus: async (id: string, status: JobOffer['status'], notes?: string) => (await request<{ success: boolean; offer: JobOffer }>(`/api/v1/offers/${id}/status`, {
     method: 'PATCH',
     body: JSON.stringify({ status, notes })

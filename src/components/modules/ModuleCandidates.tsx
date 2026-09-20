@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { UserCheck, Plus, Search, Mail, Phone, MapPin, Briefcase, Sparkles, Filter, Award, ArrowRight, CheckCircle2, User } from 'lucide-react';
+import { Plus, Search, Mail, MapPin, Sparkles, ArrowRight, Pencil } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { Candidate, JobOpening, AIAssistedEvaluation } from '../../types.js';
 import { ExportButton } from '../ExportButton.js';
 import { exportCandidatesToCSV, exportCandidatesToPDF } from '../../utils/exportUtils.js';
+import { useAuth } from '../../context/AuthContext.js';
 import { CandidateSummaryModal } from './EntitySummaryModals.js';
+import { CandidateEditModal } from './EntityEditModals.js';
 
 export const ModuleCandidates: React.FC<{
   onSelectCandidateForAI?: (candidateId: string, jobId?: string) => void;
@@ -20,6 +22,9 @@ export const ModuleCandidates: React.FC<{
   const [searchTerm, setSearchTerm] = useState(initialSearchTerm || '');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [summaryId, setSummaryId] = useState<string | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
+  const { user } = useAuth();
+  const canEdit = !!user?.permissions.includes('candidates:edit');
 
   useEffect(() => {
     if (initialSearchTerm !== undefined) {
@@ -286,6 +291,14 @@ export const ModuleCandidates: React.FC<{
                     <ArrowRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
                   </button>
                 )}
+                {canEdit && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setEditId(cand.id); }}
+                    className="ml-auto text-[11px] font-semibold text-slate-500 hover:text-indigo-600 flex items-center gap-1"
+                  >
+                    <Pencil className="w-3 h-3" /> Editar
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -298,7 +311,16 @@ export const ModuleCandidates: React.FC<{
           evaluations={evaluations}
           openings={openings}
           onOpenAI={onSelectCandidateForAI ? () => onSelectCandidateForAI(summaryId, openings[0]?.id) : undefined}
+          onEdit={canEdit ? () => { setEditId(summaryId); setSummaryId(null); } : undefined}
           onClose={() => setSummaryId(null)}
+        />
+      )}
+
+      {editId && candidates.some(c => c.id === editId) && (
+        <CandidateEditModal
+          candidate={candidates.find(c => c.id === editId)!}
+          onSaved={loadData}
+          onClose={() => setEditId(null)}
         />
       )}
 

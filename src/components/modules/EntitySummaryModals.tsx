@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  X, Mail, Phone, MapPin, Linkedin, GraduationCap, Sparkles, Share2, ExternalLink, ArrowRight, Clock, Users, UserCircle2
+  X, Pencil, Mail, Phone, MapPin, Linkedin, GraduationCap, Sparkles, Share2, ExternalLink, ArrowRight, Clock, Users, UserCircle2
 } from 'lucide-react';
 import { TenantApi } from '../../services/api.js';
 import {
@@ -20,9 +20,10 @@ const Shell: React.FC<{
   subtitle?: React.ReactNode;
   badge?: React.ReactNode;
   footer?: React.ReactNode;
+  onEdit?: () => void;
   onClose: () => void;
   children: React.ReactNode;
-}> = ({ kicker, title, subtitle, badge, footer, onClose, children }) => (
+}> = ({ kicker, title, subtitle, badge, footer, onEdit, onClose, children }) => (
   <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" onClick={onClose}>
     <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[92vh] flex flex-col border border-slate-200 shadow-xl" onClick={(e) => e.stopPropagation()}>
       <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-3">
@@ -40,6 +41,11 @@ const Shell: React.FC<{
       </div>
       <div className="p-5 space-y-5 text-xs overflow-y-auto">{children}</div>
       <div className="p-4 border-t border-slate-100 flex flex-wrap items-center justify-end gap-2">
+        {onEdit && (
+          <button onClick={onEdit} className="px-3 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold text-xs flex items-center gap-1.5 mr-auto">
+            <Pencil className="w-3.5 h-3.5" /> Editar
+          </button>
+        )}
         {footer}
         <button onClick={onClose} className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-medium text-xs">Fechar</button>
       </div>
@@ -98,8 +104,9 @@ const CAREER_TRACK: Record<JobPosition['careerTrack'], string> = {
 export const DepartmentSummaryModal: React.FC<{
   department: Department;
   departments: Department[];
+  onEdit?: () => void;
   onClose: () => void;
-}> = ({ department, departments, onClose }) => {
+}> = ({ department, departments, onEdit, onClose }) => {
   const users = useRelated(() => TenantApi.getUsers(), [] as TenantUser[]);
   const positions = useRelated(() => TenantApi.getPositions(), [] as JobPosition[]);
   const openings = useRelated(() => TenantApi.getOpenings(), [] as JobOpening[]);
@@ -119,6 +126,7 @@ export const DepartmentSummaryModal: React.FC<{
       kicker="Resumo do departamento"
       title={department.name}
       subtitle={<>Código <span className="font-mono">{department.code}</span> · Centro de custo <span className="font-mono">{department.costCenter}</span></>}
+      onEdit={onEdit}
       onClose={onClose}
     >
       <Section title="Capacidade de pessoal (headcount)">
@@ -179,8 +187,9 @@ export const DepartmentSummaryModal: React.FC<{
 export const PositionSummaryModal: React.FC<{
   position: JobPosition;
   department?: Department;
+  onEdit?: () => void;
   onClose: () => void;
-}> = ({ position, department, onClose }) => {
+}> = ({ position, department, onEdit, onClose }) => {
   const openings = useRelated(() => TenantApi.getOpenings(), [] as JobOpening[]);
   const related = (openings ?? []).filter(o => o.positionId === position.id);
 
@@ -190,6 +199,7 @@ export const PositionSummaryModal: React.FC<{
       title={position.title}
       subtitle={<>{department?.name || 'Área geral'} · {CAREER_TRACK[position.careerTrack] ?? position.careerTrack}</>}
       badge={<span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-800">{position.level}</span>}
+      onEdit={onEdit}
       onClose={onClose}
     >
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -235,8 +245,9 @@ export const OpeningSummaryModal: React.FC<{
   onOpenPipeline?: () => void;
   onOpenPortal?: () => void;
   onShare?: () => void;
+  onEdit?: () => void;
   onClose: () => void;
-}> = ({ job, department, position, onOpenPipeline, onOpenPortal, onShare, onClose }) => {
+}> = ({ job, department, position, onOpenPipeline, onOpenPortal, onShare, onEdit, onClose }) => {
   const users = useRelated(() => TenantApi.getUsers(), [] as TenantUser[]);
   const applications = useRelated(() => TenantApi.getApplications(), [] as SelectionApplication[]);
 
@@ -265,6 +276,7 @@ export const OpeningSummaryModal: React.FC<{
           {onOpenPipeline && <button onClick={onOpenPipeline} className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs flex items-center gap-1.5">Ver pipeline de candidatos <ArrowRight className="w-3.5 h-3.5" /></button>}
         </>
       }
+      onEdit={onEdit}
       onClose={onClose}
     >
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -336,8 +348,9 @@ export const CandidateSummaryModal: React.FC<{
   evaluations: AIAssistedEvaluation[];
   openings: JobOpening[];
   onOpenAI?: () => void;
+  onEdit?: () => void;
   onClose: () => void;
-}> = ({ candidate, evaluations, openings, onOpenAI, onClose }) => {
+}> = ({ candidate, evaluations, openings, onOpenAI, onEdit, onClose }) => {
   const applications = useRelated(() => TenantApi.getApplications(), [] as SelectionApplication[]);
   const mine = (applications ?? []).filter(a => a.candidateId === candidate.id);
   const myEvals = evaluations.filter(e => e.candidateId === candidate.id);
@@ -356,6 +369,7 @@ export const CandidateSummaryModal: React.FC<{
           <Sparkles className="w-3.5 h-3.5" /> {myEvals.length > 0 ? 'Ver avaliação com IA' : 'Avaliar com IA assistida'}
         </button>
       )}
+      onEdit={onEdit}
       onClose={onClose}
     >
       <Section title="Contato e perfil">

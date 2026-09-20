@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Gift,CheckCircle2, Send, Calendar, X, Mail, Phone, Briefcase, Rocket } from 'lucide-react';
+import { Plus, Gift, Pencil, CheckCircle2, Send, Calendar, X, Mail, Phone, Briefcase, Rocket } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { JobOffer, Candidate, JobOpening, BenefitCatalogItem, JobPosition } from '../../types.js';
 import { BenefitCatalogModal } from './BenefitCatalogModal.js';
+import { useAuth } from '../../context/AuthContext.js';
+import { OfferEditModal } from './EntityEditModals.js';
 import { formatDateSP } from '../../utils/dateUtils.js';
 
 export const ModuleOffers: React.FC = () => {
@@ -14,6 +16,11 @@ export const ModuleOffers: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
+  const [editOfferId, setEditOfferId] = useState<string | null>(null);
+  const { user } = useAuth();
+  const canEdit = !!user?.permissions.includes('offers:edit');
+  // Terms are locked once the offer has gone to the candidate
+  const isEditable = (o: JobOffer) => canEdit && ['draft', 'pending_approval', 'approved'].includes(o.status);
 
   // Form states
   const [candidateId, setCandidateId] = useState('');
@@ -186,6 +193,16 @@ export const ModuleOffers: React.FC = () => {
                     Benefícios: {offer.benefits.join(', ')}
                   </div>
                 </div>
+                {isEditable(offer) && (
+                  <div className="flex">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setEditOfferId(offer.id); }}
+                      className="ml-auto text-[11px] font-semibold text-slate-500 hover:text-indigo-600 flex items-center gap-1"
+                    >
+                      <Pencil className="w-3 h-3" /> Editar
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Status Actions */}
@@ -314,6 +331,17 @@ export const ModuleOffers: React.FC = () => {
                 </div>
               )}
 
+              {isEditable(selectedOffer) && (
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => { setEditOfferId(selectedOffer.id); setSelectedOfferId(null); }}
+                    className="px-3 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold flex items-center gap-1.5"
+                  >
+                    <Pencil className="w-3.5 h-3.5" /> Editar proposta
+                  </button>
+                </div>
+              )}
+
               {selectedOffer.status === 'accepted' && (
                 <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-start gap-2">
                   <Rocket className="w-4 h-4 shrink-0 mt-px" />
@@ -323,6 +351,15 @@ export const ModuleOffers: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {editOfferId && offers.some(o => o.id === editOfferId) && (
+        <OfferEditModal
+          offer={offers.find(o => o.id === editOfferId)!}
+          candidateName={candidates.find(c => c.id === offers.find(o => o.id === editOfferId)!.candidateId)?.name}
+          onSaved={loadData}
+          onClose={() => setEditOfferId(null)}
+        />
       )}
 
       {/* Modal */}

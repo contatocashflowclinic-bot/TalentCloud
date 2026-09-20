@@ -259,6 +259,8 @@ export const ModuleSelectionProcess: React.FC<{
             setSummaryAppId(null);
           }}
           onOpenAI={onNavigateToAI ? () => onNavigateToAI(summaryApp.candidateId, activeJob.id) : undefined}
+          organizationName={activeTenant?.name}
+          printedBy={user?.name}
           onClose={() => setSummaryAppId(null)}
         />
       )}

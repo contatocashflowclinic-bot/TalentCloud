@@ -1,9 +1,10 @@
-import React from 'react';
-import { X, Mail, Phone, MapPin, Linkedin, GraduationCap, Sparkles, ChevronRight, CalendarDays, MessageSquare, ThumbsUp, ThumbsDown } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Mail, Phone, MapPin, Linkedin, GraduationCap, Sparkles, ChevronRight, CalendarDays, MessageSquare, ThumbsUp, ThumbsDown, Printer, Share2, Copy, Check } from 'lucide-react';
 import {
   AIAssistedEvaluation, Candidate, InterviewSession, JobOpening, SelectionApplication
 } from '../../types.js';
 import { formatDateSP } from '../../utils/dateUtils.js';
+import { ApplicationSummaryData, buildPrintHtml, buildSummaryText, printHtml } from '../../utils/applicationShare.js';
 
 const RECOMMENDATION: Record<NonNullable<InterviewSession['interviewerRecommendation']>, { label: string; cls: string }> = {
   STRONG_YES: { label: 'Fortemente recomendado', cls: 'bg-emerald-100 text-emerald-800' },
@@ -57,13 +58,18 @@ interface Props {
   canAdvance: boolean;
   onAdvance: () => void;
   onOpenAI?: () => void;
+  /** Name of the organization and of the person printing, shown on the printed page. */
+  organizationName?: string;
+  printedBy?: string;
   onClose: () => void;
 }
 
 /** Quick analysis of a candidate on the pipeline, before moving them to the next stage. */
 export const ApplicationSummaryModal: React.FC<Props> = ({
-  application, candidate, job, evaluation, interviews, canAdvance, onAdvance, onOpenAI, onClose
+  application, candidate, job, evaluation, interviews, canAdvance, onAdvance, onOpenAI, organizationName, printedBy, onClose
 }) => {
+  const [shareOpen, setShareOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const stages = [...job.stages].sort((a, b) => a.order - b.order);
   const stageIdx = stages.findIndex(s => s.id === application.currentStageId);
   const nextStage = stageIdx >= 0 ? stages[stageIdx + 1] : undefined;
@@ -71,6 +77,29 @@ export const ApplicationSummaryModal: React.FC<Props> = ({
 
   const avgScore = (i: InterviewSession) =>
     i.scorecard.length ? i.scorecard.reduce((sum, c) => sum + c.score, 0) / i.scorecard.length : null;
+
+  const data: ApplicationSummaryData = { organization: organizationName, candidate, job, application, evaluation, interviews };
+  const shareTitle = `Resumo — ${candidate?.name ?? 'Candidato'} — ${job.title}`;
+
+  const handlePrint = () => {
+    try {
+      printHtml(buildPrintHtml(data, printedBy));
+    } catch (err: any) {
+      alert(err.message || 'Não foi possível imprimir.');
+    }
+  };
+
+  const copySummary = async () => {
+    try {
+      await navigator.clipboard.writeText(buildSummaryText(data));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      alert('Não foi possível copiar automaticamente. Use a opção de e-mail ou WhatsApp.');
+    }
+  };
+
+  const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" onClick={onClose}>
@@ -221,11 +250,48 @@ export const ApplicationSummaryModal: React.FC<Props> = ({
 
         {/* Actions */}
         <div className="p-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
-          {onOpenAI ? (
-            <button onClick={onOpenAI} className="px-3 py-2 rounded-xl border border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-semibold text-xs flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5" /> {evaluation ? 'Ver análise IA completa' : 'Avaliar com IA'}
+          <div className="flex flex-wrap items-center gap-2 relative">
+            {onOpenAI && (
+              <button onClick={onOpenAI} className="px-3 py-2 rounded-xl border border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-semibold text-xs flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" /> {evaluation ? 'Ver análise IA completa' : 'Avaliar com IA'}
+              </button>
+            )}
+            <button onClick={handlePrint} className="px-3 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold text-xs flex items-center gap-1.5">
+              <Printer className="w-3.5 h-3.5" /> Imprimir
             </button>
-          ) : <span />}
+            <button onClick={() => setShareOpen(o => !o)} aria-expanded={shareOpen} className="px-3 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-50 font-semibold text-xs flex items-center gap-1.5">
+              <Share2 className="w-3.5 h-3.5" /> Compartilhar
+            </button>
+            {shareOpen && (
+              <div className="absolute bottom-full mb-2 left-0 w-64 rounded-xl border border-slate-200 bg-white shadow-lg p-1.5 z-10 text-xs">
+                <button onClick={copySummary} className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 flex items-center gap-2">
+                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5 text-slate-400" />} {copied ? 'Resumo copiado!' : 'Copiar resumo'}
+                </button>
+                <a
+                  href={`mailto:?subject=${encodeURIComponent(shareTitle)}&body=${encodeURIComponent(buildSummaryText(data))}`}
+                  className="block px-3 py-2 rounded-lg hover:bg-slate-50 text-slate-700"
+                >
+                  Enviar por e-mail
+                </a>
+                <a
+                  href={`https://wa.me/?text=${encodeURIComponent(buildSummaryText(data))}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block px-3 py-2 rounded-lg hover:bg-slate-50 text-slate-700"
+                >
+                  Enviar pelo WhatsApp
+                </a>
+                {canNativeShare && (
+                  <button onClick={() => { void navigator.share({ title: shareTitle, text: buildSummaryText(data) }).catch(() => {}); }} className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-50 text-slate-700">
+                    Compartilhar pelo dispositivo…
+                  </button>
+                )}
+                <p className="px-3 pt-1.5 pb-1 text-[10px] text-slate-400 leading-snug border-t border-slate-100 mt-1">
+                  O resumo compartilhado não inclui telefone, e-mail nem LinkedIn do candidato.
+                </p>
+              </div>
+            )}
+          </div>
           <div className="flex items-center gap-2">
             <button onClick={onClose} className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-medium text-xs">Fechar</button>
             {canAdvance && nextStage && (

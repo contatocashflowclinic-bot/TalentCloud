@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Layers, Plus, Clock, MapPin, Users, Calendar, CheckCircle2, Share2, Globe, ExternalLink, ArrowRight, GitBranch } from 'lucide-react';
+import { Layers, Plus, Clock, MapPin, Share2, Globe, ExternalLink, ArrowRight, GitBranch, Pencil } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { JobOpening, JobPosition, Department, OrganizationalDNA } from '../../types.js';
 import { JobSocialShareModal } from '../careers/JobSocialShareModal.js';
+import { useAuth } from '../../context/AuthContext.js';
 import { OpeningSummaryModal } from './EntitySummaryModals.js';
+import { OpeningEditModal } from './EntityEditModals.js';
 
 export const ModuleOpenings: React.FC<{
   onNavigateToProcess?: (jobId: string) => void;
@@ -18,6 +20,9 @@ export const ModuleOpenings: React.FC<{
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [summaryId, setSummaryId] = useState<string | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
+  const { user } = useAuth();
+  const canEdit = !!user?.permissions.includes('openings:edit');
 
   // Social Share Modal state
   const [shareJob, setShareJob] = useState<JobOpening | null>(null);
@@ -231,6 +236,14 @@ export const ModuleOpenings: React.FC<{
                     <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 )}
+                {canEdit && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setEditId(job.id); }}
+                    className="ml-auto text-[11px] font-semibold text-slate-500 hover:text-indigo-600 flex items-center gap-1"
+                  >
+                    <Pencil className="w-3 h-3" /> Editar
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -247,10 +260,21 @@ export const ModuleOpenings: React.FC<{
             onOpenPipeline={onNavigateToProcess ? () => onNavigateToProcess(job.id) : undefined}
             onOpenPortal={onNavigateToCareersPortal ? () => onNavigateToCareersPortal(job.id) : undefined}
             onShare={() => { setSummaryId(null); handleOpenShareModal(job); }}
+            onEdit={canEdit ? () => { setEditId(job.id); setSummaryId(null); } : undefined}
             onClose={() => setSummaryId(null)}
           />
         );
       })()}
+
+      {editId && openings.some(j => j.id === editId) && (
+        <OpeningEditModal
+          job={openings.find(j => j.id === editId)!}
+          departments={departments}
+          positions={positions}
+          onSaved={loadData}
+          onClose={() => setEditId(null)}
+        />
+      )}
 
       {/* Modal */}
       {isModalOpen && (

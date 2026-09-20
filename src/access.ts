@@ -30,10 +30,10 @@ export const ROUTINES: Routine[] = [
   { key: 'users', label: 'Usuários', description: 'Vínculos de usuários com a organização, perfil, status e senha temporária.', moduleId: 2, actions: ['view', 'create', 'edit'] },
   { key: 'profiles', label: 'Perfis de acesso', description: 'Perfis e as permissões liberadas por rotina.', moduleId: 2, actions: ['view', 'create', 'edit', 'delete'] },
   { key: 'dna', label: 'DNA Organizacional', description: 'Missão, visão, valores e pilares culturais.', moduleId: 3, actions: ['view', 'edit'] },
-  { key: 'structure', label: 'Estrutura Organizacional', description: 'Departamentos e centros de custo.', moduleId: 4, actions: ['view', 'create'] },
-  { key: 'positions', label: 'Cargos', description: 'Cargos, competências e faixas salariais.', moduleId: 5, actions: ['view', 'create'] },
-  { key: 'openings', label: 'Vagas', description: 'Abertura de vagas e pipeline.', moduleId: 6, actions: ['view', 'create'] },
-  { key: 'candidates', label: 'Candidatos', description: 'Banco de talentos.', moduleId: 7, actions: ['view', 'create'] },
+  { key: 'structure', label: 'Estrutura Organizacional', description: 'Departamentos e centros de custo.', moduleId: 4, actions: ['view', 'create', 'edit'] },
+  { key: 'positions', label: 'Cargos', description: 'Cargos, competências e faixas salariais.', moduleId: 5, actions: ['view', 'create', 'edit'] },
+  { key: 'openings', label: 'Vagas', description: 'Abertura de vagas e pipeline.', moduleId: 6, actions: ['view', 'create', 'edit'] },
+  { key: 'candidates', label: 'Candidatos', description: 'Banco de talentos.', moduleId: 7, actions: ['view', 'create', 'edit'] },
   { key: 'selection', label: 'Processo Seletivo', description: 'Candidaturas e movimentação entre etapas.', moduleId: 8, actions: ['view', 'create', 'edit'] },
   { key: 'ai_evaluation', label: 'Avaliação por IA', description: 'Avaliações assistidas por IA e decisão humana final.', moduleId: 9, actions: ['view', 'create', 'edit'] },
   { key: 'interviews', label: 'Entrevistas', description: 'Agendamento e preenchimento de scorecards.', moduleId: 10, actions: ['view', 'create', 'edit'] },
@@ -154,7 +154,7 @@ export const DEFAULT_PROFILES: DefaultProfile[] = [
     description: 'Conduz vagas, candidatos, processo seletivo, entrevistas e propostas.',
     isAdmin: false,
     permissions: normalizePermissions([
-      ...BASE_VIEW, 'users:view', 'openings:create', 'candidates:create', 'selection:create', 'selection:edit',
+      ...BASE_VIEW, 'users:view', 'openings:create', 'openings:edit', 'candidates:create', 'candidates:edit', 'selection:create', 'selection:edit',
       'ai_evaluation:create', 'ai_evaluation:edit', 'interviews:create', 'interviews:edit', 'offers:create',
       'offers:edit', 'onboarding:edit', 'development:edit', 'retention:edit', 'indicators:view'
     ]).permissions
