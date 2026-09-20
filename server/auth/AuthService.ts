@@ -5,13 +5,15 @@ import { sessionCache } from '../cache.js';
 import { logAudit } from '../audit.js';
 import { AccessService } from './AccessService.js';
 import { getPool, Queryable, withTransaction } from '../db/pool.js';
-import { ForbiddenError, NotFoundError, TooManyRequestsError, UnauthorizedError, ValidationError } from '../errors.js';
+import { ForbiddenError, NotFoundError, UnauthorizedError, ValidationError } from '../errors.js';
+import { FailureLimiter, purgeStaleRateLimits } from '../rateLimit.js';
+import { isProduction } from '../runtime.js';
 import { dummyVerify, generateTempPassword, hashPassword, verifyPassword } from './password.js';
 
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const TOUCH_INTERVAL_MS = 60_000;
 const MAX_FAILED_ATTEMPTS = 5;
-const LOCK_MS = 15 * 60 * 1000;
+const LOCK_SECONDS = 15 * 60;
 
 const DEFAULT_ADMIN = {
   id: 'super-01',
@@ -27,34 +29,14 @@ export interface AuthenticatedSession extends AuthUser {
 const sha256 = (v: string) => createHash('sha256').update(v).digest('hex');
 const normEmail = (v: unknown) => String(v ?? '').trim().toLowerCase();
 
-/** In-memory brute-force guard: MAX_FAILED_ATTEMPTS failures per (ip, email) lock for LOCK_MS. */
-class LoginLimiter {
-  private entries = new Map<string, { fails: number; lockedUntil: number }>();
-
-  assertAllowed(key: string) {
-    const e = this.entries.get(key);
-    if (e && e.lockedUntil > Date.now()) {
-      const minutes = Math.ceil((e.lockedUntil - Date.now()) / 60_000);
-      throw new TooManyRequestsError(`Muitas tentativas de login. Tente novamente em ${minutes} minuto(s).`);
-    }
-  }
-
-  fail(key: string) {
-    const e = this.entries.get(key) ?? { fails: 0, lockedUntil: 0 };
-    e.fails = e.lockedUntil && e.lockedUntil <= Date.now() ? 1 : e.fails + 1;
-    if (e.fails >= MAX_FAILED_ATTEMPTS) e.lockedUntil = Date.now() + LOCK_MS;
-    this.entries.set(key, e);
-    if (this.entries.size > 10_000) this.entries.clear(); // bound memory
-  }
-
-  reset(key: string) {
-    this.entries.delete(key);
-  }
-}
-
 export class AuthService {
   private static instance: AuthService;
-  private limiter = new LoginLimiter();
+  /** Brute-force guard: MAX_FAILED_ATTEMPTS failures per (ip, organization, e-mail) lock the key for 15 min. Stored in the database (shared by every instance). */
+  private limiter = new FailureLimiter('login', {
+    maxFailures: MAX_FAILED_ATTEMPTS,
+    windowSeconds: LOCK_SECONDS,
+    lockSeconds: LOCK_SECONDS
+  });
   private lastTouch = new Map<string, number>();
 
   static getInstance() {
@@ -87,14 +69,30 @@ export class AuthService {
       };
     }
 
+    // The built-in password is public (it is in the README): never create that account on an internet-facing deployment.
+    const chosenByOperator = Boolean(process.env.SUPERADMIN_PASSWORD);
+    if (isProduction() && !chosenByOperator) {
+      console.error(
+        '[TalentCloud Core] Nenhum SuperAdmin cadastrado e SUPERADMIN_PASSWORD não definida: em produção a conta ' +
+        'padrão (senha pública) NÃO é criada. Defina SUPERADMIN_EMAIL/SUPERADMIN_PASSWORD e reinicie, ou rode "npm run admin:password".'
+      );
+      return { created: false, email, usingDefaultPassword: false };
+    }
+    if (chosenByOperator) {
+      const policy = passwordPolicyError(password);
+      if (policy) throw new Error(`SUPERADMIN_PASSWORD inválida: ${policy}`);
+    }
+
     const hash = await hashPassword(password);
     await pool.query(
-      `insert into public.platform_admins (id, name, email, active, password_hash)
-       values ($1, $2, $3, true, $4)
-       on conflict (id) do update set email = excluded.email, password_hash = excluded.password_hash, active = true`,
-      [DEFAULT_ADMIN.id, name, email, hash]
+      `insert into public.platform_admins (id, name, email, active, password_hash, password_changed_at)
+       values ($1, $2, $3, true, $4, $5)
+       on conflict (id) do update set email = excluded.email, password_hash = excluded.password_hash, active = true,
+                                      password_changed_at = excluded.password_changed_at`,
+      // A password picked by the operator counts as already "changed" (only the built-in default is flagged)
+      [DEFAULT_ADMIN.id, name, email, hash, chosenByOperator ? new Date() : null]
     );
-    return { created: true, email, usingDefaultPassword: !process.env.SUPERADMIN_PASSWORD };
+    return { created: true, email, usingDefaultPassword: !chosenByOperator };
   }
 
   // -------------------------------------------------------------------
@@ -109,8 +107,8 @@ export class AuthService {
     const slug = typeof input.tenantSlug === 'string' ? input.tenantSlug.trim().toLowerCase() : '';
     if (!email || !password) throw new ValidationError('Informe e-mail e senha.');
 
-    const key = `${ip}|${slug}|${email}`;
-    this.limiter.assertAllowed(key);
+    const key = this.limiter.key(ip, slug, email);
+    await this.limiter.assertAllowed(key);
 
     const superAdmin = slug ? undefined : await this.findSuperAdmin(email);
     const identity = superAdmin ? undefined : await this.findIdentity(email, slug);
@@ -118,7 +116,7 @@ export class AuthService {
     const valid = found ? await verifyPassword(password, found.passwordHash) : (await dummyVerify(), false);
 
     if (!found || !valid) {
-      this.limiter.fail(key);
+      await this.limiter.fail(key);
       await logAudit({
         tenantId: '',
         userId: found?.id ?? 'unknown',
@@ -134,6 +132,14 @@ export class AuthService {
 
     // Credentials are right; now enforce account / organization state.
     if (!found.active) throw new ForbiddenError('Usuário desativado. Procure o administrador.');
+    // The install-time password is public knowledge: on an internet-facing deployment it must be replaced before
+    // the Conta Mãe can be used, otherwise whoever reads the README could take over the platform.
+    if (superAdmin && isProduction() && superAdmin.passwordChangedAt === null) {
+      throw new ForbiddenError(
+        'A Conta Mãe ainda usa a senha padrão de instalação e, por segurança, o acesso em produção está bloqueado. ' +
+        'Defina uma senha própria com "npm run admin:password" (veja docs/deploy-vercel.md).'
+      );
+    }
 
     // SuperAdmin has no organization; a person may be linked to several: enter the most recently used usable one.
     let link: OrgLink | undefined;
@@ -152,7 +158,8 @@ export class AuthService {
       link = usable.sort((a, b) => (b.lastLoginAt ?? '').localeCompare(a.lastLoginAt ?? ''))[0];
     }
 
-    this.limiter.reset(key);
+    await this.limiter.reset(key);
+    await purgeStaleRateLimits().catch(() => undefined);
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
     await withTransaction(async tx => {
@@ -393,7 +400,8 @@ export class AuthService {
       id: r.id as string,
       name: r.name as string,
       passwordHash: r.password_hash as string | null,
-      active: r.active as boolean
+      active: r.active as boolean,
+      passwordChangedAt: (r.password_changed_at ?? null) as string | null
     };
   }
 

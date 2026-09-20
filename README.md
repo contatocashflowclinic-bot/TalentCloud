@@ -1,23 +1,32 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# TalentCloud — SaaS multi-organização de gestão de talentos
 
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/12c5decc-12fe-4b37-8569-db4955466d38
+React + Vite (site), Express (API) e Supabase (Postgres + Storage). Roda localmente com `npm run dev` e é publicado na
+**Vercel**: o site na CDN e a API como uma *Vercel Function*. **Guia de publicação e validação: [docs/deploy-vercel.md](docs/deploy-vercel.md).**
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
+**Prerequisites:** Node.js 24 (`engines` in package.json) and a Supabase project.
 
+1. Install dependencies: `npm install`
+2. Copy `.env.example` to `.env.local` and fill it in (at least `SUPABASE_DB_URL`; `GEMINI_API_KEY` is optional)
+3. Apply the schema: `npm run db -- migrate`
+4. Run the app: `npm run dev` (http://localhost:3000)
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+| Script | What it does |
+| --- | --- |
+| `npm run dev` | Local server: API + Vite dev middleware (`server/main.ts`) |
+| `npm run build:web` | Builds only the site into `dist/` (what Vercel runs) |
+| `npm run build` | Site + compiled server bundle (`dist-server/server.cjs`) for self-hosting |
+| `npm start` | Runs the compiled bundle (self-hosting; serves `dist/` and the API) |
+| `npm run lint` | Type-check (`tsc --noEmit`) |
+| `npm run admin:password` | Sets the SuperAdmin (Conta Mãe) password; required before going live |
+
+### Code layout
+
+- `src/` — React app (each screen is lazy-loaded).
+- `server/app.ts` — the Express app (`createApp`), with no listener; `server/main.ts` runs it locally, `api/index.ts` runs it on Vercel.
+- `server/db/`, `server/tenant/`, `server/auth/` — data access, multi-tenancy, authentication/RBAC. `server/rateLimit.ts` — limits stored in Postgres.
+- `supabase/migrations/` — the schema (apply with `npm run db -- migrate`). `scripts/` — db, seed, smoke test, admin tools.
 
 ## Database (Supabase / Postgres)
 
@@ -30,7 +39,7 @@ and provisions client organizations through `/api/master/*`.
 
 1. Set `SUPABASE_DB_URL` in `.env.local` (see `.env.example`).
 2. Apply the schema: `npm run db -- migrate` (migrations live in `supabase/migrations/`).
-3. Load the demo organizations (idempotent): `npm run db:seed`
+3. (Local/demo only) Load the demo organizations (idempotent): `npm run db:seed`. **Do not run it on a production database.**
 4. Run the app: `npm run dev`
 
 | Command | What it does |
@@ -39,7 +48,7 @@ and provisions client organizations through `/api/master/*`.
 | `npm run db -- migrate` | Apply pending migrations (one transaction per file) |
 | `npm run db -- status` | Show applied/pending migrations |
 | `npm run db -- query "<sql>"` | Run a maintenance query |
-| `npm run db:seed` | Create the demo organizations if missing |
+| `npm run db:seed` | Create the demo organizations if missing (local/demo only) |
 | `npm run test:smoke` | End-to-end check against a running server (`BASE_URL`, default `http://localhost:3000`); creates and removes temporary orgs |
 
 ## Authentication & access
@@ -47,6 +56,8 @@ and provisions client organizations through `/api/master/*`.
 - **SuperAdmin (Conta Mãe)** is created automatically on first start (or `npm run db:seed`):
   `admin@admin.com.br` / `Admin@123` (override with `SUPERADMIN_EMAIL` / `SUPERADMIN_PASSWORD`).
   **Change the password after the first login**; a banner and a server warning remind you until you do.
+  In **production** (Vercel / `NODE_ENV=production`) that default account is never created, and an existing one that still
+  has the default password cannot log in until you run `npm run admin:password`.
 - The SuperAdmin creates client organizations (`Criar Organização`); the initial organization admin receives a
   **one-time temporary password** and must replace it on first access. Org admins create users the same way.
   The SuperAdmin can also issue a new temporary password to an organization admin (key icon in the console).
@@ -61,7 +72,7 @@ and provisions client organizations through `/api/master/*`.
 - The **Conta Mãe has its own environment** (Visão geral, Organizações, Auditoria) and no route into organization
   data: `/api/v1/*` refuses it. Manual validation guides: `docs/validacao-*.md`.
 - Login: e-mail + password (organization identifier is optional). Passwords are stored as scrypt
-  hashes, sessions are random tokens stored only as SHA-256 (revocable, 12h), repeated failures lock for 15 min.
+  hashes, sessions are random tokens stored only as SHA-256 (revocable, 12h), repeated failures lock for 15 min (counters live in the `rate_limits` table, so they hold across serverless instances).
 - **Users, organizations and permissions (RBAC)**:
   - A person is ONE global identity (`app_users`: e-mail + password) **linked** to one or more organizations
     (`tenant_users`, one row per link). Giving one person access to a SECOND organization is a Conta Mãe-only action

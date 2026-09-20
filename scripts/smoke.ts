@@ -1,6 +1,6 @@
 /**
  * End-to-end smoke test against a RUNNING server and the real database.
- *   npm run dev                       (or PORT=3100 tsx server.ts)
+ *   npm run dev                       (or PORT=3100 npm run dev)
  *   BASE_URL=http://localhost:3000 npm run test:smoke
  *
  * Covers: SuperAdmin login, organization provisioning + temporary passwords, forced password

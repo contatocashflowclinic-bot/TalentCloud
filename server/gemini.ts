@@ -32,7 +32,7 @@ export async function evaluateCandidateWithAI(params: {
   const { candidate, job, position, dna } = params;
   const client = getGeminiClient();
 
-  // If Gemini API is available, invoke gemini-3.8-flash with structured prompt
+  // If Gemini API is available, invoke the model (GEMINI_MODEL, default gemini-3.8-flash) with a structured prompt
   if (client) {
     try {
       const prompt = `
@@ -71,7 +71,7 @@ Retorne um JSON com a avaliação honesta, construtiva e fundamentada.
 `;
 
       const response = await client.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
         contents: prompt,
         config: {
           systemInstruction: 'Você é um especialista em People Analytics e psicometria organizacional que avalia candidatos com rigor, transparência explicável e foco em apoiar a decisão humana sem viés.',

@@ -1,11 +1,10 @@
 import React, { useRef, useState } from 'react';
 import { Download, FileText, Trash2, Upload } from 'lucide-react';
 import { TenantApi } from '../../services/api.js';
-import { JobOffer, MAX_OFFER_DOCUMENTS, OFFER_DOCUMENT_CATEGORIES, OfferDocument, OfferDocumentCategory } from '../../types.js';
+import { JobOffer, MAX_OFFER_DOCUMENTS, MAX_UPLOAD_BYTES, MAX_UPLOAD_MB, OFFER_DOCUMENT_CATEGORIES, OfferDocument, OfferDocumentCategory } from '../../types.js';
 import { formatDateSP } from '../../utils/dateUtils.js';
 import { ConfirmDialog } from '../ConfirmDialog.js';
 
-const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const ACCEPTED_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
 
 const formatSize = (bytes: number) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
@@ -42,7 +41,7 @@ export const OfferDocuments: React.FC<Props> = ({ offer, canEdit, onChanged }) =
     e.target.value = '';
     if (!file) return;
     if (!ACCEPTED_TYPES.includes(file.type)) return setError('Formato não permitido. Envie PDF, JPG ou PNG.');
-    if (file.size > MAX_FILE_BYTES) return setError('Arquivo maior que o limite de 8 MB.');
+    if (file.size > MAX_UPLOAD_BYTES) return setError(`Arquivo maior que o limite de ${MAX_UPLOAD_MB} MB.`);
     try {
       setUploading(true);
       setError('');
@@ -158,7 +157,7 @@ export const OfferDocuments: React.FC<Props> = ({ offer, canEdit, onChanged }) =
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="text-[11px] text-slate-400">
-              {limitReached ? `Limite de ${MAX_OFFER_DOCUMENTS} documentos atingido.` : 'PDF, JPG ou PNG · até 8 MB'}
+              {limitReached ? `Limite de ${MAX_OFFER_DOCUMENTS} documentos atingido.` : `PDF, JPG ou PNG · até ${MAX_UPLOAD_MB} MB`}
             </span>
             <button
               onClick={() => fileInput.current?.click()}

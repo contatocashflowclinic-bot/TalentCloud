@@ -2,7 +2,7 @@ import React, { useRef, useState } from 'react';
 import { X, Upload, Download, Check, XCircle, RotateCcw, Plus, History, AlertTriangle, FileText, ClipboardList, Trash2, ListChecks } from 'lucide-react';
 import { TenantApi } from '../../services/api.js';
 import {
-  ADMISSION_CATEGORIES, ADMISSION_RESPONSIBLES, AdmissionItem, AdmissionStatus, AdmissionTemplate, OnboardingJourney
+  ADMISSION_CATEGORIES, ADMISSION_RESPONSIBLES, AdmissionItem, AdmissionStatus, AdmissionTemplate, MAX_UPLOAD_BYTES, MAX_UPLOAD_MB, OnboardingJourney
 } from '../../types.js';
 import { formatDateSP } from '../../utils/dateUtils.js';
 import { useBackdropClose } from '../../hooks/useBackdropClose.js';
@@ -71,7 +71,7 @@ export const AdmissionModal: React.FC<Props> = ({ journey, canEdit, onUpdated, o
     const itemId = uploadTarget.current;
     e.target.value = '';
     if (!file || !itemId) return;
-    if (file.size > 8 * 1024 * 1024) return alert('Arquivo maior que o limite de 8 MB.');
+    if (file.size > MAX_UPLOAD_BYTES) return alert(`Arquivo maior que o limite de ${MAX_UPLOAD_MB} MB.`);
     void run(itemId, () => TenantApi.uploadAdmissionFile(journey.id, itemId, file));
   };
 

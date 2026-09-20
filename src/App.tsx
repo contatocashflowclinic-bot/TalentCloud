@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, lazy, useState, useEffect } from 'react';
 import { TenantProvider, useTenant } from './context/TenantContext.js';
 import { AuthProvider, useAuth } from './context/AuthContext.js';
 import { LoginPage } from './components/auth/LoginPage.js';
@@ -6,28 +6,34 @@ import { OrganizationPickerPage } from './components/auth/OrganizationPickerPage
 import { ChangePasswordModal } from './components/auth/ChangePasswordModal.js';
 import { canAccessModule } from './access.js';
 import { ShieldAlert } from 'lucide-react';
-import { PlatformLayout } from './components/platform/PlatformLayout.js';
 import { Header } from './components/Header.js';
 import { Sidebar } from './components/Sidebar.js';
-import { CareersPortalPage } from './components/careers/CareersPortalPage.js';
 
-// Feature Modules 1 to 15
-import { ModuleWelcome } from './components/modules/ModuleWelcome.js';
-import { ModuleAgenda } from './components/modules/ModuleAgenda.js';
-import { ModuleUsers } from './components/modules/ModuleUsers.js';
-import { ModuleDNA } from './components/modules/ModuleDNA.js';
-import { ModuleStructure } from './components/modules/ModuleStructure.js';
-import { ModulePositions } from './components/modules/ModulePositions.js';
-import { ModuleOpenings } from './components/modules/ModuleOpenings.js';
-import { ModuleCandidates } from './components/modules/ModuleCandidates.js';
-import { ModuleSelectionProcess } from './components/modules/ModuleSelectionProcess.js';
-import { ModuleAIEvaluation } from './components/modules/ModuleAIEvaluation.js';
-import { ModuleInterviews } from './components/modules/ModuleInterviews.js';
-import { ModuleOffers } from './components/modules/ModuleOffers.js';
-import { ModuleOnboarding } from './components/modules/ModuleOnboarding.js';
-import { ModuleDevelopment } from './components/modules/ModuleDevelopment.js';
-import { ModuleRetention } from './components/modules/ModuleRetention.js';
-import { ModuleIndicators } from './components/modules/ModuleIndicators.js';
+// Each screen is its own chunk: the browser only downloads the modules (and heavy libs such as charts / PDF) that are opened.
+const PlatformLayout = lazy(() => import('./components/platform/PlatformLayout.js').then(m => ({ default: m.PlatformLayout })));
+const CareersPortalPage = lazy(() => import('./components/careers/CareersPortalPage.js').then(m => ({ default: m.CareersPortalPage })));
+
+// Feature Modules 1 to 15 (+ Agenda)
+const ModuleWelcome = lazy(() => import('./components/modules/ModuleWelcome.js').then(m => ({ default: m.ModuleWelcome })));
+const ModuleAgenda = lazy(() => import('./components/modules/ModuleAgenda.js').then(m => ({ default: m.ModuleAgenda })));
+const ModuleUsers = lazy(() => import('./components/modules/ModuleUsers.js').then(m => ({ default: m.ModuleUsers })));
+const ModuleDNA = lazy(() => import('./components/modules/ModuleDNA.js').then(m => ({ default: m.ModuleDNA })));
+const ModuleStructure = lazy(() => import('./components/modules/ModuleStructure.js').then(m => ({ default: m.ModuleStructure })));
+const ModulePositions = lazy(() => import('./components/modules/ModulePositions.js').then(m => ({ default: m.ModulePositions })));
+const ModuleOpenings = lazy(() => import('./components/modules/ModuleOpenings.js').then(m => ({ default: m.ModuleOpenings })));
+const ModuleCandidates = lazy(() => import('./components/modules/ModuleCandidates.js').then(m => ({ default: m.ModuleCandidates })));
+const ModuleSelectionProcess = lazy(() => import('./components/modules/ModuleSelectionProcess.js').then(m => ({ default: m.ModuleSelectionProcess })));
+const ModuleAIEvaluation = lazy(() => import('./components/modules/ModuleAIEvaluation.js').then(m => ({ default: m.ModuleAIEvaluation })));
+const ModuleInterviews = lazy(() => import('./components/modules/ModuleInterviews.js').then(m => ({ default: m.ModuleInterviews })));
+const ModuleOffers = lazy(() => import('./components/modules/ModuleOffers.js').then(m => ({ default: m.ModuleOffers })));
+const ModuleOnboarding = lazy(() => import('./components/modules/ModuleOnboarding.js').then(m => ({ default: m.ModuleOnboarding })));
+const ModuleDevelopment = lazy(() => import('./components/modules/ModuleDevelopment.js').then(m => ({ default: m.ModuleDevelopment })));
+const ModuleRetention = lazy(() => import('./components/modules/ModuleRetention.js').then(m => ({ default: m.ModuleRetention })));
+const ModuleIndicators = lazy(() => import('./components/modules/ModuleIndicators.js').then(m => ({ default: m.ModuleIndicators })));
+
+const ScreenFallback: React.FC = () => (
+  <div className="flex items-center justify-center h-64 text-slate-400 text-xs animate-pulse">Carregando...</div>
+);
 
 const MainLayout: React.FC = () => {
   const { activeTenant, isLoading, permissions } = useTenant();
@@ -98,14 +104,16 @@ const MainLayout: React.FC = () => {
 
   if (isCareersView) {
     return (
-      <CareersPortalPage
-        tenantSlug={careersSlugFromUrl || activeTenant?.slug || ''}
-        onBackToAdmin={() => {
-          setIsCareersView(false);
-          setActiveModule(6); // return to Openings module
-        }}
-        initialJobId={targetJobId}
-      />
+      <Suspense fallback={<ScreenFallback />}>
+        <CareersPortalPage
+          tenantSlug={careersSlugFromUrl || activeTenant?.slug || ''}
+          onBackToAdmin={() => {
+            setIsCareersView(false);
+            setActiveModule(6); // return to Openings module
+          }}
+          initialJobId={targetJobId}
+        />
+      </Suspense>
     );
   }
 
@@ -156,7 +164,7 @@ const MainLayout: React.FC = () => {
               <div className="text-xs">Solicite ao administrador da organização, se necessário.</div>
             </div>
           ) : (
-            <>
+            <Suspense fallback={<ScreenFallback />}>
               {activeModule === 1 && <ModuleWelcome onNavigate={handleSelectModule} />}
               {activeModule === 2 && <ModuleUsers />}
               {activeModule === 3 && <ModuleDNA />}
@@ -197,7 +205,7 @@ const MainLayout: React.FC = () => {
               {activeModule === 14 && <ModuleRetention />}
               {activeModule === 15 && <ModuleIndicators />}
               {activeModule === 17 && <ModuleAgenda />}
-            </>
+            </Suspense>
           )}
         </main>
       </div>
@@ -225,7 +233,11 @@ function Gate() {
   const slug = publicCareersSlug();
 
   if (!user && slug) {
-    return <CareersPortalPage tenantSlug={slug} initialJobId={new URLSearchParams(window.location.search).get('job') || undefined} />;
+    return (
+      <Suspense fallback={<ScreenFallback />}>
+        <CareersPortalPage tenantSlug={slug} initialJobId={new URLSearchParams(window.location.search).get('job') || undefined} />
+      </Suspense>
+    );
   }
   if (!isReady) {
     return <div className="min-h-screen flex items-center justify-center text-slate-400 text-xs animate-pulse">Validando sessão...</div>;
@@ -242,7 +254,9 @@ function Gate() {
   // Conta Mãe gets its own environment (platform routines only); organization users get the workspace
   return (
     <TenantProvider>
-      {user.type === 'super_admin' ? <PlatformLayout /> : <MainLayout />}
+      <Suspense fallback={<ScreenFallback />}>
+        {user.type === 'super_admin' ? <PlatformLayout /> : <MainLayout />}
+      </Suspense>
     </TenantProvider>
   );
 }

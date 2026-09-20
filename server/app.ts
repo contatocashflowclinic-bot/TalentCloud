@@ -1,35 +1,28 @@
 import express, { Request, Response, NextFunction, RequestHandler } from 'express';
-import path from 'path';
-import { createServer as createViteServer } from 'vite';
-import dotenv from 'dotenv';
-
-// Load env BEFORE anything reads process.env (.env.local takes precedence over .env)
-dotenv.config({ path: ['.env.local', '.env'], quiet: true });
-
-import { TenantConnectionRouter, TenantConnectionContext } from './server/tenant/TenantConnectionRouter.js';
-import { evaluateCandidateWithAI } from './server/gemini.js';
-import { closePool, getPool } from './server/db/pool.js';
-import { newId } from './server/ids.js';
-import { AppError, ConflictError, ForbiddenError, NotFoundError, ValidationError, toHttpError } from './server/errors.js';
-import { ALL_PERMISSIONS } from './src/access.js';
-import { sessionCache } from './server/cache.js';
-import { AuthService } from './server/auth/AuthService.js';
-import { can, authenticate, requirePasswordChanged, requireSuperAdmin } from './server/auth/middleware.js';
-import { AccessService } from './server/auth/AccessService.js';
-import { logAudit } from './server/audit.js';
+import { TenantConnectionRouter, TenantConnectionContext } from './tenant/TenantConnectionRouter.js';
+import { evaluateCandidateWithAI } from './gemini.js';
+import { getPool } from './db/pool.js';
+import { newId } from './ids.js';
+import { AppError, ConflictError, ForbiddenError, NotFoundError, ValidationError, toHttpError } from './errors.js';
+import { ALL_PERMISSIONS } from '../src/access.js';
+import { sessionCache } from './cache.js';
+import { AuthService } from './auth/AuthService.js';
+import { can, authenticate, requirePasswordChanged, requireSuperAdmin } from './auth/middleware.js';
+import { AccessService } from './auth/AccessService.js';
+import { logAudit } from './audit.js';
 import type { PoolClient } from 'pg';
-import { registerPublicApi } from './server/publicApi.js';
-import { actorOf } from './server/tenant/TenantConnectionRouter.js';
-import { withTransaction } from './server/db/pool.js';
-import { assertValidFile, getFile, putFile, removeFile, safeFileName } from './server/storage.js';
-import { reviewItem, type AdmissionAction } from './server/tenant/admission.js';
+import { registerPublicApi } from './publicApi.js';
+import { actorOf } from './tenant/TenantConnectionRouter.js';
+import { withTransaction } from './db/pool.js';
+import { assertValidFile, getFile, MAX_FILE_BYTES, putFile, removeFile, safeFileName } from './storage.js';
+import { reviewItem, type AdmissionAction } from './tenant/admission.js';
 import {
   CANDIDATE_DECLARED_FIELDS,
   OFFER_DOCUMENT_CATEGORIES,
   type AdmissionItem,
   type OfferDocumentCategory,
   type OnboardingChecklistItem
-} from './src/types.js';
+} from '../src/types.js';
 
 // Augment Express Request interface with tenantContext
 declare global {
@@ -40,15 +33,11 @@ declare global {
   }
 }
 
-// Production = NODE_ENV=production OR running the compiled bundle (npm start), so "npm start" never boots the Vite dev server
-const IS_PROD =
-  process.env.NODE_ENV === 'production' || (typeof __filename !== 'undefined' && __filename.endsWith('.cjs'));
-
-/** Forwards rejected promises to the error middleware (Express 4 does not do it natively). */
 const ROUTE_NOT_FOUND_MESSAGE =
   'Não foi possível concluir esta ação porque o sistema está desatualizado. ' +
   'Atualize a página (Ctrl+F5) e tente de novo. Se o problema continuar, avise o suporte.';
 
+/** Forwards rejected promises to the error middleware (Express 4 does not do it natively). */
 const h = (fn:(req: Request, res: Response) => Promise<unknown>): RequestHandler =>
   (req, res, next) => { fn(req, res).catch(next); };
 
@@ -65,35 +54,67 @@ const required = (value: unknown, label: string): string => {
   return value.trim();
 };
 
-async function startServer() {
+let bootstrap: Promise<void> | null = null;
+
+/**
+ * One-time (per process) startup checks: database reachable + default SuperAdmin. Memoized, and retried on the
+ * next call after a failure, so a cold serverless instance that hit a transient DB error recovers by itself.
+ */
+export function ensureBootstrapped(): Promise<void> {
+  bootstrap ??= (async () => {
+    // Fail fast if the database is unreachable
+    await getPool().query('select 1');
+
+    // Default SuperAdmin (Conta Mãe) - created only when no platform admin has credentials yet
+    const admin = await AuthService.getInstance().ensureDefaultSuperAdmin();
+    if (admin.created) console.log(`[TalentCloud Core] SuperAdmin padrão criado: ${admin.email}`);
+    if (admin.usingDefaultPassword) {
+      console.warn('[TalentCloud Core] ATENÇÃO: o SuperAdmin ainda usa a senha PADRÃO. Altere-a antes de expor o sistema (ou defina SUPERADMIN_PASSWORD).');
+    }
+  })().catch(err => {
+    bootstrap = null;
+    throw err;
+  });
+  return bootstrap;
+}
+
+/**
+ * Builds the Express application: API only (no listen, no static files, no Vite). Shared by the local server
+ * (server/main.ts) and by the Vercel function (api/index.ts).
+ */
+export function createApp({ isProd }: { isProd: boolean }): express.Express {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
   const router = TenantConnectionRouter.getInstance();
-
-  // Fail fast if the database is unreachable
-  await getPool().query('select 1');
-
-  // Default SuperAdmin (Conta Mãe) - created only when no platform admin has credentials yet
   const auth = AuthService.getInstance();
-  const admin = await auth.ensureDefaultSuperAdmin();
-  if (admin.created) console.log(`[TalentCloud Core] SuperAdmin padrão criado: ${admin.email}`);
-  if (admin.usingDefaultPassword) {
-    console.warn('[TalentCloud Core] ATENÇÃO: o SuperAdmin ainda usa a senha PADRÃO. Altere-a antes de expor o sistema (ou defina SUPERADMIN_PASSWORD).');
-  }
 
   // Behind a reverse proxy / load balancer (Cloud Run, Render, Nginx...) set TRUST_PROXY=1 so req.ip is the real
   // client (login lockout and the public-apply limit are per IP). Leave unset when exposed directly.
-  if (process.env.TRUST_PROXY) {
-    const v = process.env.TRUST_PROXY;
-    app.set('trust proxy', v === 'true' ? true : Number.isNaN(Number(v)) ? v : Number(v));
+  // On Vercel the platform proxy always sits in front and sets X-Forwarded-For itself, so it is trusted by default:
+  // without it every visitor would share the proxy's IP and therefore the same rate-limit bucket.
+  const trustProxy = process.env.TRUST_PROXY ?? (process.env.VERCEL ? '1' : '');
+  if (trustProxy) {
+    app.set('trust proxy', trustProxy === 'true' ? true : Number.isNaN(Number(trustProxy)) ? trustProxy : Number(trustProxy));
   }
+
+  // Misconfiguration guard (Vercel): if the platform's Node helpers are on, the request body is already consumed when
+  // Express gets it and every POST would die with an obscure "stream is not readable". Say what is wrong instead.
+  app.use((req, res, next) => {
+    const hasBody = Number(req.headers['content-length'] ?? 0) > 0 || Boolean(req.headers['transfer-encoding']);
+    if (hasBody && req.readableEnded) {
+      console.error('[api] corpo da requisição já consumido antes do Express: defina NODEJS_HELPERS=0 nas variáveis do projeto (Vercel).');
+      return res.status(500).json({ success: false, error: 'Configuração do servidor incompleta (NODEJS_HELPERS=0).', code: 'BODY_ALREADY_READ' });
+    }
+    next();
+  });
 
   // Baseline security headers (API + SPA)
   app.use((req, res, next) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'SAMEORIGIN');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    if (IS_PROD) {
+    // Responses carry per-user / per-organization data: no shared cache (CDN, proxy) may keep them
+    if (req.path.startsWith('/api')) res.setHeader('Cache-Control', 'no-store');
+    if (isProd) {
       res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
     }
     next();
@@ -120,6 +141,9 @@ async function startServer() {
       });
     }
   });
+
+  // Everything below needs the database and the default SuperAdmin to be ready (lazy: serverless cold start)
+  app.use('/api', (_req, _res, next) => { ensureBootstrapped().then(() => next(), next); });
 
   // ==========================================
   // PUBLIC (no login): careers portal
@@ -433,7 +457,8 @@ async function startServer() {
 
       next();
     } catch (err) {
-      const { status, message, code } = toHttpError(err);
+      const { status, message, code } = toHttpError(err, isProd);
+      if (status >= 500) console.error(`[api] ${req.method} ${req.originalUrl}:`, err);
       res.status(status).json({
         success: false,
         error: message,
@@ -1173,11 +1198,11 @@ async function startServer() {
   }));
 
   // Documentos da proposta (contrato assinado, aditivos...). offers:view consulta/baixa; offers:edit anexa e remove.
-  // Upload: corpo bruto (PDF/JPG/PNG até 8 MB); nome, tipo e descrição vão na query (?name= &category= &description=).
+  // Upload: corpo bruto (PDF/JPG/PNG até MAX_FILE_BYTES); nome, tipo e descrição vão na query (?name= &category= &description=).
   app.post(
     '/api/v1/offers/:id/documents',
     can('offers:edit'),
-    express.raw({ type: () => true, limit: '9mb' }),
+    express.raw({ type: () => true, limit: MAX_FILE_BYTES + 64 * 1024 }),
     h(async (req, res) => {
       const { db, tenant } = ctx(req);
       const mime = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
@@ -1408,11 +1433,11 @@ async function startServer() {
     res.json({ success: true, onboarding });
   }));
 
-  // Upload: raw body (PDF/JPG/PNG up to 8 MB), file name in ?name=
+  // Upload: raw body (PDF/JPG/PNG up to MAX_FILE_BYTES), file name in ?name=
   app.post(
     '/api/v1/onboardings/:id/admission/:itemId/file',
     can('onboarding:edit'),
-    express.raw({ type: () => true, limit: '9mb' }),
+    express.raw({ type: () => true, limit: MAX_FILE_BYTES + 64 * 1024 }),
     h(async (req, res) => {
       const { db, tenant } = ctx(req);
       const mime = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
@@ -1614,42 +1639,10 @@ async function startServer() {
 
   // Central error handler (validation, not-found, Postgres constraint errors, ...)
   app.use('/api', (err: unknown, req: Request, res: Response, _next: NextFunction) => {
-    const { status, message, code } = toHttpError(err);
+    const { status, message, code } = toHttpError(err, isProd);
     if (status >= 500) console.error(`[api] ${req.method} ${req.originalUrl}:`, err);
     res.status(status).json({ success: false, error: message, code });
   });
 
-  // ==========================================
-  // VITE MIDDLEWARE (Development & Production)
-  // ==========================================
-  if (!IS_PROD) {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
-
-  const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[TalentCloud Core] Servidor no ar. Abra no navegador: http://localhost:${PORT}`);
-    console.log(`[TalentCloud Core] (0.0.0.0 é só o endereço em que o servidor escuta; não digite 0.0.0.0 no navegador)`);
-    console.log(`[TalentCloud Core] Multi-tenancy routing active - database: Supabase Postgres`);
-  });
-
-  const shutdown = () => {
-    server.close(() => closePool().finally(() => process.exit(0)));
-  };
-  process.on('SIGTERM', shutdown);
-  process.on('SIGINT', shutdown);
+  return app;
 }
-
-startServer().catch(err => {
-  console.error('Fatal: Failed to start TalentCloud Server:', err);
-  process.exit(1);
-});

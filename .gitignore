@@ -1,8 +1,12 @@
 node_modules/
 build/
 dist/
+dist-server/
 coverage/
 .DS_Store
 *.log
+*.zip
 .env*
 !.env.example
+.vercel
+supabase/.temp/

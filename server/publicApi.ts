@@ -1,8 +1,10 @@
 import type { Express, Request } from 'express';
+import type { PoolClient } from 'pg';
 import { logAudit } from './audit.js';
 import { withTransaction } from './db/pool.js';
-import { ConflictError, NotFoundError, TooManyRequestsError, ValidationError } from './errors.js';
+import { ConflictError, NotFoundError, ValidationError } from './errors.js';
 import { newId } from './ids.js';
+import { consumeQuota } from './rateLimit.js';
 import { TenantConnectionRouter } from './tenant/TenantConnectionRouter.js';
 import { TenantRepository } from './tenant/TenantRepository.js';
 
@@ -13,20 +15,17 @@ import { TenantRepository } from './tenant/TenantRepository.js';
  */
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const APPLY_LIMIT = Number(process.env.PUBLIC_APPLY_LIMIT) || 10; // writes per IP per window
-const APPLY_WINDOW_MS = 60 * 60 * 1000;
-const applyHits = new Map<string, number[]>();
+const APPLY_WINDOW_SECONDS = 60 * 60;
 
-function assertApplyRate(ip: string) {
-  const now = Date.now();
-  const recent = (applyHits.get(ip) ?? []).filter(t => now - t < APPLY_WINDOW_MS);
-  if (recent.length >= APPLY_LIMIT) {
-    throw new TooManyRequestsError('Muitas candidaturas deste endereço. Tente novamente mais tarde.');
-  }
-  recent.push(now);
-  applyHits.set(ip, recent);
-  if (applyHits.size > 10_000) applyHits.clear();
-}
+/** Writes per IP per hour (PUBLIC_APPLY_LIMIT, default 10). The counter lives in the database, shared by every instance. */
+const assertApplyRate = (ip: string, tx: PoolClient) =>
+  consumeQuota(
+    'public-apply',
+    [ip],
+    { limit: Number(process.env.PUBLIC_APPLY_LIMIT) || 10, windowSeconds: APPLY_WINDOW_SECONDS },
+    'Muitas candidaturas deste endereço. Tente novamente mais tarde.',
+    tx
+  );
 
 const text = (v: unknown, label: string, max: number, requiredField = false): string => {
   const s = typeof v === 'string' ? v.trim() : '';
@@ -102,7 +101,7 @@ export function registerPublicApi(app: Express, router: TenantConnectionRouter) 
         }
 
         // Only requests that would actually write data count against the limit
-        assertApplyRate(ip(req));
+        await assertApplyRate(ip(req), tx);
 
         // Reuse an existing profile for the same e-mail WITHOUT overwriting it (no public edits of others' data)
         const found = await tx.query(

@@ -1,3 +1,4 @@
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_MB } from '../src/types.js';
 import { AppError, ValidationError } from './errors.js';
 
 /**
@@ -5,7 +6,8 @@ import { AppError, ValidationError } from './errors.js';
  * Files are never exposed by URL: downloads go through the API, which checks permission and tenant.
  */
 const BUCKET = 'admission-docs';
-export const MAX_FILE_BYTES = 8 * 1024 * 1024;
+/** 4 MB: Vercel Functions reject request bodies above 4.5 MB (the file travels through the API). */
+export const MAX_FILE_BYTES = MAX_UPLOAD_BYTES;
 
 const SIGNATURES: Record<string, (b: Buffer) => boolean> = {
   'application/pdf': b => b.subarray(0, 4).toString('latin1') === '%PDF',
@@ -18,7 +20,7 @@ export const ALLOWED_MIME_TYPES = Object.keys(SIGNATURES);
 export function assertValidFile(content: unknown, mime: string): Buffer {
   if (!SIGNATURES[mime]) throw new ValidationError('Formato não permitido. Envie PDF, JPG ou PNG.');
   if (!Buffer.isBuffer(content) || content.length === 0) throw new ValidationError('Arquivo vazio ou não recebido.');
-  if (content.length > MAX_FILE_BYTES) throw new ValidationError('Arquivo maior que o limite de 8 MB.');
+  if (content.length > MAX_FILE_BYTES) throw new ValidationError(`Arquivo maior que o limite de ${MAX_UPLOAD_MB} MB.`);
   if (!SIGNATURES[mime](content)) throw new ValidationError('O conteúdo do arquivo não corresponde ao formato informado.');
   return content;
 }

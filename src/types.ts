@@ -323,6 +323,9 @@ export interface InterviewSession {
 export const OFFER_DOCUMENT_CATEGORIES = ['Contrato assinado', 'Aditivo contratual', 'Carta-proposta assinada', 'Outros'] as const;
 export type OfferDocumentCategory = typeof OFFER_DOCUMENT_CATEGORIES[number];
 export const MAX_OFFER_DOCUMENTS = 20;
+/** Upload limit (PDF/JPG/PNG). Vercel Functions reject request bodies above 4.5 MB, so 4 MB is the ceiling. Shared by UI and API. */
+export const MAX_UPLOAD_MB = 4;
+export const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
 
 /** Arquivo guardado no armazenamento privado; só os metadados ficam na proposta e o download passa pela API. */
 export interface OfferDocument {
