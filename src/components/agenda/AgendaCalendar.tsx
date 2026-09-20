@@ -162,6 +162,7 @@ export const AgendaCalendar: React.FC<Props> = ({ events, memberName, canManage,
           eventsByDay={eventsByDay}
           onSelectEvent={onSelectEvent}
           onDrillIntoDay={(key) => { setAnchor(key); setGranularity('day'); }}
+          onCreateOnDate={onCreateOnDate}
         />
       )}
 
@@ -202,6 +203,13 @@ const MonthView: React.FC<{
     ? parseDateKey(openDay).toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })
     : '';
 
+  /** Empty day: one click goes straight to scheduling. A day with compromissos still opens the panel below,
+   * so overflowing days ("+N mais") stay reachable — its own "Novo compromisso" button covers adding another. */
+  const handleDayClick = (key: string) => {
+    onOpenDay(key);
+    if (!(eventsByDay.get(key) ?? []).length) onCreateOnDate(key);
+  };
+
   return (
     <>
       <div className="grid grid-cols-7 border-b border-slate-100">
@@ -218,10 +226,13 @@ const MonthView: React.FC<{
           const isToday = cell.key === todayKey;
           const isSelected = cell.key === openDay;
           return (
-            <button
+            <div
               key={cell.key}
-              onClick={() => onOpenDay(cell.key)}
-              className={`min-h-[76px] sm:min-h-[92px] p-1.5 border-b border-r border-slate-100 flex flex-col items-start gap-1 text-left transition-colors ${
+              role="button"
+              tabIndex={0}
+              onClick={() => handleDayClick(cell.key)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleDayClick(cell.key); } }}
+              className={`min-h-[76px] sm:min-h-[92px] p-1.5 border-b border-r border-slate-100 flex flex-col items-start gap-1 text-left transition-colors cursor-pointer ${
                 idx % 7 === 6 ? 'border-r-0' : ''
               } ${isSelected ? 'bg-indigo-50/70' : cell.inMonth ? 'hover:bg-slate-50' : 'bg-slate-50/50'}`}
             >
@@ -234,13 +245,18 @@ const MonthView: React.FC<{
               </span>
               <div className="w-full space-y-0.5">
                 {dayEvents.slice(0, 2).map(ev => (
-                  <div key={ev.id} className={`px-1.5 py-0.5 rounded text-[9px] font-semibold truncate ${TYPE_CHIP[ev.type]}`}>
+                  <button
+                    key={ev.id}
+                    onClick={(e) => { e.stopPropagation(); onSelectEvent(ev); }}
+                    title={ev.title}
+                    className={`w-full text-left px-1.5 py-0.5 rounded text-[9px] font-semibold truncate transition-opacity hover:opacity-80 ${TYPE_CHIP[ev.type]}`}
+                  >
                     {ev.title}
-                  </div>
+                  </button>
                 ))}
                 {dayEvents.length > 2 && <div className="text-[9px] text-slate-400 pl-1">+{dayEvents.length - 2} mais</div>}
               </div>
-            </button>
+            </div>
           );
         })}
       </div>
@@ -318,7 +334,8 @@ const WeekView: React.FC<{
   eventsByDay: Map<string, AgendaEvent[]>;
   onSelectEvent: (event: AgendaEvent) => void;
   onDrillIntoDay: (dateKey: string) => void;
-}> = ({ anchor, todayKey, eventsByDay, onSelectEvent, onDrillIntoDay }) => {
+  onCreateOnDate: (dateKey: string) => void;
+}> = ({ anchor, todayKey, eventsByDay, onSelectEvent, onDrillIntoDay, onCreateOnDate }) => {
   const weekDays = useMemo(() => {
     const start = startOfWeek(anchor);
     return Array.from({ length: 7 }, (_, i) => addDays(start, i));
@@ -352,11 +369,18 @@ const WeekView: React.FC<{
         {weekDays.map(key => {
           const dayEvents = eventsByDay.get(key) ?? [];
           return (
-            <div key={key} className="border-r last:border-r-0 border-slate-100 p-1.5 space-y-1">
+            <div
+              key={key}
+              role="button"
+              tabIndex={0}
+              onClick={() => onCreateOnDate(key)}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCreateOnDate(key); } }}
+              className="border-r last:border-r-0 border-slate-100 p-1.5 space-y-1 cursor-pointer hover:bg-slate-50/60 transition-colors"
+            >
               {dayEvents.map(ev => (
                 <button
                   key={ev.id}
-                  onClick={() => onSelectEvent(ev)}
+                  onClick={(e) => { e.stopPropagation(); onSelectEvent(ev); }}
                   title={ev.title}
                   className={`w-full text-left px-1.5 py-1 rounded text-[10px] font-semibold truncate transition-opacity hover:opacity-80 ${TYPE_CHIP[ev.type]}`}
                 >
