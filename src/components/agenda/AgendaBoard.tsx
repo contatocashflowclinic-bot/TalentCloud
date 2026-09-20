@@ -1,24 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CalendarClock, Plus, Video, CheckSquare, Clock, MapPin, ArrowRight, Users2, CalendarDays, LayoutList, Pencil, Trash2 } from 'lucide-react';
+import { CalendarClock, Plus, ArrowRight, Users2, CalendarDays, LayoutList } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.js';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { AgendaEvent, AgendaDirectoryMember } from '../../types.js';
-import { formatLongDateSP, formatTimeSP } from '../../utils/dateUtils.js';
 import { AgendaEventModal } from './AgendaEventModal.js';
-import { AgendaCalendarMonth } from './AgendaCalendarMonth.js';
-
-const STATUS_META: Record<AgendaEvent['status'], { label: string; badge: string }> = {
-  scheduled: { label: 'Agendado', badge: 'bg-blue-100 text-blue-700' },
-  in_progress: { label: 'Em andamento', badge: 'bg-amber-100 text-amber-700' },
-  done: { label: 'Concluído', badge: 'bg-emerald-100 text-emerald-700' },
-  cancelled: { label: 'Cancelado', badge: 'bg-slate-200 text-slate-500' }
-};
-
-const TYPE_META: Record<AgendaEvent['type'], { label: string; icon: React.ComponentType<{ className?: string }>; accent: string }> = {
-  meeting: { label: 'Reunião', icon: Video, accent: 'from-indigo-500 to-blue-500' },
-  task: { label: 'Tarefa', icon: CheckSquare, accent: 'from-emerald-500 to-teal-500' }
-};
+import { AgendaCalendar } from './AgendaCalendar.js';
+import { ConfirmDialog } from '../ConfirmDialog.js';
+import { Avatar, EventCard, dayLabel, whenShort } from './AgendaEventCard.js';
 
 const FILTERS = [
   { id: 'all', label: 'Todos' },
@@ -28,32 +17,6 @@ const FILTERS = [
 ] as const;
 
 type FilterId = (typeof FILTERS)[number]['id'];
-
-const initials = (name: string) =>
-  name.trim().split(/\s+/).slice(0, 2).map(p => p[0]).join('').toUpperCase() || '?';
-
-const Avatar: React.FC<{ name: string; className?: string }> = ({ name, className }) => (
-  <div
-    title={name}
-    className={`shrink-0 rounded-full bg-indigo-100 text-indigo-700 border-2 border-white flex items-center justify-center font-bold uppercase ${className ?? 'w-6 h-6 text-[9px]'}`}
-  >
-    {initials(name)}
-  </div>
-);
-
-/** "Hoje", "Amanhã" or the full date, in São Paulo time. */
-function dayLabel(iso: string): string {
-  const d = new Date(iso);
-  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const diffDays = Math.round((startOfDay(d) - startOfDay(new Date())) / 86_400_000);
-  if (diffDays === 0) return 'Hoje';
-  if (diffDays === 1) return 'Amanhã';
-  if (diffDays === -1) return 'Ontem';
-  return formatLongDateSP(d);
-}
-
-/** Short "when" label for the side column, e.g. "Hoje · 14:30". */
-const whenShort = (iso: string) => `${dayLabel(iso)} · ${formatTimeSP(iso)}`;
 
 interface AgendaBoardProps {
   /** Condensed layout for embedding in the Welcome screen: fewer items, no day grouping, no filter tabs. */
@@ -73,20 +36,44 @@ export const AgendaBoard: React.FC<AgendaBoardProps> = ({ compact = false, onOpe
   const [createOpen, setCreateOpen] = useState(false);
   const [createDate, setCreateDate] = useState<string | undefined>(undefined);
   const [selected, setSelected] = useState<AgendaEvent | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<AgendaEvent | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [errorNotice, setErrorNotice] = useState<string | null>(null);
+
+  const canManage = (event: AgendaEvent) => event.createdById === user?.id;
 
   const openCreateOn = (dateKey: string) => {
     setCreateDate(dateKey);
     setCreateOpen(true);
   };
 
-  const handleDelete = async (event: AgendaEvent) => {
-    if (!confirm(`Excluir "${event.title}"? Essa ação não pode ser desfeita.`)) return;
+  /** Raw delete, no confirmation of its own — used by the edit modal, which already confirms internally. */
+  const deleteEventNow = async (event: AgendaEvent) => {
+    await TenantApi.deleteAgendaEvent(event.id);
+    setSelected(null);
+    await load();
+  };
+
+  /** Quick-action delete from a card or the calendar's day panel: confirms first, via the system dialog. */
+  const requestDelete = (event: AgendaEvent) => {
+    if (!canManage(event)) {
+      setErrorNotice('Somente quem criou este compromisso pode excluí-lo.');
+      return;
+    }
+    setConfirmDelete(event);
+  };
+
+  const confirmDeleteNow = async () => {
+    if (!confirmDelete) return;
     try {
-      await TenantApi.deleteAgendaEvent(event.id);
-      setSelected(null);
-      await load();
+      setDeleteBusy(true);
+      await deleteEventNow(confirmDelete);
+      setConfirmDelete(null);
     } catch (err: any) {
-      alert(err.message || 'Não foi possível excluir.');
+      setConfirmDelete(null);
+      setErrorNotice(err.message || 'Não foi possível excluir.');
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -221,12 +208,13 @@ export const AgendaBoard: React.FC<AgendaBoardProps> = ({ compact = false, onOpe
           {loading ? (
             <div className="p-8 text-center text-slate-400 text-xs animate-pulse">Carregando a agenda...</div>
           ) : !compact && view === 'calendar' ? (
-            <AgendaCalendarMonth
+            <AgendaCalendar
               events={visible}
               memberName={memberName}
+              canManage={canManage}
               onSelectEvent={setSelected}
               onCreateOnDate={openCreateOn}
-              onDeleteEvent={handleDelete}
+              onDeleteEvent={requestDelete}
             />
           ) : displayList.length === 0 ? (
             <div className="p-8 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-2xl">
@@ -235,7 +223,14 @@ export const AgendaBoard: React.FC<AgendaBoardProps> = ({ compact = false, onOpe
           ) : compact ? (
             <div className="space-y-2.5">
               {displayList.map(ev => (
-                <EventCard key={ev.id} event={ev} memberName={memberName} onClick={() => setSelected(ev)} onDelete={() => handleDelete(ev)} />
+                <EventCard
+                  key={ev.id}
+                  event={ev}
+                  memberName={memberName}
+                  canManage={canManage(ev)}
+                  onClick={() => setSelected(ev)}
+                  onDelete={() => requestDelete(ev)}
+                />
               ))}
             </div>
           ) : (
@@ -244,7 +239,14 @@ export const AgendaBoard: React.FC<AgendaBoardProps> = ({ compact = false, onOpe
                 <div key={group.label} className="space-y-2.5">
                   <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-0.5">{group.label}</div>
                   {group.items.map(ev => (
-                    <EventCard key={ev.id} event={ev} memberName={memberName} onClick={() => setSelected(ev)} onDelete={() => handleDelete(ev)} />
+                    <EventCard
+                      key={ev.id}
+                      event={ev}
+                      memberName={memberName}
+                      canManage={canManage(ev)}
+                      onClick={() => setSelected(ev)}
+                      onDelete={() => requestDelete(ev)}
+                    />
                   ))}
                 </div>
               ))}
@@ -306,77 +308,32 @@ export const AgendaBoard: React.FC<AgendaBoardProps> = ({ compact = false, onOpe
           members={members}
           onClose={() => setSelected(null)}
           onSaved={load}
-          onDelete={() => handleDelete(selected)}
+          onDelete={canManage(selected) ? () => deleteEventNow(selected) : undefined}
         />
       )}
-    </div>
-  );
-};
 
-const EventCard: React.FC<{
-  event: AgendaEvent;
-  memberName: (id: string) => string;
-  onClick: () => void;
-  onDelete: () => void;
-}> = ({ event, memberName, onClick, onDelete }) => {
-  const type = TYPE_META[event.type];
-  const status = STATUS_META[event.status];
-  const Icon = type.icon;
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onClick}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }}
-      className="w-full text-left p-4 rounded-2xl bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-md transition-all flex items-start gap-3.5 cursor-pointer"
-    >
-      <div className={`w-10 h-10 rounded-xl bg-gradient-to-tr ${type.accent} text-white flex items-center justify-center shrink-0`}>
-        <Icon className="w-4.5 h-4.5" />
-      </div>
-      <div className="min-w-0 flex-1 space-y-1.5">
-        <div className="flex items-start justify-between gap-2">
-          <h4 className="text-sm font-bold text-slate-900 truncate">{event.title}</h4>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${status.badge}`}>{status.label}</span>
-            <button
-              onClick={(e) => { e.stopPropagation(); onClick(); }}
-              title="Editar"
-              aria-label="Editar compromisso"
-              className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-indigo-600 transition-colors"
-            >
-              <Pencil className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); onDelete(); }}
-              title="Excluir"
-              aria-label="Excluir compromisso"
-              className="p-1 rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition-colors"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
-          <span className="flex items-center gap-1">
-            <Clock className="w-3 h-3" /> {whenShort(event.startsAt)}
-          </span>
-          {event.location && (
-            <span className="flex items-center gap-1 truncate max-w-[180px]">
-              <MapPin className="w-3 h-3" /> {event.location}
-            </span>
-          )}
-        </div>
-        {event.assigneeIds.length > 0 && (
-          <div className="flex items-center -space-x-1.5 pt-0.5">
-            {event.assigneeIds.slice(0, 4).map(id => (
-              <Avatar key={id} name={memberName(id)} />
-            ))}
-            {event.assigneeIds.length > 4 && (
-              <span className="text-[10px] text-slate-400 pl-2.5">+{event.assigneeIds.length - 4}</span>
-            )}
-          </div>
-        )}
-      </div>
+      {confirmDelete && (
+        <ConfirmDialog
+          title="Excluir compromisso"
+          message={<>Excluir <b>"{confirmDelete.title}"</b>? Essa ação não pode ser desfeita.</>}
+          confirmLabel="Excluir"
+          tone="danger"
+          busy={deleteBusy}
+          onConfirm={confirmDeleteNow}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+
+      {errorNotice && (
+        <ConfirmDialog
+          title="Não foi possível concluir"
+          message={errorNotice}
+          confirmLabel="OK"
+          cancelLabel={null}
+          onConfirm={() => setErrorNotice(null)}
+          onCancel={() => setErrorNotice(null)}
+        />
+      )}
     </div>
   );
 };

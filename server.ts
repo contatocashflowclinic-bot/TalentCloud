@@ -10,7 +10,7 @@ import { TenantConnectionRouter, TenantConnectionContext } from './server/tenant
 import { evaluateCandidateWithAI } from './server/gemini.js';
 import { closePool, getPool } from './server/db/pool.js';
 import { newId } from './server/ids.js';
-import { AppError, ConflictError, NotFoundError, ValidationError, toHttpError } from './server/errors.js';
+import { AppError, ConflictError, ForbiddenError, NotFoundError, ValidationError, toHttpError } from './server/errors.js';
 import { ALL_PERMISSIONS } from './src/access.js';
 import { sessionCache } from './server/cache.js';
 import { AuthService } from './server/auth/AuthService.js';
@@ -1503,6 +1503,9 @@ async function startServer() {
 
   app.patch('/api/v1/agenda/:id', h(async (req, res) => {
     const { db } = ctx(req);
+    const existing = await db.agendaEvents.get(req.params.id);
+    if (!existing) throw new NotFoundError('Compromisso não encontrado.');
+    if (existing.createdById !== req.auth!.id) throw new ForbiddenError('Somente quem criou o compromisso pode editá-lo.');
     const b = req.body ?? {};
     const patch: Record<string, unknown> = {};
     if (has(b, 'title')) patch.title = required(b.title, 'title');
@@ -1533,8 +1536,11 @@ async function startServer() {
   }));
 
   app.delete('/api/v1/agenda/:id', h(async (req, res) => {
-    const deleted = await ctx(req).db.agendaEvents.delete(req.params.id);
-    if (!deleted) throw new NotFoundError('Compromisso não encontrado.');
+    const { db } = ctx(req);
+    const existing = await db.agendaEvents.get(req.params.id);
+    if (!existing) throw new NotFoundError('Compromisso não encontrado.');
+    if (existing.createdById !== req.auth!.id) throw new ForbiddenError('Somente quem criou o compromisso pode excluí-lo.');
+    await db.agendaEvents.delete(req.params.id);
     res.json({ success: true });
   }));
 

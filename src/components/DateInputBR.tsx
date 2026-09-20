@@ -54,8 +54,8 @@ function isoTimeToDigits(hhmm: string | undefined): string {
 const errCls = (invalid: boolean) => (invalid ? 'border-rose-300 focus:border-rose-400 text-rose-700' : 'border-slate-200 focus:border-indigo-500');
 
 // ---------------------------------------------------------------------------
-// Mini calendar popover — pick-a-date only, no events (see AgendaCalendarMonth
-// for the full month-grid view with compromissos).
+// Mini calendar popover — pick-a-date only, no events (see AgendaCalendar
+// for the full Mês/Semana/Dia views with compromissos).
 // ---------------------------------------------------------------------------
 const WEEKDAY_LABELS = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 const MONTH_LABELS = [
@@ -148,7 +148,8 @@ const DateDigitsField: React.FC<{
   id?: string;
   required?: boolean;
   className?: string;
-}> = ({ digits, setDigits, onCommit, id, required, className }) => {
+  disabled?: boolean;
+}> = ({ digits, setDigits, onCommit, id, required, className, disabled }) => {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -168,9 +169,10 @@ const DateDigitsField: React.FC<{
       <button
         type="button"
         tabIndex={-1}
+        disabled={disabled}
         onClick={() => setOpen((o) => !o)}
         aria-label="Abrir calendário"
-        className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-indigo-600 transition-colors"
+        className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 enabled:hover:text-indigo-600 transition-colors disabled:opacity-60"
       >
         <Calendar className="w-4 h-4" />
       </button>
@@ -179,6 +181,7 @@ const DateDigitsField: React.FC<{
         inputMode="numeric"
         id={id}
         required={required}
+        disabled={disabled}
         placeholder="DD/MM/AAAA"
         maxLength={10}
         value={formatDateDigits(digits)}
@@ -189,9 +192,9 @@ const DateDigitsField: React.FC<{
           setDigits(d);
           onCommit(dateDigitsToISO(d));
         }}
-        className={`${className ?? DEFAULT_CLS} ${errCls(invalid)}`}
+        className={`${className ?? DEFAULT_CLS} ${errCls(invalid)} disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed`}
       />
-      {open && (
+      {open && !disabled && (
         <div className="absolute z-50 top-full left-0 mt-1.5">
           <MiniCalendar
             selectedKey={dateDigitsToISO(digits) || undefined}
@@ -214,14 +217,25 @@ interface DateInputBRProps {
   id?: string;
   required?: boolean;
   className?: string;
+  disabled?: boolean;
 }
 
 /** Date-only field, always displayed and typed as DD/MM/AAAA, with a calendar popover to pick it visually. */
-export const DateInputBR: React.FC<DateInputBRProps> = ({ value, onChange, id, required, className }) => {
+export const DateInputBR: React.FC<DateInputBRProps> = ({ value, onChange, id, required, className, disabled }) => {
   const [digits, setDigits] = useState(() => isoDateToDigits(value));
   useEffect(() => setDigits(isoDateToDigits(value)), [value]);
 
-  return <DateDigitsField digits={digits} setDigits={setDigits} onCommit={onChange} id={id} required={required} className={className} />;
+  return (
+    <DateDigitsField
+      digits={digits}
+      setDigits={setDigits}
+      onCommit={onChange}
+      id={id}
+      required={required}
+      className={className}
+      disabled={disabled}
+    />
+  );
 };
 
 interface DateTimeInputBRProps {
@@ -229,10 +243,11 @@ interface DateTimeInputBRProps {
   value: string;
   onChange: (value: string) => void;
   required?: boolean;
+  disabled?: boolean;
 }
 
 /** Date + time field, always displayed and typed as DD/MM/AAAA and 24h HH:mm — two joined inputs. */
-export const DateTimeInputBR: React.FC<DateTimeInputBRProps> = ({ value, onChange, required }) => {
+export const DateTimeInputBR: React.FC<DateTimeInputBRProps> = ({ value, onChange, required, disabled }) => {
   const [datePart, timePart] = value ? value.split('T') : ['', ''];
   const [dateDigits, setDateDigits] = useState(() => isoDateToDigits(datePart));
   const [timeDigits, setTimeDigits] = useState(() => isoTimeToDigits(timePart));
@@ -253,7 +268,13 @@ export const DateTimeInputBR: React.FC<DateTimeInputBRProps> = ({ value, onChang
   return (
     <div className="flex gap-2">
       <div className="flex-1">
-        <DateDigitsField digits={dateDigits} setDigits={setDateDigits} onCommit={(iso) => emit(iso, timeDigits)} required={required} />
+        <DateDigitsField
+          digits={dateDigits}
+          setDigits={setDateDigits}
+          onCommit={(iso) => emit(iso, timeDigits)}
+          required={required}
+          disabled={disabled}
+        />
       </div>
       <div className="relative w-[110px] shrink-0">
         <Clock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
@@ -261,6 +282,7 @@ export const DateTimeInputBR: React.FC<DateTimeInputBRProps> = ({ value, onChang
           type="text"
           inputMode="numeric"
           required={required}
+          disabled={disabled}
           placeholder="HH:MM"
           maxLength={5}
           value={formatTimeDigits(timeDigits)}
@@ -269,7 +291,7 @@ export const DateTimeInputBR: React.FC<DateTimeInputBRProps> = ({ value, onChang
             setTimeDigits(t);
             emit(dateDigitsToISO(dateDigits), t);
           }}
-          className={`${DEFAULT_CLS} ${errCls(timeInvalid)}`}
+          className={`${DEFAULT_CLS} ${errCls(timeInvalid)} disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed`}
         />
       </div>
     </div>
