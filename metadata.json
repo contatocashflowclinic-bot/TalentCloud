@@ -1,6 +1,6 @@
 {
-  "name": "TalentCloud Multi-Tenant SaaS",
-  "description": "Plataforma SaaS multi-empresa para ciclo de gestão de talentos com arquitetura multi-tenancy isolada por banco, roteamento dinâmico de conexões e avaliação assistida por IA.",
+  "name": "Vértice 360 - Ciclo de Talentos",
+  "description": "Plataforma para gerir o ciclo de talentos: vagas, candidatos, processo seletivo, avaliação assistida por IA, propostas e onboarding, com dados isolados por organização.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -108,7 +108,7 @@ export function buildPrintHtml(d: ApplicationSummaryData, printedBy?: string): s
 
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <title>${esc(`Resumo — ${c?.name ?? 'Candidato'} — ${d.job.title}`)}</title><style>${CSS}</style></head><body>
-  <div class="kicker">${esc(d.organization ?? 'TalentCloud')} · Resumo do candidato</div>
+  <div class="kicker">${esc(d.organization ?? 'Vértice 360')} · Resumo do candidato</div>
   <h1>${esc(c?.name ?? 'Candidato')}</h1>
   <div class="muted">${esc(c ? `${c.currentRole} • ${c.yearsOfExperience} anos de experiência` : '')}</div>
 

@@ -36,7 +36,7 @@ export async function evaluateCandidateWithAI(params: {
   if (client) {
     try {
       const prompt = `
-Você é o assistente de inteligência artificial de apoio à decisão humana da plataforma TalentCloud.
+Você é o assistente de inteligência artificial de apoio à decisão humana da plataforma Vértice 360 - Ciclo de Talentos.
 Siga estritamente os princípios do produto:
 1. IA como apoio (nunca toma a decisão final de contratação; apoia o recrutador).
 2. Decisão humana prioritária (o RH/gestor validará as hipóteses).

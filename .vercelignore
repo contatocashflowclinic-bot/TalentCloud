@@ -5,6 +5,7 @@ node_modules
 dist
 dist-server
 docs
+brand-src
 scripts
 supabase/.temp
 *.zip

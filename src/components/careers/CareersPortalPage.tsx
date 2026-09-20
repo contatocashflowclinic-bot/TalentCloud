@@ -551,7 +551,7 @@ export const CareersPortalPage: React.FC<CareersPortalPageProps> = ({
         </div>
         <div className="max-w-6xl mx-auto mt-6 pt-4 border-t border-slate-100 text-[11px] text-slate-400 flex flex-wrap justify-between gap-2">
           <span>© {new Date().getFullYear()} {orgName} • Seus dados são tratados com segurança e em conformidade com a LGPD.</span>
-          <span>Powered by TalentCloud</span>
+          <span>Powered by Vértice 360</span>
         </div>
       </footer>
 

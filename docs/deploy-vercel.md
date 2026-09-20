@@ -1,4 +1,4 @@
-# Publicação na Vercel — passo a passo
+# Publicação na Vercel — Vértice 360 - Ciclo de Talentos
 
 Como o sistema roda na Vercel: o **site (React/Vite)** é servido pela CDN e a **API (Express)** roda como uma única
 *Vercel Function* (`api/index.ts`). O banco e os arquivos ficam no **Supabase**. Nada de servidor "sempre ligado".
@@ -123,7 +123,7 @@ Tempo estimado: 20 minutos. Use uma janela anônima para a parte pública.
 | # | O que fazer | O que deve acontecer |
 | --- | --- | --- |
 | A1 | Abra `https://<seu-domínio>/api/health`. | Mostra `"status":"ok"` e `"database":"ok"`. Se mostrar `degraded`, a `SUPABASE_DB_URL` está errada (confira se é a do **pooler**). |
-| A2 | Abra `https://<seu-domínio>/`. | A tela de login aparece rápido, com o ícone da aba (nuvem roxa). |
+| A2 | Abra `https://<seu-domínio>/`. | A tela de login aparece rápido, com o nome **Vértice 360 / Ciclo de Talentos**. A aba do navegador mostra o título "Vértice 360 - Ciclo de Talentos" e o ícone roxo com um "V". |
 | A3 | Entre com `admin@admin.com.br` e a senha **antiga** `Admin@123`. | **Não entra**: "E-mail ou senha inválidos" (ou o aviso de que a senha padrão está bloqueada, se você ainda não a trocou). |
 | A4 | Entre com a Conta Mãe e a senha **nova**. | Abre o ambiente da Conta Mãe (Visão geral, Organizações, Usuários, Auditoria), **sem** faixa de aviso de senha padrão. |
 | A5 | Em **Organizações → Criar Organização**, crie uma organização de teste. | Aparece a **senha temporária uma única vez**. A organização entra na lista. |

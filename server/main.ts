@@ -39,9 +39,9 @@ async function start() {
   }
 
   const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[TalentCloud Core] Servidor no ar. Abra no navegador: http://localhost:${PORT}`);
-    console.log(`[TalentCloud Core] (0.0.0.0 é só o endereço em que o servidor escuta; não digite 0.0.0.0 no navegador)`);
-    console.log(`[TalentCloud Core] Multi-tenancy routing active - database: Supabase Postgres`);
+    console.log(`[Vértice 360] Servidor no ar. Abra no navegador: http://localhost:${PORT}`);
+    console.log(`[Vértice 360] (0.0.0.0 é só o endereço em que o servidor escuta; não digite 0.0.0.0 no navegador)`);
+    console.log(`[Vértice 360] Multi-tenancy routing active - database: Supabase Postgres`);
   });
 
   const shutdown = () => {
@@ -52,6 +52,6 @@ async function start() {
 }
 
 start().catch(err => {
-  console.error('Fatal: Failed to start TalentCloud Server:', err);
+  console.error('Fatal: Failed to start Vértice 360 server:', err);
   process.exit(1);
 });

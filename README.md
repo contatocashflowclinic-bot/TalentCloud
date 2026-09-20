@@ -1,4 +1,4 @@
-# TalentCloud — SaaS multi-organização de gestão de talentos
+# Vértice 360 - Ciclo de Talentos
 
 React + Vite (site), Express (API) e Supabase (Postgres + Storage). Roda localmente com `npm run dev` e é publicado na
 **Vercel**: o site na CDN e a API como uma *Vercel Function*. **Guia de publicação e validação: [docs/deploy-vercel.md](docs/deploy-vercel.md).**

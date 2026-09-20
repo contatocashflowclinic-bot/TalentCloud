@@ -102,14 +102,14 @@ export const ModuleCandidates: React.FC<{
   ));
 
   const handleExportCSV = () => {
-    exportCandidatesToCSV(filtered, evaluations, activeTenant?.name || 'TalentCloud');
+    exportCandidatesToCSV(filtered, evaluations, activeTenant?.name || 'Vértice 360');
   };
 
   const handleExportPDF = () => {
     exportCandidatesToPDF(
       filtered,
       evaluations,
-      activeTenant?.name || 'TalentCloud',
+      activeTenant?.name || 'Vértice 360',
       activeTenant?.dbConfig?.dbName || 'tenant'
     );
   };

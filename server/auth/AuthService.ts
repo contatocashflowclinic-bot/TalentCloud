@@ -73,7 +73,7 @@ export class AuthService {
     const chosenByOperator = Boolean(process.env.SUPERADMIN_PASSWORD);
     if (isProduction() && !chosenByOperator) {
       console.error(
-        '[TalentCloud Core] Nenhum SuperAdmin cadastrado e SUPERADMIN_PASSWORD não definida: em produção a conta ' +
+        '[Vértice 360] Nenhum SuperAdmin cadastrado e SUPERADMIN_PASSWORD não definida: em produção a conta ' +
         'padrão (senha pública) NÃO é criada. Defina SUPERADMIN_EMAIL/SUPERADMIN_PASSWORD e reinicie, ou rode "npm run admin:password".'
       );
       return { created: false, email, usingDefaultPassword: false };

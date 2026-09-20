@@ -67,7 +67,8 @@ export const JobSocialShareModal: React.FC<JobSocialShareModalProps> = ({
   const archetype = dna?.archetype || 'Inovador & Ágil';
 
   // Generate unique URL for this job in this tenant
-  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://talentcloud.app';
+  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+  const shareHost = typeof window !== 'undefined' ? window.location.host : '';
   const publicShareUrl = job 
     ? `${currentOrigin}/?view=careers&tenant=${tenant.slug}&job=${job.id}`
     : `${currentOrigin}/?view=careers&tenant=${tenant.slug}`;
@@ -256,7 +257,7 @@ Confira todos os detalhes e candidate-se pelo nosso portal oficial:
       // Footer branding
       ctx.fillStyle = '#64748b';
       ctx.font = '22px sans-serif';
-      ctx.fillText('TalentCloud • Portal Oficial de Carreiras', 260, 1840);
+      ctx.fillText('Vértice 360 • Portal Oficial de Carreiras', 260, 1840);
 
     } else {
       // Feed / LinkedIn: 1200 x 630
@@ -340,7 +341,7 @@ Confira todos os detalhes e candidate-se pelo nosso portal oficial:
 
       ctx.fillStyle = '#64748b';
       ctx.font = '16px sans-serif';
-      ctx.fillText('TalentCloud • Carreiras', 820, 558);
+      ctx.fillText('Vértice 360 • Carreiras', 820, 558);
     }
 
     // Trigger download
@@ -549,7 +550,7 @@ Confira todos os detalhes e candidate-se pelo nosso portal oficial:
                         Candidatar-se na Bio
                       </div>
                       <div className="text-[9px] text-slate-400">
-                        {tenant.slug}.talentcloud.app
+                        {shareHost}
                       </div>
                     </div>
                   </div>
@@ -821,7 +822,7 @@ Confira todos os detalhes e candidate-se pelo nosso portal oficial:
                       <div className="font-bold text-sm text-white truncate">{jobTitle}</div>
                     </div>
                     <div className="p-2.5 text-[11px] bg-slate-50 text-slate-500 flex justify-between items-center">
-                      <span>talentcloud.app</span>
+                      <span>{shareHost}</span>
                       <span className="font-semibold text-indigo-600">Candidate-se</span>
                     </div>
                   </div>

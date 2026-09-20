@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Building2, Check, Loader2, LogOut } from 'lucide-react';
+import { Check, Loader2, LogOut } from 'lucide-react';
+import { BrandLogo } from '../BrandLogo.js';
 import { useAuth } from '../../context/AuthContext.js';
 
 /** Shown right after login when the person has access to more than one organization. */
@@ -24,17 +25,10 @@ export const OrganizationPickerPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-900 via-indigo-950 to-slate-900 flex items-center justify-center p-4 font-sans">
       <div className="w-full max-w-md">
-        <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-700 via-indigo-600 to-blue-500 flex items-center justify-center text-white shadow-lg shadow-indigo-900/40">
-            <Building2 className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="text-2xl font-bold text-white tracking-tight">TalentCloud</div>
-            <div className="text-xs text-indigo-300">Gestão do ciclo de talentos</div>
-          </div>
-        </div>
-
         <div className="bg-white rounded-3xl shadow-2xl p-7 space-y-4">
+          <div className="flex justify-center pb-1">
+            <BrandLogo width={300} className="max-w-full h-auto" />
+          </div>
           <div>
             <h1 className="text-lg font-bold text-slate-900">Escolha a organização</h1>
             <p className="text-xs text-slate-500 mt-0.5">Sua conta tem acesso a mais de uma organização. Selecione com qual deseja trabalhar.</p>

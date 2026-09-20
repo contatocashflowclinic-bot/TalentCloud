@@ -7,6 +7,7 @@ import { MultiTenantArchitectureModal } from '../MultiTenantArchitectureModal.js
 import { ProvisionOrganizationModal } from '../ProvisionOrganizationModal.js';
 import { PlatformSection, SuperAdminConsole } from '../SuperAdminConsole.js';
 import { PlatformUsersPanel } from './PlatformUsersPanel.js';
+import { AppFooter } from '../AppFooter.js';
 
 const SECTIONS: Array<{ id: PlatformSection; name: string; desc: string; icon: React.ElementType }> = [
   { id: 'overview', name: 'Visão geral', desc: 'Indicadores da plataforma', icon: Activity },
@@ -38,7 +39,7 @@ export const PlatformLayout: React.FC = () => {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-bold text-lg tracking-tight">TalentCloud</span>
+                <span className="font-bold text-lg tracking-tight">Vértice 360</span>
                 <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-amber-400/20 text-amber-300 border border-amber-400/30 rounded-md">
                   Conta Mãe
                 </span>
@@ -143,6 +144,8 @@ export const PlatformLayout: React.FC = () => {
           )}
         </main>
       </div>
+
+      <AppFooter />
 
       <MultiTenantArchitectureModal isOpen={architectureOpen} onClose={() => setArchitectureOpen(false)} />
       <ProvisionOrganizationModal isOpen={provisionOpen} onClose={() => setProvisionOpen(false)} onCreated={() => setReloadKey(k => k + 1)} />

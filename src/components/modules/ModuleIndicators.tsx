@@ -59,13 +59,13 @@ export const ModuleIndicators: React.FC = () => {
   const fmtPct = (v: number | null) => (v === null ? '—' : `${v.toFixed(1)}%`);
 
   const handleExportCSV = () => {
-    exportIndicatorsToCSV(indicators, activeTenant?.name || 'TalentCloud');
+    exportIndicatorsToCSV(indicators, activeTenant?.name || 'Vértice 360');
   };
 
   const handleExportPDF = () => {
     exportIndicatorsToPDF(
       indicators,
-      activeTenant?.name || 'TalentCloud',
+      activeTenant?.name || 'Vértice 360',
       activeTenant?.dbConfig?.dbName || 'tenant'
     );
   };
@@ -260,7 +260,7 @@ export const ModuleIndicators: React.FC = () => {
                   Declaração de Conformidade & Ética em IA
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Princípios inegociáveis de transparência algorítmica da plataforma TalentCloud.
+                  Princípios inegociáveis de transparência algorítmica da plataforma Vértice 360.
                 </p>
               </div>
 

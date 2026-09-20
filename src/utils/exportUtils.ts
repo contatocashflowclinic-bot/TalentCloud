@@ -90,7 +90,7 @@ export function exportCandidatesToPDF(
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text('TalentCloud Multi-Tenant SaaS', 14, 11);
+  doc.text('Vértice 360 - Ciclo de Talentos', 14, 11);
 
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
@@ -174,7 +174,7 @@ export function exportCandidatesToPDF(
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184);
     doc.text(
-      `TalentCloud SaaS Multi-Tenant • Partição: ${dbName} • Página ${i} de ${pageCount}`,
+      `Vértice 360 • Partição: ${dbName} • Página ${i} de ${pageCount}`,
       14,
       290
     );
@@ -263,7 +263,7 @@ export function exportIndicatorsToPDF(
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text('TalentCloud Multi-Tenant SaaS', 14, 11);
+  doc.text('Vértice 360 - Ciclo de Talentos', 14, 11);
 
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
@@ -370,7 +370,7 @@ export function exportIndicatorsToPDF(
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184);
     doc.text(
-      `TalentCloud SaaS Multi-Tenant • Partição: ${dbName} • Emissão: ${nowFormatted} • Página ${i} de ${pageCount}`,
+      `Vértice 360 • Partição: ${dbName} • Emissão: ${nowFormatted} • Página ${i} de ${pageCount}`,
       14,
       290
     );

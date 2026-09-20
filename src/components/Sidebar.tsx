@@ -75,7 +75,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const footer = (
     <div className="pt-4 border-t border-slate-100 text-[11px] text-slate-400">
-      <div className="font-semibold text-slate-700 truncate">{activeTenant?.name || 'TalentCloud SaaS'}</div>
+      <div className="font-semibold text-slate-700 truncate">{activeTenant?.name || 'Vértice 360'}</div>
       <div className="font-mono text-[10px] text-slate-400 truncate">
         Dados: {activeTenant?.dbConfig?.dbName || 'partição isolada por organização'}
       </div>

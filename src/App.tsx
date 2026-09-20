@@ -8,6 +8,7 @@ import { canAccessModule } from './access.js';
 import { ShieldAlert } from 'lucide-react';
 import { Header } from './components/Header.js';
 import { Sidebar } from './components/Sidebar.js';
+import { AppFooter } from './components/AppFooter.js';
 
 // Each screen is its own chunk: the browser only downloads the modules (and heavy libs such as charts / PDF) that are opened.
 const PlatformLayout = lazy(() => import('./components/platform/PlatformLayout.js').then(m => ({ default: m.PlatformLayout })));
@@ -209,6 +210,8 @@ const MainLayout: React.FC = () => {
           )}
         </main>
       </div>
+
+      <AppFooter />
 
       {isChangePasswordOpen && !user?.mustChangePassword && (
         <ChangePasswordModal onClose={() => setIsChangePasswordOpen(false)} />

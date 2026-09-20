@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { BrandMark } from './BrandMark.js';
 import {
   Building2,
   ChevronDown,
@@ -77,15 +78,19 @@ export const Header: React.FC<{
               className="flex items-center gap-2.5 sm:gap-3 text-left disabled:cursor-default"
               title={onNavigateHome ? 'Ir para a página inicial' : undefined}
             >
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-700 via-indigo-600 to-blue-500 flex items-center justify-center text-white shadow-md shadow-indigo-100">
-                <Building2 className="w-5 h-5" />
-              </div>
+              <BrandMark
+                size={40}
+                src="/brand/icon-menu-40.png"
+                srcSet="/brand/icon-menu-80.png 2x, /brand/icon-menu-120.png 3x"
+                alt=""
+                className="object-contain"
+              />
               <div className="hidden sm:block">
                 <div className="flex items-center gap-2">
-                  <span className="font-bold text-slate-900 text-lg tracking-tight">TalentCloud</span>
+                  <span className="font-bold text-slate-900 text-lg tracking-tight">Vértice 360</span>
                 </div>
                 <p className="text-[11px] text-slate-500 leading-none">
-                  Gestão do ciclo de talentos
+                  Ciclo de Talentos
                 </p>
               </div>
             </button>

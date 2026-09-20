@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Building2, Lock, Mail, Loader2, AlertCircle } from 'lucide-react';
+import { Lock, Mail, Loader2, AlertCircle } from 'lucide-react';
+import { BrandLogo } from '../BrandLogo.js';
 import { useAuth } from '../../context/AuthContext.js';
 
 /** Deep links from an organization's own portal can pin the login to that org (?org=slug). */
@@ -34,17 +35,10 @@ export const LoginPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-900 via-indigo-950 to-slate-900 flex items-center justify-center p-4 font-sans">
       <div className="w-full max-w-md">
-        <div className="flex items-center justify-center gap-3 mb-8">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-700 via-indigo-600 to-blue-500 flex items-center justify-center text-white shadow-lg shadow-indigo-900/40">
-            <Building2 className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="text-2xl font-bold text-white tracking-tight">TalentCloud</div>
-            <div className="text-xs text-indigo-300">Gestão do ciclo de talentos</div>
-          </div>
-        </div>
-
         <form onSubmit={handleSubmit} className="bg-white rounded-3xl shadow-2xl p-7 space-y-4">
+          <div className="flex justify-center pb-1">
+            <BrandLogo width={300} className="max-w-full h-auto" />
+          </div>
           <div>
             <h1 className="text-lg font-bold text-slate-900">Entrar</h1>
             <p className="text-xs text-slate-500 mt-0.5">Acesse com o e-mail e a senha da sua conta.</p>

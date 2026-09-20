@@ -67,9 +67,9 @@ export function ensureBootstrapped(): Promise<void> {
 
     // Default SuperAdmin (Conta Mãe) - created only when no platform admin has credentials yet
     const admin = await AuthService.getInstance().ensureDefaultSuperAdmin();
-    if (admin.created) console.log(`[TalentCloud Core] SuperAdmin padrão criado: ${admin.email}`);
+    if (admin.created) console.log(`[Vértice 360] SuperAdmin padrão criado: ${admin.email}`);
     if (admin.usingDefaultPassword) {
-      console.warn('[TalentCloud Core] ATENÇÃO: o SuperAdmin ainda usa a senha PADRÃO. Altere-a antes de expor o sistema (ou defina SUPERADMIN_PASSWORD).');
+      console.warn('[Vértice 360] ATENÇÃO: o SuperAdmin ainda usa a senha PADRÃO. Altere-a antes de expor o sistema (ou defina SUPERADMIN_PASSWORD).');
     }
   })().catch(err => {
     bootstrap = null;
@@ -128,14 +128,14 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
       await getPool().query('select 1');
       res.json({
         status: 'ok',
-        service: 'TalentCloud Multi-Tenant SaaS Core',
+        service: 'Vértice 360 - Ciclo de Talentos',
         database: 'ok',
         timestamp: new Date().toISOString()
       });
     } catch {
       res.status(503).json({
         status: 'degraded',
-        service: 'TalentCloud Multi-Tenant SaaS Core',
+        service: 'Vértice 360 - Ciclo de Talentos',
         database: 'unreachable',
         timestamp: new Date().toISOString()
       });
