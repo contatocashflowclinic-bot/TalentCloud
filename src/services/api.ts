@@ -26,6 +26,7 @@ import {
   BenefitCatalogItem,
   CandidateChange,
   CollaboratorDevelopment,
+  DevelopmentChange,
   DevelopmentLookups,
   DevelopmentPerson,
   ClimateSurveyResponse,
@@ -147,6 +148,15 @@ const qs = (q: Record<string, unknown>) => {
   const out = p.toString();
   return out ? `?${out}` : '';
 };
+
+/** Every PDI change answers with the updated PDI and its pending "next 1:1" appointment in the Agenda. */
+async function developmentChange(endpoint: string, method: 'POST' | 'PATCH' | 'DELETE', payload?: Record<string, unknown>): Promise<DevelopmentChange> {
+  const data = await request<{ success: boolean; developmentRecord: CollaboratorDevelopment; nextMeeting: AgendaEvent | null }>(endpoint, {
+    method,
+    ...(payload ? { body: JSON.stringify(payload) } : {})
+  });
+  return { record: data.developmentRecord, nextMeeting: data.nextMeeting ?? null };
+}
 
 /**
  * Access management of ONE organization (people linked to it and its profiles). The organization screens and the
@@ -558,39 +568,21 @@ export const TenantApi = {
     body: JSON.stringify({ status })
   })).onboarding,
 
-  // 13. Desenvolvimento (PDI, metas e 1:1s) — toda alteração devolve o PDI completo já atualizado
+  // 13. Desenvolvimento (PDI, metas e 1:1s) — toda alteração devolve o PDI já atualizado + o compromisso pendente do próximo 1:1 na Agenda
   getDevelopment: async () => {
-    const data = await request<{ success: boolean; developmentRecords: CollaboratorDevelopment[]; lookups: DevelopmentLookups }>('/api/v1/development');
-    return { records: data.developmentRecords, lookups: data.lookups };
+    const data = await request<{ success: boolean; developmentRecords: CollaboratorDevelopment[]; lookups: DevelopmentLookups; nextMeetings: AgendaEvent[] }>('/api/v1/development');
+    return { records: data.developmentRecords, lookups: data.lookups, nextMeetings: data.nextMeetings ?? [] };
   },
   getDevelopmentPeople: async () => (await request<{ success: boolean; people: DevelopmentPerson[] }>('/api/v1/development/people')).people,
-  createDevelopmentRecord: async (payload: Record<string, unknown>) => (await request<{ success: boolean; developmentRecord: CollaboratorDevelopment }>('/api/v1/development', {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  })).developmentRecord,
-  updateDevelopmentRecord: async (recordId: string, payload: Record<string, unknown>) => (await request<{ success: boolean; developmentRecord: CollaboratorDevelopment }>(`/api/v1/development/${recordId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload)
-  })).developmentRecord,
+  createDevelopmentRecord: (payload: Record<string, unknown>) => developmentChange('/api/v1/development', 'POST', payload),
+  updateDevelopmentRecord: (recordId: string, payload: Record<string, unknown>) => developmentChange(`/api/v1/development/${recordId}`, 'PATCH', payload),
   deleteDevelopmentRecord: async (recordId: string) => { await request<{ success: boolean }>(`/api/v1/development/${recordId}`, { method: 'DELETE' }); },
-  createGoal: async (recordId: string, payload: Record<string, unknown>) => (await request<{ success: boolean; developmentRecord: CollaboratorDevelopment }>(`/api/v1/development/${recordId}/goals`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  })).developmentRecord,
-  updateGoal: async (recordId: string, goalId: string, payload: Record<string, unknown>) => (await request<{ success: boolean; developmentRecord: CollaboratorDevelopment }>(`/api/v1/development/${recordId}/goals/${goalId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload)
-  })).developmentRecord,
-  deleteGoal: async (recordId: string, goalId: string) => (await request<{ success: boolean; developmentRecord: CollaboratorDevelopment }>(`/api/v1/development/${recordId}/goals/${goalId}`, { method: 'DELETE' })).developmentRecord,
-  createOneOnOne: async (recordId: string, payload: Record<string, unknown>) => (await request<{ success: boolean; developmentRecord: CollaboratorDevelopment }>(`/api/v1/development/${recordId}/one-on-ones`, {
-    method: 'POST',
-    body: JSON.stringify(payload)
-  })).developmentRecord,
-  updateOneOnOne: async (recordId: string, meetingId: string, payload: Record<string, unknown>) => (await request<{ success: boolean; developmentRecord: CollaboratorDevelopment }>(`/api/v1/development/${recordId}/one-on-ones/${meetingId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(payload)
-  })).developmentRecord,
-  deleteOneOnOne: async (recordId: string, meetingId: string) => (await request<{ success: boolean; developmentRecord: CollaboratorDevelopment }>(`/api/v1/development/${recordId}/one-on-ones/${meetingId}`, { method: 'DELETE' })).developmentRecord,
+  createGoal: (recordId: string, payload: Record<string, unknown>) => developmentChange(`/api/v1/development/${recordId}/goals`, 'POST', payload),
+  updateGoal: (recordId: string, goalId: string, payload: Record<string, unknown>) => developmentChange(`/api/v1/development/${recordId}/goals/${goalId}`, 'PATCH', payload),
+  deleteGoal: (recordId: string, goalId: string) => developmentChange(`/api/v1/development/${recordId}/goals/${goalId}`, 'DELETE'),
+  createOneOnOne: (recordId: string, payload: Record<string, unknown>) => developmentChange(`/api/v1/development/${recordId}/one-on-ones`, 'POST', payload),
+  updateOneOnOne: (recordId: string, meetingId: string, payload: Record<string, unknown>) => developmentChange(`/api/v1/development/${recordId}/one-on-ones/${meetingId}`, 'PATCH', payload),
+  deleteOneOnOne: (recordId: string, meetingId: string) => developmentChange(`/api/v1/development/${recordId}/one-on-ones/${meetingId}`, 'DELETE'),
 
   // 14. Retenção
   getRetentionData: async () => await request<{ success: boolean; climateSurveys: ClimateSurveyResponse[]; turnoverAlerts: TurnoverRiskAlert[] }>('/api/v1/retention'),

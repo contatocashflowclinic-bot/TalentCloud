@@ -7,11 +7,12 @@ import { useTenant } from '../../context/TenantContext.js';
 import { useAuth } from '../../context/AuthContext.js';
 import { TenantApi } from '../../services/api.js';
 import {
-  CollaboratorDevelopment, DevelopmentLookups, DevelopmentPerson, OneOnOneMeeting, PDIGoal
+  AgendaEvent, CollaboratorDevelopment, DevelopmentChange, DevelopmentLookups, DevelopmentPerson, OneOnOneMeeting, PDIGoal
 } from '../../types.js';
-import { formatDateSP, formatDateTimeSP, spDateKey } from '../../utils/dateUtils.js';
+import { formatDateSP, formatDateTimeSP, spDateKey, toDateTimeLocalSP } from '../../utils/dateUtils.js';
 import {
-  GOAL_STATUS, canDeleteGoal, isGoalOverdue, isOpenGoal, overallProgress, quarterFrom, sortGoals
+  DEFAULT_MEETING_TIME, GOAL_STATUS, canDeleteGoal, isGoalOverdue, isOpenGoal, meetingTimeOptions, overallProgress, quarterFrom,
+  recordIdOfMeeting, sortGoals
 } from '../../utils/pdiUtils.js';
 import { ConfirmDialog } from '../ConfirmDialog.js';
 import { EditFormModal, FieldDef } from './EditFormModal.js';
@@ -44,6 +45,7 @@ export const ModuleDevelopment: React.FC = () => {
   const canEdit = !!user?.permissions.includes('development:edit');
 
   const [records, setRecords] = useState<CollaboratorDevelopment[]>([]);
+  const [nextMeetings, setNextMeetings] = useState<Record<string, AgendaEvent>>({});
   const [lookups, setLookups] = useState<DevelopmentLookups>(NO_LOOKUPS);
   const [loading, setLoading] = useState(true);
   const [selectedRecordId, setSelectedRecordId] = useState('');
@@ -61,6 +63,7 @@ export const ModuleDevelopment: React.FC = () => {
       setLoading(true);
       const data = await TenantApi.getDevelopment();
       setRecords(data.records);
+      setNextMeetings(Object.fromEntries(data.nextMeetings.map(m => [recordIdOfMeeting(m.id), m])));
       setLookups(data.lookups ?? NO_LOOKUPS);
       setSelectedRecordId(current => (data.records.some(r => r.id === current) ? current : data.records[0]?.id ?? ''));
     } catch (err: any) {
@@ -87,13 +90,31 @@ export const ModuleDevelopment: React.FC = () => {
   const departmentName = (id?: string) => lookups.departments.find(d => d.id === id)?.name;
   const managerName = (id?: string) => lookups.members.find(m => m.id === id)?.name;
 
-  const replaceRecord = (updated: CollaboratorDevelopment) =>
-    setRecords(list => list.map(r => (r.id === updated.id ? updated : r)));
+  /** Puts an updated PDI (and its pending next-1:1 appointment in the Agenda) into the screen state. */
+  const applyChange = ({ record, nextMeeting }: DevelopmentChange) => {
+    setRecords(list => (list.some(r => r.id === record.id) ? list.map(r => (r.id === record.id ? record : r)) : [...list, record]));
+    setNextMeetings(current => {
+      const next = { ...current };
+      if (nextMeeting) next[record.id] = nextMeeting;
+      else delete next[record.id];
+      return next;
+    });
+  };
 
-  /** Runs a change that returns the updated PDI; the caller keeps the form open on error (the form shows the message). */
-  const save = async (change: () => Promise<CollaboratorDevelopment>) => {
-    replaceRecord(await change());
+  /** Runs a change; the form stays open on error (it shows the message). */
+  const save = async (change: () => Promise<DevelopmentChange>) => {
+    applyChange(await change());
     setModal(null);
+  };
+
+  // Time of the appointment in the Agenda (HH:MM, São Paulo) of the PDI's next 1:1, when there is one on the PDI's date
+  const appointmentOf = (record: CollaboratorDevelopment) => {
+    const meeting = nextMeetings[record.id];
+    return meeting && record.nextReviewDate && spDateKey(meeting.startsAt) === record.nextReviewDate ? meeting : undefined;
+  };
+  const meetingTimeOf = (record: CollaboratorDevelopment) => {
+    const meeting = appointmentOf(record);
+    return meeting ? toDateTimeLocalSP(meeting.startsAt).slice(11) : DEFAULT_MEETING_TIME;
   };
 
   const ask = (title: string, message: React.ReactNode, confirmLabel: string, run: () => Promise<void>, tone: Pending['tone'] = 'danger') =>
@@ -133,7 +154,7 @@ export const ModuleDevelopment: React.FC = () => {
     });
 
   // ---- Form definitions -------------------------------------------------------------------
-  const recordFields: FieldDef[] = [
+  const recordFields = (time?: string): FieldDef[] => [
     { key: 'collaboratorName', label: 'Nome do colaborador', type: 'text', required: true },
     { key: 'jobTitle', label: 'Cargo', type: 'text', required: true, half: true },
     {
@@ -145,7 +166,8 @@ export const ModuleDevelopment: React.FC = () => {
       options: lookups.members.map(m => ({ value: m.id, label: m.jobTitle ? `${m.name} — ${m.jobTitle}` : m.name }))
     },
     { key: 'hireDate', label: 'Data de admissão', type: 'date', required: true, half: true },
-    { key: 'nextReviewDate', label: 'Próximo 1:1', type: 'date', half: true, help: 'Opcional. Fica em destaque no PDI e avisa quando atrasar.' }
+    { key: 'nextReviewDate', label: 'Próximo 1:1', type: 'date', half: true, help: 'Opcional. Vira um compromisso na Agenda e avisa quando atrasar.' },
+    { key: 'nextReviewTime', label: 'Horário do próximo 1:1', type: 'select', noEmpty: true, half: true, options: meetingTimeOptions(time), help: 'Compromisso de 30 minutos.' }
   ];
 
   const goalFields: FieldDef[] = [
@@ -155,9 +177,12 @@ export const ModuleDevelopment: React.FC = () => {
     { key: 'description', label: 'Como será medido (opcional)', type: 'textarea', placeholder: 'Ex.: Aprovação no exame e apresentação do aprendizado ao time.' }
   ];
 
-  const meetingFields = (withNext: boolean): FieldDef[] => [
-    { key: 'date', label: 'Data do 1:1', type: 'date', required: true, half: true, help: 'Data em que a conversa aconteceu.' },
-    ...(withNext ? [{ key: 'nextMeetingDate', label: 'Próximo 1:1', type: 'date' as const, half: true, help: 'Opcional. Quando será a próxima conversa.' }] : []),
+  const meetingFields = (withNext: boolean, time?: string): FieldDef[] => [
+    { key: 'date', label: 'Data do 1:1', type: 'date', required: true, help: 'Data em que a conversa aconteceu.' },
+    ...(withNext ? [
+      { key: 'nextMeetingDate', label: 'Próximo 1:1', type: 'date' as const, half: true, help: 'Opcional. Vira um compromisso na Agenda.' },
+      { key: 'nextMeetingTime', label: 'Horário do próximo 1:1', type: 'select' as const, noEmpty: true, half: true, options: meetingTimeOptions(time), help: 'Compromisso de 30 minutos.' }
+    ] : []),
     { key: 'keyTakeaways', label: 'Principais pontos conversados', type: 'textarea', required: true },
     { key: 'actionItems', label: 'Ações combinadas', type: 'lines', help: 'Uma ação por linha. Opcional.' }
   ];
@@ -173,22 +198,22 @@ export const ModuleDevelopment: React.FC = () => {
       case 'record-new': {
         const { person } = modal;
         const initial: Record<string, unknown> = person
-          ? { collaboratorName: person.name, jobTitle: person.jobTitle, departmentId: person.departmentId, hireDate: person.hireDate ?? '' }
-          : {};
+          ? { collaboratorName: person.name, jobTitle: person.jobTitle, departmentId: person.departmentId, hireDate: person.hireDate ?? '', nextReviewTime: DEFAULT_MEETING_TIME }
+          : { nextReviewTime: DEFAULT_MEETING_TIME };
         return (
           <EditFormModal
             eyebrow="Novo PDI"
             title={person ? person.name : 'Cadastrar colaborador'}
             subtitle="Confira os dados. Depois é só incluir metas e registrar os 1:1s."
-            fields={recordFields}
+            fields={recordFields()}
             initial={initial}
             saveLabel="Criar PDI"
             alwaysSave
             onClose={close}
             onSave={async (changes) => {
               const created = await TenantApi.createDevelopmentRecord({ collaboratorId: person?.id, ...initial, ...changes });
-              setRecords(list => [...list, created]);
-              setSelectedRecordId(created.id);
+              applyChange(created);
+              setSelectedRecordId(created.record.id);
               setModal(null);
             }}
           />
@@ -200,8 +225,8 @@ export const ModuleDevelopment: React.FC = () => {
           <EditFormModal
             title={activeRecord.collaboratorName}
             subtitle="Dados do colaborador neste PDI."
-            fields={recordFields}
-            initial={{ ...activeRecord }}
+            fields={recordFields(meetingTimeOf(activeRecord))}
+            initial={{ ...activeRecord, nextReviewTime: meetingTimeOf(activeRecord) }}
             onClose={close}
             onSave={(changes) => save(() => TenantApi.updateDevelopmentRecord(activeRecord.id, changes))}
           />
@@ -247,13 +272,14 @@ export const ModuleDevelopment: React.FC = () => {
         ) : null;
 
       case 'meeting-new': {
-        const initial = { date: today };
+        const time = activeRecord ? meetingTimeOf(activeRecord) : DEFAULT_MEETING_TIME;
+        const initial = { date: today, nextMeetingTime: time };
         return activeRecord ? (
           <EditFormModal
             eyebrow="Registrar 1:1"
             title={activeRecord.collaboratorName}
             subtitle="Registre o que foi conversado e o que ficou combinado."
-            fields={meetingFields(true)}
+            fields={meetingFields(true, time)}
             initial={initial}
             saveLabel="Registrar 1:1"
             alwaysSave
@@ -283,12 +309,13 @@ export const ModuleDevelopment: React.FC = () => {
       await TenantApi.deleteDevelopmentRecord(record.id);
       const rest = records.filter(r => r.id !== record.id);
       setRecords(rest);
+      setNextMeetings(current => Object.fromEntries(Object.entries(current).filter(([id]) => id !== record.id)));
       setSelectedRecordId(rest[0]?.id ?? '');
     });
 
   const askDeleteGoal = (record: CollaboratorDevelopment, goal: PDIGoal) =>
     ask('Excluir esta meta?', <>A meta <strong>{goal.title}</strong> ainda não teve andamento e será excluída.</>, 'Excluir meta', async () => {
-      replaceRecord(await TenantApi.deleteGoal(record.id, goal.id));
+      applyChange(await TenantApi.deleteGoal(record.id, goal.id));
     });
 
   const askCancelGoal = (record: CollaboratorDevelopment, goal: PDIGoal) =>
@@ -296,12 +323,12 @@ export const ModuleDevelopment: React.FC = () => {
       'Cancelar esta meta?',
       <>A meta <strong>{goal.title}</strong> fica marcada como cancelada e continua no histórico. Você pode reabri-la depois.</>,
       'Cancelar meta',
-      async () => { replaceRecord(await TenantApi.updateGoal(record.id, goal.id, { status: 'cancelled', note: 'Meta cancelada.' })); }
+      async () => { applyChange(await TenantApi.updateGoal(record.id, goal.id, { status: 'cancelled', note: 'Meta cancelada.' })); }
     );
 
   const askDeleteMeeting = (record: CollaboratorDevelopment, meeting: OneOnOneMeeting) =>
     ask('Excluir este 1:1?', <>O registro do 1:1 de <strong>{formatDateSP(meeting.date)}</strong> será excluído do histórico.</>, 'Excluir 1:1', async () => {
-      replaceRecord(await TenantApi.deleteOneOnOne(record.id, meeting.id));
+      applyChange(await TenantApi.deleteOneOnOne(record.id, meeting.id));
     });
 
   const nextLate = !!activeRecord?.nextReviewDate && activeRecord.nextReviewDate < today;
@@ -396,7 +423,7 @@ export const ModuleDevelopment: React.FC = () => {
                   {activeRecord.nextReviewDate ? (
                     <>
                       {nextLate ? <AlertTriangle className="w-3 h-3" /> : <CalendarClock className="w-3 h-3 text-slate-400" />}
-                      {formatDateSP(activeRecord.nextReviewDate)}{nextLate ? ' · atrasado' : ''}
+                      {appointmentOf(activeRecord) ? formatDateTimeSP(appointmentOf(activeRecord)!.startsAt) : formatDateSP(activeRecord.nextReviewDate)}{nextLate ? ' · atrasado' : ''}
                     </>
                   ) : 'Não agendado'}
                 </dd>

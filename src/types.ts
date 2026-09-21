@@ -612,6 +612,12 @@ export interface DevelopmentPerson {
   origin: 'hire' | 'member';
 }
 
+/** Answer of every PDI change: the updated PDI and its pending "next 1:1" appointment in the Agenda (null when none). */
+export interface DevelopmentChange {
+  record: CollaboratorDevelopment;
+  nextMeeting: AgendaEvent | null;
+}
+
 /** Names behind the department / manager ids of the PDI records (also needed by read-only viewers). */
 export interface DevelopmentLookups {
   departments: { id: string; name: string }[];

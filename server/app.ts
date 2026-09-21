@@ -19,13 +19,15 @@ import { withTransaction } from './db/pool.js';
 import { assertValidFile, getFile, MAX_FILE_BYTES, putFile, removeFile, safeFileName } from './storage.js';
 import { reviewItem, type AdmissionAction } from './tenant/admission.js';
 import {
-  addGoal, addMeeting, buildGoal, cleanText, editMeeting, parseRecordFields, removeGoal, removeMeeting, updateGoal,
-  type RecordRefs
+  addGoal, addMeeting, buildGoal, cleanText, editMeeting, isMeetingEventId, parseRecordFields, parseTime, removeGoal, removeMeeting,
+  updateGoal, type RecordRefs
 } from './tenant/development.js';
+import type { NextMeetingRequest } from './tenant/TenantRepository.js';
 import {
   CANDIDATE_DECLARED_FIELDS,
   OFFER_DOCUMENT_CATEGORIES,
   type AdmissionItem,
+  type CollaboratorDevelopment,
   type OfferDocumentCategory,
   type OneOnOneMeeting,
   type OnboardingChecklistItem
@@ -1599,17 +1601,32 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // ---------------------------------------------------------
   // MÓDULO 13: Desenvolvimento (PDI, metas e 1:1s)
   // Permissões: development:view consulta; development:edit cria PDIs, metas e 1:1s e os altera ou exclui.
-  // Toda alteração devolve o PDI completo (`developmentRecord`) já atualizado. As regras estão em tenant/development.ts.
+  // Toda alteração devolve o PDI completo (`developmentRecord`) já atualizado e o compromisso pendente do próximo 1:1
+  // na Agenda (`nextMeeting`, ou null). As regras estão em tenant/development.ts; a ligação com a Agenda, no repositório.
   // ---------------------------------------------------------
   const developmentRefs = async (db: TenantConnectionContext['db']): Promise<RecordRefs> => {
     const [departments, users] = await Promise.all([db.departments.list(), db.users.list()]);
     return { departmentIds: new Set(departments.map(d => d.id)), memberIds: new Set(users.map(u => u.id)) };
   };
 
+  /**
+   * Quem agenda e, se veio, o horário do próximo 1:1. Os formulários mandam o horário sempre preenchido; por isso ele só
+   * conta junto com a data (`timeAlone`: no PATCH do PDI o formulário só envia o que foi alterado, então o horário sozinho é uma remarcação).
+   */
+  const nextMeetingRequest = (req: Request, dateKey: string, timeKey: string, timeAlone = false): NextMeetingRequest => {
+    const body = req.body ?? {};
+    const time = parseTime(body[timeKey]);
+    const hasDate = body[dateKey] !== undefined && body[dateKey] !== null && body[dateKey] !== '';
+    return { actor: { id: req.auth!.id, name: req.auth!.name }, time: hasDate || timeAlone ? time : undefined };
+  };
+
+  const developmentResult = async (db: TenantConnectionContext['db'], developmentRecord: CollaboratorDevelopment) =>
+    ({ developmentRecord, nextMeeting: (await db.openNextMeeting(developmentRecord.id)) ?? null });
+
   app.get('/api/v1/development', can('development:view'), h(async (req, res) => {
     const { db } = ctx(req);
-    const [developmentRecords, lookups] = await Promise.all([db.development.list(), db.developmentLookups()]);
-    res.json({ success: true, developmentRecords, lookups });
+    const [developmentRecords, lookups, nextMeetings] = await Promise.all([db.development.list(), db.developmentLookups(), db.openNextMeetings()]);
+    res.json({ success: true, developmentRecords, lookups, nextMeetings });
   }));
 
   // Quem ainda pode ganhar um PDI (contratações em onboarding e membros da organização sem PDI)
@@ -1624,13 +1641,15 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     const collaboratorId = b.collaboratorId === undefined || b.collaboratorId === null || b.collaboratorId === ''
       ? newId('colab')
       : cleanText(b.collaboratorId, 'Colaborador', 80);
-    res.status(201).json({ success: true, developmentRecord: await db.createDevelopmentRecord(collaboratorId, fields) });
+    const created = await db.createDevelopmentRecord(collaboratorId, fields, nextMeetingRequest(req, 'nextReviewDate', 'nextReviewTime'));
+    res.status(201).json({ success: true, ...(await developmentResult(db, created)) });
   }));
 
   app.patch('/api/v1/development/:id', can('development:edit'), h(async (req, res) => {
     const { db } = ctx(req);
     const patch = parseRecordFields(req.body ?? {}, true, await developmentRefs(db));
-    res.json({ success: true, developmentRecord: await db.changeDevelopment(req.params.id, () => patch) });
+    const updated = await db.changeDevelopment(req.params.id, () => patch, nextMeetingRequest(req, 'nextReviewDate', 'nextReviewTime', true));
+    res.json({ success: true, ...(await developmentResult(db, updated)) });
   }));
 
   app.delete('/api/v1/development/:id', can('development:edit'), h(async (req, res) => {
@@ -1639,46 +1658,50 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   }));
 
   app.post('/api/v1/development/:id/goals', can('development:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
     const goal = buildGoal(req.body ?? {});
-    const developmentRecord = await ctx(req).db.changeDevelopment(req.params.id, record => addGoal(record, goal));
-    res.status(201).json({ success: true, goal, developmentRecord });
+    const updated = await db.changeDevelopment(req.params.id, record => addGoal(record, goal));
+    res.status(201).json({ success: true, goal, ...(await developmentResult(db, updated)) });
   }));
 
   // Edita a meta e/ou registra andamento (progressPercentage, status e note); só o que veio no corpo é alterado
   app.patch('/api/v1/development/:id/goals/:goalId', can('development:edit'), h(async (req, res) => {
-    const developmentRecord = await ctx(req).db.changeDevelopment(
-      req.params.id,
-      record => updateGoal(record, req.params.goalId, req.body ?? {}, req.auth!.name)
-    );
-    res.json({ success: true, developmentRecord });
+    const { db } = ctx(req);
+    const updated = await db.changeDevelopment(req.params.id, record => updateGoal(record, req.params.goalId, req.body ?? {}, req.auth!.name));
+    res.json({ success: true, ...(await developmentResult(db, updated)) });
   }));
 
   app.delete('/api/v1/development/:id/goals/:goalId', can('development:edit'), h(async (req, res) => {
-    const developmentRecord = await ctx(req).db.changeDevelopment(req.params.id, record => removeGoal(record, req.params.goalId));
-    res.json({ success: true, developmentRecord });
+    const { db } = ctx(req);
+    const updated = await db.changeDevelopment(req.params.id, record => removeGoal(record, req.params.goalId));
+    res.json({ success: true, ...(await developmentResult(db, updated)) });
   }));
 
   app.post('/api/v1/development/:id/one-on-ones', can('development:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
     let meeting: OneOnOneMeeting | undefined;
-    const developmentRecord = await ctx(req).db.changeDevelopment(req.params.id, record => {
+    const updated = await db.changeDevelopment(req.params.id, record => {
       const added = addMeeting(record, req.body ?? {}, req.auth!.name);
       meeting = added.meeting;
       return added.patch;
-    });
-    res.status(201).json({ success: true, meeting, developmentRecord });
+    }, nextMeetingRequest(req, 'nextMeetingDate', 'nextMeetingTime'));
+    res.status(201).json({ success: true, meeting, ...(await developmentResult(db, updated)) });
   }));
 
   app.patch('/api/v1/development/:id/one-on-ones/:meetingId', can('development:edit'), h(async (req, res) => {
-    const developmentRecord = await ctx(req).db.changeDevelopment(
+    const { db } = ctx(req);
+    const updated = await db.changeDevelopment(
       req.params.id,
-      record => editMeeting(record, req.params.meetingId, req.body ?? {})
+      record => editMeeting(record, req.params.meetingId, req.body ?? {}),
+      nextMeetingRequest(req, 'nextMeetingDate', 'nextMeetingTime')
     );
-    res.json({ success: true, developmentRecord });
+    res.json({ success: true, ...(await developmentResult(db, updated)) });
   }));
 
   app.delete('/api/v1/development/:id/one-on-ones/:meetingId', can('development:edit'), h(async (req, res) => {
-    const developmentRecord = await ctx(req).db.changeDevelopment(req.params.id, record => removeMeeting(record, req.params.meetingId));
-    res.json({ success: true, developmentRecord });
+    const { db } = ctx(req);
+    const updated = await db.changeDevelopment(req.params.id, record => removeMeeting(record, req.params.meetingId));
+    res.json({ success: true, ...(await developmentResult(db, updated)) });
   }));
 
   // ---------------------------------------------------------
@@ -1796,6 +1819,8 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     }
     const event = await db.agendaEvents.update(req.params.id, patch);
     if (!event) throw new NotFoundError('Compromisso não encontrado.');
+    // O próximo 1:1 de um PDI também vive aqui: remarcar ou cancelar o compromisso acerta a data do PDI
+    if (isMeetingEventId(event.id)) await db.syncDevelopmentFromEvent(event, false);
     res.json({ success: true, event });
   }));
 
@@ -1805,6 +1830,7 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     if (!existing) throw new NotFoundError('Compromisso não encontrado.');
     if (existing.createdById !== req.auth!.id) throw new ForbiddenError('Somente quem criou o compromisso pode excluí-lo.');
     await db.agendaEvents.delete(req.params.id);
+    if (isMeetingEventId(existing.id)) await db.syncDevelopmentFromEvent(existing, true);
     res.json({ success: true });
   }));
 

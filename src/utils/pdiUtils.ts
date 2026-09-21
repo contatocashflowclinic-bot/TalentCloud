@@ -27,9 +27,25 @@ export function overallProgress(goals: PDIGoal[]): number | null {
   return Math.round(counted.reduce((sum, g) => sum + g.progressPercentage, 0) / counted.length);
 }
 
+/** Time of the "next 1:1" appointment in the Agenda when none is chosen (same default as the server). */
+export const DEFAULT_MEETING_TIME = '09:00';
+
+/** Half-hour slots from 07:00 to 20:00; a time that is already scheduled outside the grid (e.g. 10:15) is kept as an option. */
+export function meetingTimeOptions(current?: string): { value: string; label: string }[] {
+  const times: string[] = [];
+  for (let minutes = 7 * 60; minutes <= 20 * 60; minutes += 30) {
+    times.push(`${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`);
+  }
+  if (current && !times.includes(current)) times.push(current);
+  return times.sort().map(t => ({ value: t, label: t }));
+}
+
 /** Default deadline of a new goal: one quarter (90 days) from the given calendar day (AAAA-MM-DD). */
 export function quarterFrom(day: string): string {
   const d = new Date(`${day}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + 90);
   return d.toISOString().split('T')[0];
 }
+
+/** PDI a que pertence um compromisso da Agenda criado para o próximo 1:1 (id `agd-pdi~<pdi>~<sufixo>`). */
+export const recordIdOfMeeting = (eventId: string): string => eventId.split('~')[1] ?? '';

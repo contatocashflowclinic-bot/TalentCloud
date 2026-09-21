@@ -7,7 +7,7 @@
 | # | O que fazer | O que deve acontecer |
 |---|---|---|
 | A1 | Abra **Desenvolvimento**. | Título "Desenvolvimento Contínuo & PDI", um seletor de colaborador e o botão **Novo PDI**. Abaixo, um cartão com o nome, cargo, departamento e: **Gestor, Admissão, Último 1:1, Próximo 1:1** e **Progresso do PDI**. |
-| A2 | Olhe o **Próximo 1:1** e os **Prazos** das metas. | Uma data que já passou aparece **em vermelho** com "· atrasado" (1:1) ou "· vencido" (meta). |
+| A2 | Olhe o **Próximo 1:1** e os **Prazos** das metas. | Uma data que já passou aparece **em vermelho** com "· atrasado" (1:1) ou "· vencido" (meta). Quando o próximo 1:1 está na Agenda, aparece com o **horário** (ex.: "23/09/2026 às 14:30"). |
 | A3 | Troque o colaborador no seletor. | O cartão, as metas e o histórico de 1:1s trocam para o da pessoa escolhida. |
 
 ## B. Criar um PDI
@@ -38,7 +38,7 @@
 
 | # | O que fazer | O que deve acontecer |
 |---|---|---|
-| D1 | Em **Histórico de 1:1s**, clique **Registrar 1:1**. A data vem com **hoje**. Escreva os pontos conversados, uma ação por linha e um **Próximo 1:1** futuro. Salve. | O 1:1 aparece no topo do histórico, com as ações em lista e "Registrado por <você>". No cartão: **Último 1:1 = a data registrada** e **Próximo 1:1 = a data combinada**. |
+| D1 | Em **Histórico de 1:1s**, clique **Registrar 1:1**. A data vem com **hoje**. Escreva os pontos conversados, uma ação por linha e um **Próximo 1:1** futuro (o **Horário** já vem com 09:00; mude se quiser). Salve. | O 1:1 aparece no topo do histórico, com as ações em lista e "Registrado por <você>". No cartão: **Último 1:1 = a data registrada** e **Próximo 1:1 = a data e o horário combinados**. (O compromisso na Agenda está na parte H.) |
 | D2 | Registre um 1:1 com data **no futuro**. | O formulário **recusa** com "A data do 1:1 não pode estar no futuro…" e continua aberto. |
 | D3 | Registre um 1:1 sem os pontos conversados. | O navegador pede o campo obrigatório. |
 | D4 | Escolha um colaborador cujo **Próximo 1:1** já passou (ex.: **Beatriz Vasconcelos**, marcado em vermelho como atrasado) e registre um 1:1 com a data de **hoje**. | O "Próximo 1:1" atrasado (agora cumprido) **some**: volta a **Não agendado**, e o **Último 1:1** passa a ser hoje. |
@@ -49,7 +49,7 @@
 
 | # | O que fazer | O que deve acontecer |
 |---|---|---|
-| E1 | Clique **Editar dados**, mude o cargo, o gestor e o **Próximo 1:1** e salve. | O cartão mostra os novos dados. Esvaziar **Próximo 1:1** volta a "Não agendado". |
+| E1 | Clique **Editar dados**, mude o cargo, o gestor e o **Próximo 1:1** (data e horário) e salve. | O cartão mostra os novos dados. Esvaziar a data do **Próximo 1:1** volta a "Não agendado". |
 | E2 | Num PDI **sem nenhuma meta e sem nenhum 1:1**, clique **Excluir PDI** e confirme. | O PDI é excluído. (Se já tem meta ou 1:1, o botão **não aparece**.) |
 
 ## F. Permissões e organizações
@@ -65,6 +65,24 @@
 | # | O que fazer | O que deve acontecer |
 |---|---|---|
 | G1 | Abra **Desenvolvimento** com a tela estreita (ou no celular). | Sem rolagem para os lados: o cartão vira duas colunas, as metas ficam empilhadas e os botões quebram de linha. Os formulários cabem na tela. |
+
+## H. Próximo 1:1 na Agenda Corporativa
+
+Use um colaborador com gestor definido (ex.: **Beatriz Vasconcelos**) e tenha o menu **Agenda Corporativa** à mão.
+
+| # | O que fazer | O que deve acontecer |
+|---|---|---|
+| H1 | Em **Registrar 1:1** (ou **Editar dados**), informe um **Próximo 1:1** para os próximos dias, com horário `14:30`, e salve. | O cartão mostra "<data> às 14:30". |
+| H2 | Abra **Agenda Corporativa** e procure a data. | Existe uma **reunião "1:1 — <nome>"**, das 14:30 às 15:00, com o gestor entre os participantes. Ao abrir: a **pauta** já vem com "Revisar o andamento das metas do PDI", uma linha "Meta: … (x%)" para cada meta em aberto e "Retomar: …" para as ações do último 1:1. |
+| H3 | Volte em **Desenvolvimento → Editar dados** e mude só o **horário** para 15:00. | O compromisso na Agenda passa para 15:00–15:30 (é o **mesmo** compromisso, não cria outro). |
+| H4 | Mude só a **data** do Próximo 1:1. | O compromisso muda de dia e **mantém o horário**. |
+| H5 | Na **Agenda**, abra o compromisso (quem o criou), mude o dia e salve. Volte em **Desenvolvimento**. | O **Próximo 1:1** do cartão acompanha o novo dia. |
+| H6 | Na **Agenda**, mude o **Status** do compromisso para **Cancelado** e salve. Volte em **Desenvolvimento**. | O **Próximo 1:1** volta a **Não agendado**. Excluir o compromisso na Agenda tem o mesmo efeito. |
+| H7 | Em **Editar dados**, esvazie a data do **Próximo 1:1** e salve. | O compromisso **pendente** some da Agenda. |
+| H8 | Agende um Próximo 1:1 para **hoje**, depois **registre um 1:1** com a data de hoje e informe um novo Próximo 1:1 futuro. (Um 1:1 só pode ser registrado com data de hoje ou passada.) | O compromisso antigo fica **Concluído** na Agenda, com o texto do 1:1 no **resumo**, e nasce **outro** compromisso para a nova data. |
+| H9 | Edite qualquer outra coisa de um PDI que tenha um Próximo 1:1 **antigo** (ex.: Beatriz, "02/04/2026 · atrasado") — adicione uma meta, por exemplo. | **Nenhum** compromisso é criado na Agenda: só uma data nova ou remarcada cria compromisso. |
+| H10 | Renomeie o colaborador ou troque o gestor de um PDI com compromisso pendente. | O título do compromisso acompanha o novo nome; o gestor novo é convidado e o antigo sai. |
+| H11 | Exclua um PDI vazio que tenha um Próximo 1:1 agendado. | O compromisso pendente dele some da Agenda. |
 
 ## Se algo falhar
 

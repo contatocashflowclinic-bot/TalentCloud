@@ -56,6 +56,68 @@ export function isoDay(value: unknown, label: string): string {
 
 const isBlank = (value: unknown) => value === undefined || value === null || value === '';
 
+// ---- Next 1:1 in the Agenda ------------------------------------------------------------------
+/**
+ * The next 1:1 of a PDI is mirrored as a meeting in the Agenda. The link needs no extra column: the appointment id
+ * carries the PDI id (`agd-pdi~<pdi>~<random>`), so it is found by prefix. The date lives in the PDI
+ * (`nextReviewDate`), the time lives in the appointment.
+ */
+export const MEETING_ID_PREFIX = 'agd-pdi~';
+export const DEFAULT_MEETING_TIME = '09:00';
+export const MEETING_MINUTES = 30;
+
+export const newMeetingEventId = (recordId: string): string => `${MEETING_ID_PREFIX}${recordId}~${newId('m').slice(2)}`;
+export const meetingEventPrefix = (recordId: string): string => `${MEETING_ID_PREFIX}${recordId}~`;
+export const isMeetingEventId = (id: string): boolean => id.startsWith(MEETING_ID_PREFIX);
+export const recordIdOfMeetingEvent = (id: string): string => id.slice(MEETING_ID_PREFIX.length).split('~')[0];
+
+export const isOpenEvent = (status: string): boolean => status === 'scheduled' || status === 'in_progress';
+
+/** HH:MM (24h) or undefined when not sent. */
+export function parseTime(value: unknown): string | undefined {
+  if (isBlank(value)) return undefined;
+  if (typeof value !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) {
+    throw new ValidationError('Horário do próximo 1:1: informe um horário válido (HH:MM).');
+  }
+  return value;
+}
+
+/** São Paulo has no daylight saving time since 2019: a fixed UTC-3, the same rule the screens use. */
+export const spInstant = (day: string, time: string): string => new Date(`${day}T${time}:00-03:00`).toISOString();
+
+const spParts = (iso: string): Record<string, string> =>
+  Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+    }).formatToParts(new Date(iso)).map(p => [p.type, p.value])
+  );
+export const spDate = (iso: string): string => { const p = spParts(iso); return `${p.year}-${p.month}-${p.day}`; };
+export const spTime = (iso: string): string => { const p = spParts(iso); return `${p.hour}:${p.minute}`; };
+
+export interface NextMeetingDetails {
+  title: string;
+  description: string;
+  agenda: string[];
+  assigneeIds: string[];
+}
+
+/** What the Agenda shows for the next 1:1: who, and a starting agenda built from the open goals and the last 1:1's actions. */
+export function nextMeetingDetails(record: CollaboratorDevelopment, memberIds: ReadonlySet<string>, actorId?: string): NextMeetingDetails {
+  const openGoals = record.goals.filter(g => g.status === 'not_started' || g.status === 'in_progress').slice(0, 5);
+  const latest = [...record.oneOnOnes].sort((a, b) => b.date.localeCompare(a.date))[0];
+  const people = [record.managerId, record.collaboratorId, actorId].filter((id): id is string => !!id && memberIds.has(id));
+  return {
+    title: `1:1 — ${record.collaboratorName}`,
+    description: `Próximo 1:1 do PDI de ${record.collaboratorName}. Compromisso criado pelo módulo Desenvolvimento: ao remarcá-lo ou cancelá-lo aqui, o PDI acompanha.`,
+    agenda: [
+      'Revisar o andamento das metas do PDI',
+      ...openGoals.map(g => `Meta: ${g.title} (${g.progressPercentage}%)`),
+      ...(latest?.actionItems.slice(0, 5).map(item => `Retomar: ${item}`) ?? [])
+    ],
+    assigneeIds: [...new Set(people)]
+  };
+}
+
 // ---- PDI record (person) -----------------------------------------------------------------
 export interface RecordRefs {
   departmentIds: ReadonlySet<string>;

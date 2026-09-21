@@ -773,6 +773,69 @@ async function main() {
     check('deleting every 1:1 clears the last review and keeps the scheduled next', cleaned?.json.developmentRecord?.oneOnOnes.length === 0 && cleaned.json.developmentRecord.lastReviewDate === '' && cleaned.json.developmentRecord.nextReviewDate === '2099-01-10', cleaned?.json);
     check('delete 1:1: unknown -> 404, INTERVIEWER -> 403', (await A('DELETE', `${one}/1on1-nope`)).status === 404 && (await R('INTERVIEWER', 'DELETE', `${one}/1on1-nope`)).status === 403);
 
+    // Próximo 1:1 <-> Agenda Corporativa
+    const adminIdA = usersA.json.users[0].id;
+    const pdiEvents = async (pdiId: string) => ((await A('GET', '/api/v1/agenda')).json.events ?? []).filter((e: any) => e.id.startsWith(`agd-pdi~${pdiId}~`));
+    const openOf = (list: any[]) => list.filter(e => e.status === 'scheduled' || e.status === 'in_progress');
+    let evs = await pdiEvents(hirePdi.id);
+    check('the next 1:1 became a 30-min meeting in the Agenda (date, 09:00 default, title, agenda, creator invited)',
+      evs.length === 1 && evs[0].type === 'meeting' && evs[0].status === 'scheduled' && evs[0].startsAt === '2099-01-10T12:00:00.000Z' && evs[0].endsAt === '2099-01-10T12:30:00.000Z'
+      && /^1:1 — /.test(evs[0].title) && evs[0].agenda[0] === 'Revisar o andamento das metas do PDI' && evs[0].agenda.some((a: string) => a.startsWith('Meta:')) && evs[0].assigneeIds.includes(adminIdA) && evs[0].createdById === adminIdA, evs);
+    const listed = (await A('GET', '/api/v1/development')).json;
+    check('the PDI list carries the pending appointments; changes answer with nextMeeting', listed.nextMeetings?.some((e: any) => e.id === evs[0].id) && (await A('PATCH', dv, { jobTitle: 'Analista' })).json.nextMeeting?.id === evs[0].id, listed.nextMeetings);
+    const reschedule = await A('PATCH', dv, { nextReviewDate: '2099-02-01', nextReviewTime: '14:30' });
+    evs = await pdiEvents(hirePdi.id);
+    check('rescheduling date + time moves the SAME appointment (14:30 São Paulo)', evs.length === 1 && evs[0].startsAt === '2099-02-01T17:30:00.000Z' && evs[0].endsAt === '2099-02-01T18:00:00.000Z' && reschedule.json.nextMeeting?.startsAt === evs[0].startsAt, evs);
+    await A('PATCH', dv, { nextReviewTime: '10:00' });
+    check('changing only the time keeps the date', (await pdiEvents(hirePdi.id))[0]?.startsAt === '2099-02-01T13:00:00.000Z');
+    await A('PATCH', dv, { nextReviewDate: '2099-02-02' });
+    check('changing only the date keeps the time', (await pdiEvents(hirePdi.id))[0]?.startsAt === '2099-02-02T13:00:00.000Z');
+    check('invalid time -> 400 and nothing moves', (await A('PATCH', dv, { nextReviewTime: '25:00' })).status === 400 && (await A('POST', one, { date: '2026-03-16', keyTakeaways: 'x', nextMeetingDate: '2099-03-01', nextMeetingTime: '9h' })).status === 400 && (await pdiEvents(hirePdi.id))[0]?.startsAt === '2099-02-02T13:00:00.000Z');
+    await A('POST', one, { date: '2026-05-01', keyTakeaways: 'sem próximo', nextMeetingTime: '16:00' });
+    check('a time without a date never moves the appointment (forms always send the time)', (await pdiEvents(hirePdi.id))[0]?.startsAt === '2099-02-02T13:00:00.000Z');
+    const withManager = await A('PATCH', dv, { managerId: recruiterUser.id });
+    check('a new manager is invited to the pending appointment', (await pdiEvents(hirePdi.id))[0]?.assigneeIds.includes(recruiterUser.id), withManager.json);
+    await A('PATCH', dv, { managerId: null });
+    check('a removed manager is dropped; the creator stays', (await pdiEvents(hirePdi.id))[0]?.assigneeIds.join() === adminIdA);
+    await A('PATCH', dv, { collaboratorName: 'Contratada Renomeada' });
+    check('renaming the collaborator renames the appointment', (await pdiEvents(hirePdi.id))[0]?.title === '1:1 — Contratada Renomeada');
+    const cleared = await A('PATCH', dv, { nextReviewDate: '' });
+    check('clearing the next 1:1 removes the pending appointment', openOf(await pdiEvents(hirePdi.id)).length === 0 && cleared.json.nextMeeting === null && cleared.json.developmentRecord.nextReviewDate === '', cleared.json);
+
+    // Agenda -> PDI (the appointment is also edited on the Agenda screen)
+    await A('PATCH', dv, { nextReviewDate: '2099-03-01', nextReviewTime: '11:00' });
+    const e2 = openOf(await pdiEvents(hirePdi.id))[0];
+    const pdiNow = async () => ((await A('GET', '/api/v1/development')).json.developmentRecords as any[]).find(r => r.id === hirePdi.id);
+    check('a new date creates a new appointment', !!e2 && e2.startsAt === '2099-03-01T14:00:00.000Z', e2);
+    await A('PATCH', `/api/v1/agenda/${e2.id}`, { startsAt: '2099-03-03T15:00:00.000Z' });
+    check('moving the appointment in the Agenda moves the PDI\'s next 1:1', (await pdiNow()).nextReviewDate === '2099-03-03');
+    await A('PATCH', `/api/v1/agenda/${e2.id}`, { status: 'cancelled' });
+    check('cancelling it in the Agenda clears the PDI\'s next 1:1', (await pdiNow()).nextReviewDate === '');
+    await A('PATCH', dv, { nextReviewDate: '2099-04-01' });
+    const e3 = openOf(await pdiEvents(hirePdi.id))[0];
+    check('scheduling again after a cancellation creates a fresh appointment (the cancelled one stays)', !!e3 && e3.id !== e2.id && (await pdiEvents(hirePdi.id)).some((e: any) => e.id === e2.id && e.status === 'cancelled'));
+    await A('DELETE', `/api/v1/agenda/${e3.id}`);
+    check('deleting it in the Agenda clears the PDI\'s next 1:1', (await pdiNow()).nextReviewDate === '');
+    check('isolation: org B sees no PDI appointment of org A', !((await B('GET', '/api/v1/agenda')).json.events ?? []).some((e: any) => e.id.startsWith('agd-pdi~')));
+
+    // A 1:1 that takes place closes the appointment; the next one is a new appointment
+    const ana2 = (await A('POST', '/api/v1/development', { collaboratorName: 'Ana Agenda', jobTitle: 'Analista', hireDate: '2026-01-05', nextReviewDate: '2026-03-01', nextReviewTime: '09:30' })).json;
+    check('a PDI created with a next 1:1 already has its appointment', ana2.nextMeeting?.startsAt === '2026-03-01T12:30:00.000Z' && ana2.nextMeeting.status === 'scheduled', ana2);
+    const doneRes = await A('POST', `/api/v1/development/${ana2.developmentRecord.id}/one-on-ones`, { date: '2026-03-05', keyTakeaways: 'Conversa que cumpriu o agendado', nextMeetingDate: '2099-05-05', nextMeetingTime: '08:00' });
+    const anaEvs = await pdiEvents(ana2.developmentRecord.id);
+    const anaDone = anaEvs.find((e: any) => e.status === 'done');
+    const anaOpen = openOf(anaEvs)[0];
+    check('the registered 1:1 closes the old appointment (done, with the 1:1 as summary) and books the next',
+      anaEvs.length === 2 && anaDone?.summary === 'Conversa que cumpriu o agendado' && anaOpen?.startsAt === '2099-05-05T11:00:00.000Z' && doneRes.json.nextMeeting?.id === anaOpen.id, anaEvs);
+    await A('DELETE', `/api/v1/agenda/${anaDone.id}`);
+    check('deleting a FINISHED appointment does not touch the PDI', ((await A('GET', '/api/v1/development')).json.developmentRecords as any[]).find(r => r.id === ana2.developmentRecord.id)?.nextReviewDate === '2099-05-05');
+
+    // Deleting a PDI takes its pending appointment along
+    const eva = (await A('POST', '/api/v1/development', { collaboratorName: 'Eva Apagável', jobTitle: 'Analista', hireDate: '2026-01-05', nextReviewDate: '2099-06-06' })).json;
+    check('empty PDI with a next 1:1: appointment exists', openOf(await pdiEvents(eva.developmentRecord.id)).length === 1);
+    await A('DELETE', `/api/v1/development/${eva.developmentRecord.id}`);
+    check('deleting the PDI removes its pending appointment', (await pdiEvents(eva.developmentRecord.id)).length === 0);
+
     // Isolation between organizations
     check('isolation: org B sees no PDI of org A and cannot touch it', ((await B('GET', '/api/v1/development')).json.developmentRecords ?? []).length === 0
       && (await B('PATCH', dv, { jobTitle: 'hack' })).status === 404 && (await B('DELETE', dv)).status === 404

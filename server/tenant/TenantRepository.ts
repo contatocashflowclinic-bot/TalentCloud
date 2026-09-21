@@ -32,7 +32,10 @@ import { getPool, Queryable, withTransaction } from '../db/pool.js';
 import { TABLES } from '../db/tables.js';
 import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
 import { buildAdmissionItems, DEFAULT_ADMISSION_TEMPLATES } from './admission.js';
-import { assertRecordRemovable } from './development.js';
+import {
+  assertRecordRemovable, DEFAULT_MEETING_TIME, isMeetingEventId, MEETING_ID_PREFIX, MEETING_MINUTES, meetingEventPrefix,
+  newMeetingEventId, nextMeetingDetails, recordIdOfMeetingEvent, spDate, spInstant, spTime
+} from './development.js';
 import { buildChecklistItems, DEFAULT_INTEGRATION_TEMPLATES } from './integration.js';
 import { newId } from '../ids.js';
 
@@ -54,6 +57,12 @@ const DNA_SPEC: TableSpec = {
   columns: ['mission', 'vision', 'archetype', 'cultureSummary', 'coreValues', 'pillars', 'culturalFitThreshold', 'updatedAt'],
   json: ['pillars']
 };
+
+/** Who is scheduling and, optionally, the time (HH:MM) of the next 1:1. Without `actor` an appointment is never created. */
+export interface NextMeetingRequest {
+  actor?: { id: string; name: string };
+  time?: string;
+}
 
 const INDICATOR_FIELDS = [
   'period', 'timeToHireDays', 'costPerHire', 'earlyTurnover90DaysRate', 'averageCulturalFit', 'openPositionsCount',
@@ -536,29 +545,41 @@ export class TenantRepository {
   }
 
   // ---- Development (PDI + 1:1s): one record per collaborator, goals and meetings live in jsonb -------------
-  /** Read-modify-write of one PDI record with its row locked; `change` returns the patch to store and may throw to abort. */
+  /**
+   * Read-modify-write of one PDI record with its row locked; `change` returns the patch to store and may throw to abort.
+   * The next 1:1 is kept in the Agenda in the same transaction (see `syncNextMeeting`).
+   */
   async changeDevelopment(
     recordId: string,
-    change: (record: CollaboratorDevelopment) => Partial<CollaboratorDevelopment>
+    change: (record: CollaboratorDevelopment) => Partial<CollaboratorDevelopment>,
+    schedule: NextMeetingRequest = {}
   ): Promise<CollaboratorDevelopment> {
     return withTransaction(async tx => {
-      const record = await getRow<CollaboratorDevelopment>(TABLES.development, this.tenantId, recordId, tx, true);
-      if (!record) throw new NotFoundError('Registro de PDI não encontrado');
-      return (await this.development.update(recordId, change(record), tx))!;
+      const before = await getRow<CollaboratorDevelopment>(TABLES.development, this.tenantId, recordId, tx, true);
+      if (!before) throw new NotFoundError('Registro de PDI não encontrado');
+      const after = (await this.development.update(recordId, change(before), tx))!;
+      await this.syncNextMeeting(before, after, schedule, tx);
+      return after;
     });
   }
 
   /** One PDI per collaborator. The advisory lock makes two simultaneous requests for the same person create a single record. */
-  async createDevelopmentRecord(collaboratorId: string, fields: Record<string, unknown>): Promise<CollaboratorDevelopment> {
+  async createDevelopmentRecord(
+    collaboratorId: string,
+    fields: Record<string, unknown>,
+    schedule: NextMeetingRequest = {}
+  ): Promise<CollaboratorDevelopment> {
     return withTransaction(async tx => {
       await tx.query('select pg_advisory_xact_lock(hashtext($1))', [`development:${this.tenantId}:${collaboratorId}`]);
       if ((await this.development.list(tx)).some(r => r.collaboratorId === collaboratorId)) {
         throw new ConflictError('Este colaborador já tem um PDI.');
       }
-      return this.development.insert(
+      const created = await this.development.insert(
         { id: newId('dev'), collaboratorId, goals: [], oneOnOnes: [], lastReviewDate: '', nextReviewDate: '', ...fields },
         tx
       );
+      await this.syncNextMeeting(undefined, created, schedule, tx);
+      return created;
     });
   }
 
@@ -567,7 +588,98 @@ export class TenantRepository {
       const record = await getRow<CollaboratorDevelopment>(TABLES.development, this.tenantId, recordId, tx, true);
       if (!record) throw new NotFoundError('Registro de PDI não encontrado');
       assertRecordRemovable(record);
+      await tx.query('delete from public.agenda_events where tenant_id = $1 and starts_with(id, $2)', [this.tenantId, meetingEventPrefix(recordId)]);
       await this.development.delete(recordId, tx);
+    });
+  }
+
+  // ---- Next 1:1 <-> Agenda ----------------------------------------------------------------------------
+  private async meetingEvents(where: string, params: unknown[], db: Queryable): Promise<AgendaEvent[]> {
+    const cols = ['tenant_id', ...TABLES.agendaEvents.columns.map(c => `"${toSnake(c)}"`)].join(', ');
+    const { rows } = await db.query(
+      `select ${cols} from public.agenda_events where tenant_id = $1 and ${where} order by starts_at desc`,
+      [this.tenantId, ...params]
+    );
+    return rows.map(r => fromRow<AgendaEvent>({}, r));
+  }
+
+  /** Every PDI's appointment still pending in the Agenda (at most one per PDI). */
+  openNextMeetings(db: Queryable = getPool()): Promise<AgendaEvent[]> {
+    return this.meetingEvents(`starts_with(id, $2) and status in ('scheduled', 'in_progress')`, [MEETING_ID_PREFIX], db);
+  }
+
+  async openNextMeeting(recordId: string, db: Queryable = getPool()): Promise<AgendaEvent | undefined> {
+    return (await this.meetingEvents(`starts_with(id, $2) and status in ('scheduled', 'in_progress')`, [meetingEventPrefix(recordId)], db))[0];
+  }
+
+  /**
+   * Keeps the Agenda in step with the PDI's `nextReviewDate`, inside the caller's transaction:
+   * - a new date creates the appointment (30 min, manager + collaborator invited, agenda from open goals and pending actions);
+   * - a new date/time moves it (and refreshes its agenda); a renamed collaborator or a new manager updates title/guests;
+   * - a 1:1 registered on or after the scheduled date closes the appointment as "done", with the 1:1 text as its summary;
+   * - clearing the date removes the pending appointment.
+   * Unrelated edits never create an appointment (e.g. a stale date from before this feature).
+   */
+  private async syncNextMeeting(
+    before: CollaboratorDevelopment | undefined,
+    after: CollaboratorDevelopment,
+    request: NextMeetingRequest,
+    tx: PoolClient
+  ): Promise<void> {
+    let open: AgendaEvent | undefined = (await this.meetingEvents(`starts_with(id, $2) and status in ('scheduled', 'in_progress')`, [meetingEventPrefix(after.id)], tx))[0];
+
+    if (open && before?.nextReviewDate && after.lastReviewDate >= before.nextReviewDate) {
+      const latest = [...after.oneOnOnes].sort((a, b) => b.date.localeCompare(a.date))[0];
+      await this.agendaEvents.update(open.id, { status: 'done', summary: latest?.keyTakeaways.slice(0, 1000) }, tx);
+      open = undefined;
+    }
+
+    if (!after.nextReviewDate) {
+      if (open) await this.agendaEvents.delete(open.id, tx);
+      return;
+    }
+
+    const dateChanged = !before || before.nextReviewDate !== after.nextReviewDate;
+    if (!open && !(dateChanged && request.actor)) return;
+
+    const members = new Set((await this.users.list(tx)).map(u => u.id));
+    const details = nextMeetingDetails(after, members, request.actor?.id);
+    const startsAt = spInstant(after.nextReviewDate, request.time ?? (open ? spTime(open.startsAt) : DEFAULT_MEETING_TIME));
+    const endsAt = new Date(new Date(startsAt).getTime() + MEETING_MINUTES * 60_000).toISOString();
+
+    if (!open) {
+      await this.agendaEvents.insert({
+        id: newMeetingEventId(after.id), type: 'meeting', title: details.title, description: details.description, status: 'scheduled',
+        startsAt, endsAt, agenda: details.agenda, assigneeIds: details.assigneeIds,
+        createdById: request.actor!.id, createdByName: request.actor!.name
+      }, tx);
+      return;
+    }
+
+    const patch: Record<string, unknown> = {};
+    if (open.startsAt !== startsAt) Object.assign(patch, { startsAt, endsAt, agenda: details.agenda });
+    if (before && before.collaboratorName !== after.collaboratorName) patch.title = details.title;
+    if (before && before.managerId !== after.managerId) {
+      patch.assigneeIds = [...new Set([...open.assigneeIds.filter(id => id !== before.managerId), ...details.assigneeIds.filter(id => id === after.managerId)])];
+    }
+    if (Object.keys(patch).length > 0) await this.agendaEvents.update(open.id, patch, tx);
+  }
+
+  /**
+   * The Agenda is edited on its own screen too. When the pending appointment of a PDI is moved, the PDI's next date follows;
+   * when it is cancelled or deleted, the PDI's next date is cleared. Finished appointments never touch the PDI.
+   */
+  async syncDevelopmentFromEvent(event: AgendaEvent, removed: boolean): Promise<void> {
+    if (!isMeetingEventId(event.id)) return;
+    await withTransaction(async tx => {
+      const record = await getRow<CollaboratorDevelopment>(TABLES.development, this.tenantId, recordIdOfMeetingEvent(event.id), tx, true);
+      if (!record || event.status === 'done') return;
+      const date = spDate(event.startsAt);
+      if (removed || event.status === 'cancelled') {
+        if (record.nextReviewDate === date) await this.development.update(record.id, { nextReviewDate: '' }, tx);
+      } else if (record.nextReviewDate !== date) {
+        await this.development.update(record.id, { nextReviewDate: date }, tx);
+      }
     });
   }
 

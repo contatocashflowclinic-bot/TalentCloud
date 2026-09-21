@@ -20,6 +20,8 @@ export interface FieldDef {
   half?: boolean;
   /** Shown but protected: never sent, never editable. */
   readOnly?: boolean;
+  /** Select without the "— nenhum —" option: a value is always chosen (e.g. a time of day with a default). */
+  noEmpty?: boolean;
 }
 
 interface Props {
@@ -144,7 +146,7 @@ export const EditFormModal: React.FC<Props> = ({ title, subtitle, fields, initia
                     onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
                     className={inputCls}
                   >
-                    {!f.required && <option value="">— nenhum —</option>}
+                    {!f.required && !f.noEmpty && <option value="">— nenhum —</option>}
                     {f.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 ) : f.type === 'currency' ? (
