@@ -2,7 +2,7 @@ import express, { Request, Response, NextFunction, RequestHandler } from 'expres
 import { TenantConnectionRouter, TenantConnectionContext } from './tenant/TenantConnectionRouter.js';
 import { evaluateCandidateWithAI } from './gemini.js';
 import { assessAllowance, getAiSettings, getUsageOverview, isPeriod, recordUsage, setOrgLimit, updateAiSettings } from './aiUsage.js';
-import { parseOrgLimit, parseSettingsPatch, shouldKeepPrevious } from './aiCost.js';
+import { hideShadowingEstimates, parseOrgLimit, parseSettingsPatch, shouldKeepPrevious } from './aiCost.js';
 import { getPool } from './db/pool.js';
 import { newId } from './ids.js';
 import { AppError, ConflictError, ForbiddenError, NotFoundError, TooManyRequestsError, ValidationError, toHttpError } from './errors.js';
@@ -1050,7 +1050,7 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     const { db, tenant } = ctx(req);
     // An organization whose contract has no AI module sees no AI evaluation at all (old ones stay stored; they come back if the module is turned on again)
     if (!tenant.enabledRoutines.includes('ai_evaluation')) return res.json({ success: true, evaluations: [] });
-    res.json({ success: true, evaluations: await db.aiEvaluations.list() });
+    res.json({ success: true, evaluations: hideShadowingEstimates(await db.aiEvaluations.list()) });
   }));
 
   app.post('/api/v1/ai/evaluate-candidate', can('ai_evaluation:create'), h(async (req, res) => {
@@ -1081,9 +1081,9 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
       skip: decision.mode === 'estimate' ? decision.reason : undefined
     });
 
-    // The newest evaluation already on record for this candidate + job (if any)
+    // The newest REAL evaluation (not a local estimate) already on record for this candidate + job, if any
     const previousRow = (await getPool().query(
-      'select id, source from public.ai_evaluations where tenant_id = $1 and candidate_id = $2 and job_opening_id = $3 order by seq desc limit 1',
+      "select id, source from public.ai_evaluations where tenant_id = $1 and candidate_id = $2 and job_opening_id = $3 and source is distinct from 'heuristic' order by seq desc limit 1",
       [tenant.id, candidateId, jobOpeningId]
     )).rows[0] as { id: string; source: string | null } | undefined;
 

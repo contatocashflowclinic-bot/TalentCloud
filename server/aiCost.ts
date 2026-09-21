@@ -69,6 +69,16 @@ export function shouldKeepPrevious(outcome: 'ai' | 'failed' | 'estimate', previo
   return outcome !== 'ai' && !!previous && previous.source !== 'heuristic';
 }
 
+/**
+ * A local estimate never hides a real evaluation of the same candidate + job: when both exist, only the real ones are listed
+ * (the estimates stay stored). Order is kept (newest first), so consumers that take the first match keep working.
+ */
+export function hideShadowingEstimates<T extends { candidateId: string; jobOpeningId: string; source?: string }>(list: T[]): T[] {
+  const key = (e: T) => `${e.candidateId}|${e.jobOpeningId}`;
+  const hasReal = new Set(list.filter(e => e.source !== 'heuristic').map(key));
+  return list.filter(e => e.source !== 'heuristic' || !hasReal.has(key(e)));
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Settings validation (what the Conta Mãe may change)
 // ---------------------------------------------------------------------------------------------------------------------

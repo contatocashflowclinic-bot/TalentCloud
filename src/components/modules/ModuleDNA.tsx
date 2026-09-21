@@ -52,7 +52,7 @@ export const ModuleDNA: React.FC = () => {
         mission,
         vision,
         culturalFitThreshold: fitThreshold,
-        coreValues: valuesInput.split(',').map(s => s.trim()).filter(Boolean),
+        coreValues: valuesInput.split(/[,\n]/).map(s => s.trim()).filter(Boolean),
         pillars
       });
       setDna(updated);
@@ -177,8 +177,8 @@ export const ModuleDNA: React.FC = () => {
 
             <div className="text-xs space-y-1">
               <label className="block font-semibold text-slate-700">Valores Centrais (separados por vírgula)</label>
-              <input
-                type="text"
+              <textarea
+                rows={3}
                 value={valuesInput}
                 onChange={(e) => setValuesInput(e.target.value)}
                 placeholder="Ex: Transparência Radical, Foco no Cliente, Excelência Técnica"
@@ -189,8 +189,8 @@ export const ModuleDNA: React.FC = () => {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs pt-2">
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Missão</label>
-                <input
-                  type="text"
+                <textarea
+                  rows={3}
                   value={mission}
                   onChange={(e) => setMission(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-hidden focus:border-indigo-500"
@@ -199,8 +199,8 @@ export const ModuleDNA: React.FC = () => {
 
               <div>
                 <label className="block font-semibold text-slate-700 mb-1">Visão</label>
-                <input
-                  type="text"
+                <textarea
+                  rows={3}
                   value={vision}
                   onChange={(e) => setVision(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-hidden focus:border-indigo-500"
