@@ -103,16 +103,27 @@ export const TABLES = {
       'oneOnOnes', 'lastReviewDate', 'nextReviewDate'
     ]
   },
+  climateCampaigns: {
+    table: 'climate_campaigns',
+    columns: [
+      'id', 'name', 'period', 'description', 'status', 'audience', 'departmentIds', 'closesOn', 'actionPlan', 'createdById',
+      'createdByName', 'createdAt', 'publishedAt', 'closedAt'
+    ]
+  },
   climateSurveys: {
     table: 'climate_surveys',
     json: ['categoryRatings'],
-    columns: ['id', 'period', 'enpsScore', 'sentiment', 'categoryRatings', 'anonymousComment']
+    columns: [
+      'id', 'period', 'enpsScore', 'sentiment', 'categoryRatings', 'anonymousComment', 'campaignId', 'departmentId', 'commentHidden'
+    ]
   },
   turnoverAlerts: {
     table: 'turnover_alerts',
+    json: ['history'],
     columns: [
-      'id', 'collaboratorId', 'collaboratorName', 'department', 'riskLevel', 'earlyWarningSignals', 'suggestedActions',
-      'lastActionTaken'
+      'id', 'collaboratorId', 'collaboratorName', 'department', 'departmentId', 'riskLevel', 'earlyWarningSignals',
+      'suggestedActions', 'lastActionTaken', 'status', 'ownerId', 'history', 'createdAt', 'createdBy', 'updatedAt', 'resolvedAt',
+      'resolutionNote'
     ]
   },
   agendaEvents: {

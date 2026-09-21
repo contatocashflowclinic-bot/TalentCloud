@@ -29,7 +29,12 @@ import {
   DevelopmentChange,
   DevelopmentLookups,
   DevelopmentPerson,
-  ClimateSurveyResponse,
+  CampaignResults,
+  ClimateCampaignSummary,
+  PendingSurvey,
+  RetentionData,
+  RetentionPerson,
+  SurveyAnswer,
   TurnoverRiskAlert,
   TenantIndicators,
   AgendaEvent,
@@ -584,12 +589,49 @@ export const TenantApi = {
   updateOneOnOne: (recordId: string, meetingId: string, payload: Record<string, unknown>) => developmentChange(`/api/v1/development/${recordId}/one-on-ones/${meetingId}`, 'PATCH', payload),
   deleteOneOnOne: (recordId: string, meetingId: string) => developmentChange(`/api/v1/development/${recordId}/one-on-ones/${meetingId}`, 'DELETE'),
 
-  // 14. Retenção
-  getRetentionData: async () => await request<{ success: boolean; climateSurveys: ClimateSurveyResponse[]; turnoverAlerts: TurnoverRiskAlert[] }>('/api/v1/retention'),
-  createTurnoverAlert: async (payload: Partial<TurnoverRiskAlert>) => (await request<{ success: boolean; alert: TurnoverRiskAlert }>('/api/v1/retention/alert', {
+  // 14. Retenção — alertas de turnover
+  getRetentionData: async (): Promise<RetentionData> => await request<{ success: boolean } & RetentionData>('/api/v1/retention'),
+  getRetentionPeople: async () => (await request<{ success: boolean; people: RetentionPerson[] }>('/api/v1/retention/people')).people,
+  createTurnoverAlert: async (payload: Record<string, unknown>) => (await request<{ success: boolean; alert: TurnoverRiskAlert }>('/api/v1/retention/alert', {
     method: 'POST',
     body: JSON.stringify(payload)
   })).alert,
+  updateTurnoverAlert: async (id: string, payload: Record<string, unknown>) => (await request<{ success: boolean; alert: TurnoverRiskAlert }>(`/api/v1/retention/alert/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).alert,
+  addAlertAction: async (id: string, action: string) => (await request<{ success: boolean; alert: TurnoverRiskAlert }>(`/api/v1/retention/alert/${id}/actions`, {
+    method: 'POST',
+    body: JSON.stringify({ action })
+  })).alert,
+  changeAlertStatus: async (id: string, status: string, note?: string) => (await request<{ success: boolean; alert: TurnoverRiskAlert }>(`/api/v1/retention/alert/${id}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status, note })
+  })).alert,
+  deleteTurnoverAlert: async (id: string) => { await request<{ success: boolean }>(`/api/v1/retention/alert/${id}`, { method: 'DELETE' }); },
+
+  // 14. Retenção — pesquisa de clima interna (gestão)
+  createCampaign: async (payload: Record<string, unknown>) => (await request<{ success: boolean; campaign: ClimateCampaignSummary }>('/api/v1/retention/campaigns', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })).campaign,
+  updateCampaign: async (id: string, payload: Record<string, unknown>) => (await request<{ success: boolean; campaign: ClimateCampaignSummary }>(`/api/v1/retention/campaigns/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).campaign,
+  publishCampaign: async (id: string) => (await request<{ success: boolean; campaign: ClimateCampaignSummary }>(`/api/v1/retention/campaigns/${id}/publish`, { method: 'POST' })).campaign,
+  closeCampaign: async (id: string) => (await request<{ success: boolean; campaign: ClimateCampaignSummary }>(`/api/v1/retention/campaigns/${id}/close`, { method: 'POST' })).campaign,
+  deleteCampaign: async (id: string) => { await request<{ success: boolean }>(`/api/v1/retention/campaigns/${id}`, { method: 'DELETE' }); },
+  getCampaignResults: async (id: string) => (await request<{ success: boolean; results: CampaignResults }>(`/api/v1/retention/campaigns/${id}/results`)).results,
+  setCommentHidden: async (campaignId: string, responseId: string, hidden: boolean) => {
+    await request<{ success: boolean }>(`/api/v1/retention/campaigns/${campaignId}/comments/${responseId}`, { method: 'PATCH', body: JSON.stringify({ hidden }) });
+  },
+
+  // 14. Retenção — pesquisa de clima interna (quem responde)
+  getPendingSurveys: async () => (await request<{ success: boolean; surveys: PendingSurvey[] }>('/api/v1/retention/survey/pending')).surveys,
+  submitSurveyAnswer: async (campaignId: string, answer: SurveyAnswer) => {
+    await request<{ success: boolean }>(`/api/v1/retention/survey/${campaignId}/respond`, { method: 'POST', body: JSON.stringify(answer) });
+  },
 
   // 15. Indicadores
   getIndicators: async () => (await request<{ success: boolean; indicators: TenantIndicators }>('/api/v1/indicators')).indicators,

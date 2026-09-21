@@ -9,6 +9,8 @@ import {
   IntegrationTemplate,
   OnboardingChecklistItem,
   Candidate,
+  ClimateCampaign,
+  ClimateCampaignSummary,
   ClimateSurveyResponse,
   CollaboratorDevelopment,
   Department,
@@ -22,7 +24,10 @@ import {
   OfferDocument,
   OnboardingJourney,
   OrganizationalDNA,
+  PendingSurvey,
+  RetentionPerson,
   SelectionApplication,
+  SurveyAnswer,
   TenantIndicators,
   TenantUser,
   TurnoverRiskAlert
@@ -30,12 +35,15 @@ import {
 import { deleteRow, getRow, fromRow, insertRow, listRows, toSnake, updateRow, TableSpec } from '../db/crud.js';
 import { getPool, Queryable, withTransaction } from '../db/pool.js';
 import { TABLES } from '../db/tables.js';
-import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors.js';
 import { buildAdmissionItems, DEFAULT_ADMISSION_TEMPLATES } from './admission.js';
 import {
   assertRecordRemovable, DEFAULT_MEETING_TIME, isMeetingEventId, MEETING_ID_PREFIX, MEETING_MINUTES, meetingEventPrefix,
-  newMeetingEventId, nextMeetingDetails, recordIdOfMeetingEvent, spDate, spInstant, spTime
+  newMeetingEventId, nextMeetingDetails, recordIdOfMeetingEvent, spDate, spInstant, spTime, todaySP
 } from './development.js';
+import { assertCampaignRemovable, isEligible, withEffectiveStatus } from './climate.js';
+import { assertAlertRemovable, buildAlert, normName, type AlertPatch } from './retention.js';
+import { isActiveAlert, sentimentOf } from '../../src/retention.js';
 import { buildChecklistItems, DEFAULT_INTEGRATION_TEMPLATES } from './integration.js';
 import { newId } from '../ids.js';
 
@@ -90,6 +98,7 @@ export class TenantRepository {
   readonly integrationTemplates: Entity<IntegrationTemplate>;
   readonly onboardings: Entity<OnboardingJourney>;
   readonly development: Entity<CollaboratorDevelopment>;
+  readonly climateCampaigns: Entity<ClimateCampaign>;
   readonly climateSurveys: Entity<ClimateSurveyResponse>;
   readonly turnoverAlerts: Entity<TurnoverRiskAlert>;
   readonly agendaEvents: Entity<AgendaEvent>;
@@ -110,6 +119,7 @@ export class TenantRepository {
     this.integrationTemplates = new Entity(TABLES.integrationTemplates, tenantId);
     this.onboardings = new Entity(TABLES.onboardings, tenantId);
     this.development = new Entity(TABLES.development, tenantId);
+    this.climateCampaigns = new Entity(TABLES.climateCampaigns, tenantId);
     this.climateSurveys = new Entity(TABLES.climateSurveys, tenantId);
     this.turnoverAlerts = new Entity(TABLES.turnoverAlerts, tenantId);
     this.agendaEvents = new Entity(TABLES.agendaEvents, tenantId);
@@ -710,6 +720,163 @@ export class TenantRepository {
       offer({ id: u.id, name: u.name, jobTitle: u.jobTitle, departmentId: u.departmentId, origin: 'member' });
     }
     return people;
+  }
+
+  // ---- Retention: turnover alerts ---------------------------------------------------------------------
+  /** One ACTIVE alert per person (same id or same name): follow or close the existing one first. */
+  private assertNoActiveAlert(alerts: TurnoverRiskAlert[], collaboratorId: string, name: string, exceptId?: string): void {
+    const clash = alerts.find(a =>
+      a.id !== exceptId && isActiveAlert(a.status) && (a.collaboratorId === collaboratorId || normName(a.collaboratorName) === normName(name))
+    );
+    if (clash) throw new ConflictError(`Já existe um alerta ativo para ${clash.collaboratorName}. Acompanhe ou encerre o alerta existente.`);
+  }
+
+  async createAlert(collaboratorId: string, fields: AlertPatch, by: string): Promise<TurnoverRiskAlert> {
+    return withTransaction(async tx => {
+      await tx.query('select pg_advisory_xact_lock(hashtext($1))', [`alert:${this.tenantId}:${collaboratorId}`]);
+      this.assertNoActiveAlert(await this.turnoverAlerts.list(tx), collaboratorId, String(fields.collaboratorName));
+      return this.turnoverAlerts.insert(buildAlert(collaboratorId, fields, by), tx);
+    });
+  }
+
+  /** Read-modify-write of one alert with its row locked; `change` returns the patch (null clears a column) and may throw to abort. */
+  async changeAlert(alertId: string, change: (alert: TurnoverRiskAlert) => AlertPatch): Promise<TurnoverRiskAlert> {
+    return withTransaction(async tx => {
+      const before = await getRow<TurnoverRiskAlert>(TABLES.turnoverAlerts, this.tenantId, alertId, tx, true);
+      if (!before) throw new NotFoundError('Alerta não encontrado');
+      const patch = change(before);
+      if (typeof patch.status === 'string' && isActiveAlert(patch.status as TurnoverRiskAlert['status']) && !isActiveAlert(before.status)) {
+        // reopening: the person must not have another active alert by now
+        await tx.query('select pg_advisory_xact_lock(hashtext($1))', [`alert:${this.tenantId}:${before.collaboratorId}`]);
+        this.assertNoActiveAlert(await this.turnoverAlerts.list(tx), before.collaboratorId, before.collaboratorName, before.id);
+      }
+      return (await this.turnoverAlerts.update(alertId, patch, tx))!;
+    });
+  }
+
+  async deleteAlert(alertId: string): Promise<void> {
+    await withTransaction(async tx => {
+      const alert = await getRow<TurnoverRiskAlert>(TABLES.turnoverAlerts, this.tenantId, alertId, tx, true);
+      if (!alert) throw new NotFoundError('Alerta não encontrado');
+      assertAlertRemovable(alert);
+      await this.turnoverAlerts.delete(alertId, tx);
+    });
+  }
+
+  /** Who an alert can still be opened for: PDI collaborators, hires in onboarding and active members (nobody with an active alert). */
+  async retentionPeople(): Promise<RetentionPerson[]> {
+    const [records, journeys, users, alerts] = await Promise.all([
+      this.development.list(), this.onboardings.list(), this.users.list(), this.turnoverAlerts.list()
+    ]);
+    const active = alerts.filter(a => isActiveAlert(a.status));
+    const takenIds = new Set(active.map(a => a.collaboratorId));
+    const names = new Set(active.map(a => normName(a.collaboratorName)));
+    const people: RetentionPerson[] = [];
+    const offer = (person: RetentionPerson) => {
+      const name = normName(person.name);
+      if (takenIds.has(person.id) || names.has(name)) return;
+      names.add(name);
+      people.push(person);
+    };
+    for (const r of records) offer({ id: r.collaboratorId, name: r.collaboratorName, jobTitle: r.jobTitle, departmentId: r.departmentId, origin: 'pdi' });
+    for (const j of journeys) offer({ id: j.candidateId, name: j.candidateName, jobTitle: j.jobTitle, departmentId: j.departmentId, origin: 'hire' });
+    for (const u of users.filter(u => u.active)) offer({ id: u.id, name: u.name, jobTitle: u.jobTitle, departmentId: u.departmentId, origin: 'member' });
+    return people;
+  }
+
+  // ---- Climate survey: campaigns, participation and anonymous answers ---------------------------------
+  /** Campaigns with the situation in force (an open one past its closing date reads as closed). */
+  async listCampaigns(db?: Queryable): Promise<ClimateCampaign[]> {
+    const today = todaySP();
+    return (await this.climateCampaigns.list(db)).map(c => withEffectiveStatus(c, today));
+  }
+
+  /** Campaigns with how many people could answer and how many did. */
+  async campaignSummaries(): Promise<ClimateCampaignSummary[]> {
+    const [campaigns, users, counted] = await Promise.all([
+      this.listCampaigns(),
+      this.users.list(),
+      getPool().query('select campaign_id, count(*)::int as n from public.climate_participation where tenant_id = $1 group by campaign_id', [this.tenantId])
+    ]);
+    const responded = new Map<string, number>(counted.rows.map(r => [r.campaign_id as string, Number(r.n)]));
+    return campaigns.map(c => ({ ...c, eligible: users.filter(u => isEligible(c, u)).length, responded: responded.get(c.id) ?? 0 }));
+  }
+
+  /** Read-modify-write of one campaign with its row locked; `change` sees the situation in force. */
+  async changeCampaign(campaignId: string, change: (campaign: ClimateCampaign) => AlertPatch): Promise<ClimateCampaign> {
+    return withTransaction(async tx => {
+      const before = await getRow<ClimateCampaign>(TABLES.climateCampaigns, this.tenantId, campaignId, tx, true);
+      if (!before) throw new NotFoundError('Pesquisa não encontrada');
+      const updated = (await this.climateCampaigns.update(campaignId, change(withEffectiveStatus(before, todaySP())), tx))!;
+      return withEffectiveStatus(updated, todaySP());
+    });
+  }
+
+  async deleteCampaign(campaignId: string): Promise<void> {
+    await withTransaction(async tx => {
+      const campaign = await getRow<ClimateCampaign>(TABLES.climateCampaigns, this.tenantId, campaignId, tx, true);
+      if (!campaign) throw new NotFoundError('Pesquisa não encontrada');
+      assertCampaignRemovable(withEffectiveStatus(campaign, todaySP()));
+      await this.climateCampaigns.delete(campaignId, tx);
+    });
+  }
+
+  /** Open surveys this member may answer, and whether they already did. */
+  async pendingSurveys(memberId: string): Promise<PendingSurvey[]> {
+    const member = await this.users.get(memberId);
+    if (!member?.active) return [];
+    const open = (await this.listCampaigns()).filter(c => c.status === 'open' && isEligible(c, member));
+    if (open.length === 0) return [];
+    const { rows } = await getPool().query('select campaign_id from public.climate_participation where tenant_id = $1 and user_id = $2', [this.tenantId, memberId]);
+    const answered = new Set(rows.map(r => r.campaign_id as string));
+    return open.map(c => ({
+      campaignId: c.id, name: c.name, period: c.period, description: c.description, closesOn: c.closesOn, answered: answered.has(c.id)
+    }));
+  }
+
+  /**
+   * Records one answer. The participation (who answered, and the day) and the answer (what was said) go in the same
+   * transaction but share NO key: the answer never carries the user. The primary key of the participation is what
+   * stops a second answer from the same person.
+   */
+  async submitAnswer(campaignId: string, memberId: string, answer: SurveyAnswer & { comment?: string }): Promise<void> {
+    await withTransaction(async tx => {
+      await tx.query('select 1 from public.climate_campaigns where tenant_id = $1 and id = $2 for share', [this.tenantId, campaignId]);
+      const stored = await getRow<ClimateCampaign>(TABLES.climateCampaigns, this.tenantId, campaignId, tx);
+      if (!stored) throw new NotFoundError('Pesquisa não encontrada');
+      const campaign = withEffectiveStatus(stored, todaySP());
+      if (campaign.status !== 'open') {
+        throw new ValidationError(campaign.status === 'closed' ? 'Esta pesquisa já foi encerrada.' : 'Esta pesquisa ainda não foi publicada.');
+      }
+      const member = await this.users.get(memberId, tx);
+      if (!member || !isEligible(campaign, member)) throw new ForbiddenError('Você não faz parte do público desta pesquisa.');
+
+      const recorded = await tx.query(
+        'insert into public.climate_participation (tenant_id, campaign_id, user_id, responded_on) values ($1, $2, $3, $4) on conflict do nothing',
+        [this.tenantId, campaignId, memberId, todaySP()]
+      );
+      if (!recorded.rowCount) throw new ConflictError('Você já respondeu esta pesquisa. Obrigado!');
+
+      await this.climateSurveys.insert({
+        id: newId('cs'),
+        period: campaign.period,
+        enpsScore: answer.enps,
+        sentiment: sentimentOf(answer.enps),
+        categoryRatings: answer.categories,
+        anonymousComment: answer.comment,
+        campaignId,
+        departmentId: member.departmentId
+      }, tx);
+    });
+  }
+
+  /** Hides (or shows again) one comment of a campaign, e.g. one that names a person. */
+  async setCommentHidden(campaignId: string, responseId: string, hidden: boolean): Promise<void> {
+    const { rowCount } = await getPool().query(
+      'update public.climate_surveys set comment_hidden = $4 where tenant_id = $1 and campaign_id = $2 and id = $3',
+      [this.tenantId, campaignId, responseId, hidden]
+    );
+    if (!rowCount) throw new NotFoundError('Comentário não encontrado');
   }
 }
 

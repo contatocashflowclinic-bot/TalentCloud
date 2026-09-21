@@ -39,7 +39,12 @@ interface Pending {
 
 const NO_LOOKUPS: DevelopmentLookups = { departments: [], members: [] };
 
-export const ModuleDevelopment: React.FC = () => {
+interface ModuleDevelopmentProps {
+  /** PDI to open first (e.g. coming from a turnover alert in the Retention module). */
+  initialRecordId?: string;
+}
+
+export const ModuleDevelopment: React.FC<ModuleDevelopmentProps> = ({ initialRecordId }) => {
   const { activeTenant } = useTenant();
   const { user } = useAuth();
   const canEdit = !!user?.permissions.includes('development:edit');
@@ -48,7 +53,7 @@ export const ModuleDevelopment: React.FC = () => {
   const [nextMeetings, setNextMeetings] = useState<Record<string, AgendaEvent>>({});
   const [lookups, setLookups] = useState<DevelopmentLookups>(NO_LOOKUPS);
   const [loading, setLoading] = useState(true);
-  const [selectedRecordId, setSelectedRecordId] = useState('');
+  const [selectedRecordId, setSelectedRecordId] = useState(initialRecordId ?? '');
   const [modal, setModal] = useState<Modal | null>(null);
   const [people, setPeople] = useState<DevelopmentPerson[] | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);

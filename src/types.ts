@@ -625,19 +625,36 @@ export interface DevelopmentLookups {
 }
 
 // 14. Retenção
+export const CLIMATE_CATEGORIES = ['lideranca', 'cultura', 'crescimento', 'remuneracao', 'ambiente'] as const;
+export type ClimateCategory = (typeof CLIMATE_CATEGORIES)[number];
+
+/** Uma resposta ANÔNIMA de pesquisa de clima. Nunca carrega quem respondeu. `campaignId` ausente = pesquisa histórica. */
 export interface ClimateSurveyResponse {
   id: string;
   period: string; // e.g. "2026-Q1"
   enpsScore: number; // 0 to 10
   sentiment: 'positive' | 'neutral' | 'negative';
-  categoryRatings: {
-    lideranca: number;
-    cultura: number;
-    crescimento: number;
-    remuneracao: number;
-    ambiente: number;
-  };
+  categoryRatings: Record<ClimateCategory, number>; // 0 to 10
   anonymousComment?: string;
+  campaignId?: string;
+  departmentId?: string;
+  commentHidden?: boolean;
+}
+
+export const ALERT_STATUSES = ['open', 'monitoring', 'resolved', 'dismissed', 'left'] as const;
+export type AlertStatus = (typeof ALERT_STATUSES)[number];
+export type RiskLevel = 'Baixo' | 'Médio' | 'Alto';
+
+/** Limits that keep one alert (its history is stored as jsonb) from growing without bound. */
+export const ALERT_MAX_SIGNALS = 20;
+export const ALERT_MAX_ACTIONS = 20;
+export const ALERT_MAX_HISTORY = 100;
+
+export interface AlertHistoryEntry {
+  at: string;
+  by: string;
+  kind: 'created' | 'action' | 'status' | 'risk' | 'owner' | 'edit';
+  text: string;
 }
 
 export interface TurnoverRiskAlert {
@@ -645,10 +662,139 @@ export interface TurnoverRiskAlert {
   collaboratorId: string;
   collaboratorName: string;
   department: string;
-  riskLevel: 'Baixo' | 'Médio' | 'Alto';
+  departmentId?: string;
+  riskLevel: RiskLevel;
   earlyWarningSignals: string[];
   suggestedActions: string[];
   lastActionTaken?: string;
+  status: AlertStatus;
+  ownerId?: string;
+  history: AlertHistoryEntry[];
+  createdAt?: string;
+  createdBy?: string;
+  updatedAt?: string;
+  resolvedAt?: string;
+  resolutionNote?: string;
+}
+
+/** Someone an alert can be opened for: a PDI collaborator, a hire in onboarding or an active member. */
+export interface RetentionPerson {
+  id: string;
+  name: string;
+  jobTitle: string;
+  departmentId?: string;
+  origin: 'pdi' | 'hire' | 'member';
+}
+
+export const CAMPAIGN_STATUSES = ['draft', 'open', 'closed'] as const;
+export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
+
+export interface ClimateCampaign {
+  id: string;
+  name: string;
+  period: string;
+  description?: string;
+  /** Situação em vigor: uma campanha aberta passa a "encerrada" sozinha depois da data de encerramento. */
+  status: CampaignStatus;
+  audience: 'all' | 'departments';
+  departmentIds: string[];
+  closesOn?: string;
+  actionPlan?: string;
+  createdById: string;
+  createdByName: string;
+  createdAt: string;
+  publishedAt?: string;
+  closedAt?: string;
+}
+
+/** Campanha com a participação: `eligible` = pessoas ativas do público; `responded` = quantas já responderam. */
+export interface ClimateCampaignSummary extends ClimateCampaign {
+  eligible: number;
+  responded: number;
+}
+
+export interface EnpsBreakdown {
+  score: number; // -100 to +100
+  promoters: number;
+  passives: number;
+  detractors: number;
+  responses: number;
+}
+
+export type EnpsZone = 'critical' | 'good' | 'great' | 'excellent';
+
+export interface ClimateTrendPoint {
+  key: string;
+  label: string;
+  responses: number;
+  enps: number;
+}
+
+export interface RetentionMetrics {
+  /** eNPS da pesquisa mais recente com resultado liberado; null quando ainda não há nenhuma. */
+  enps: EnpsBreakdown | null;
+  /** Nome da pesquisa que originou o eNPS (período ou campanha). */
+  enpsSource: string | null;
+  zone: EnpsZone | null;
+  categoryAverages: Record<ClimateCategory, number> | null;
+  trend: ClimateTrendPoint[];
+  alertsByRisk: Record<RiskLevel, number>;
+  activeAlerts: number;
+  /** 100 - rotatividade dos primeiros 90 dias (Indicadores); null sem base de cálculo. */
+  retention90Rate: number | null;
+}
+
+export interface RetentionData {
+  turnoverAlerts: TurnoverRiskAlert[];
+  campaigns: ClimateCampaignSummary[];
+  metrics: RetentionMetrics;
+  lookups: DevelopmentLookups;
+  /** collaboratorId -> id do PDI dessa pessoa (para abrir o PDI a partir do alerta). */
+  developmentLinks: Record<string, string>;
+}
+
+export interface CampaignDepartmentResult {
+  departmentId: string;
+  name: string;
+  responses: number;
+  enps: number;
+  categoryAverages: Record<ClimateCategory, number>;
+}
+
+export interface CampaignComment {
+  id: string;
+  text: string;
+  hidden: boolean;
+}
+
+/** Resultado de uma campanha. Grupos com poucas respostas não são detalhados (anonimato): `released` diz se já pode. */
+export interface CampaignResults {
+  campaign: ClimateCampaignSummary;
+  minGroup: number;
+  released: boolean;
+  responseRate: number;
+  enps: EnpsBreakdown | null;
+  zone: EnpsZone | null;
+  categoryAverages: Record<ClimateCategory, number> | null;
+  departments: CampaignDepartmentResult[];
+  comments: CampaignComment[];
+  previous: { name: string; enps: number } | null;
+}
+
+/** Pesquisa aberta que a pessoa pode (ou já pode ter) respondido. */
+export interface PendingSurvey {
+  campaignId: string;
+  name: string;
+  period: string;
+  description?: string;
+  closesOn?: string;
+  answered: boolean;
+}
+
+export interface SurveyAnswer {
+  enps: number;
+  categories: Record<ClimateCategory, number>;
+  comment?: string;
 }
 
 // 15. Indicadores
@@ -710,7 +856,7 @@ export interface SystemAuditLog {
   userId: string;
   userName: string;
   action: string;
-  category: 'TENANT_ROUTING' | 'DB_PROVISIONING' | 'ACCESS_CONTROL' | 'AI_EXECUTION' | 'CANDIDATE_DATA';
+  category: 'TENANT_ROUTING' | 'DB_PROVISIONING' | 'ACCESS_CONTROL' | 'AI_EXECUTION' | 'CANDIDATE_DATA' | 'PEOPLE_DATA';
   details: string;
   ipAddress: string;
   databaseAffected: string;

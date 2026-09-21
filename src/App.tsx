@@ -10,6 +10,7 @@ import { ShieldAlert } from 'lucide-react';
 import { Header } from './components/Header.js';
 import { Sidebar } from './components/Sidebar.js';
 import { AppFooter } from './components/AppFooter.js';
+import { ClimatePendingBanner } from './components/retention/ClimatePendingBanner.js';
 
 // Each screen is its own chunk: the browser only downloads the modules (and heavy libs such as charts / PDF) that are opened.
 const PlatformLayout = lazy(() => import('./components/platform/PlatformLayout.js').then(m => ({ default: m.PlatformLayout })));
@@ -50,6 +51,7 @@ const MainLayout: React.FC = () => {
   const [targetJobId, setTargetJobId] = useState<string | undefined>(undefined);
   const [targetCandidateId, setTargetCandidateId] = useState<string | undefined>(undefined);
   const [targetSearchTerm, setTargetSearchTerm] = useState<string | undefined>(undefined);
+  const [targetDevelopmentId, setTargetDevelopmentId] = useState<string | undefined>(undefined);
 
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -91,12 +93,19 @@ const MainLayout: React.FC = () => {
     setActiveModule(9); // Module 9: Avaliação Assistida por IA
   };
 
+  const handleNavigateToDevelopment = (recordId: string) => {
+    setTargetDevelopmentId(recordId);
+    setIsCareersView(false);
+    setActiveModule(13); // Module 13: Desenvolvimento (PDI)
+  };
+
   const handleNavigateToCareersPortal = (jobId?: string) => {
     setTargetJobId(jobId);
     setIsCareersView(true);
   };
 
   const handleSelectModule = (id: number) => {
+    setTargetDevelopmentId(undefined);
     if (id === 16) {
       setIsCareersView(true);
     } else {
@@ -168,6 +177,9 @@ const MainLayout: React.FC = () => {
             </div>
           ) : (
             <Suspense fallback={<ScreenFallback />}>
+              {activeModule !== 14 && permissions.includes('climate:view') && (
+                <ClimatePendingBanner tenantId={activeTenant?.id} onOpen={() => handleSelectModule(14)} />
+              )}
               {activeModule === 1 && <ModuleWelcome onNavigate={handleSelectModule} />}
               {activeModule === 2 && <ModuleUsers />}
               {activeModule === 3 && <ModuleDNA />}
@@ -204,8 +216,8 @@ const MainLayout: React.FC = () => {
               {activeModule === 10 && <ModuleInterviews />}
               {activeModule === 11 && <ModuleOffers />}
               {activeModule === 12 && <ModuleOnboarding />}
-              {activeModule === 13 && <ModuleDevelopment />}
-              {activeModule === 14 && <ModuleRetention />}
+              {activeModule === 13 && <ModuleDevelopment initialRecordId={targetDevelopmentId} />}
+              {activeModule === 14 && <ModuleRetention onOpenDevelopment={handleNavigateToDevelopment} />}
               {activeModule === 15 && <ModuleIndicators />}
               {activeModule === 17 && <ModuleAgenda />}
             </Suspense>

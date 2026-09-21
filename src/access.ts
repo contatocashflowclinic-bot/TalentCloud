@@ -40,7 +40,8 @@ export const ROUTINES: Routine[] = [
   { key: 'offers', label: 'Propostas', description: 'Ofertas, aprovação e aceite.', moduleId: 11, actions: ['view', 'create', 'edit'] },
   { key: 'onboarding', label: 'Onboarding', description: 'Checklists de integração.', moduleId: 12, actions: ['view', 'edit'] },
   { key: 'development', label: 'Desenvolvimento', description: 'PDI e metas.', moduleId: 13, actions: ['view', 'edit'] },
-  { key: 'retention', label: 'Retenção', description: 'Clima e alertas de turnover.', moduleId: 14, actions: ['view', 'edit'] },
+  { key: 'retention', label: 'Retenção', description: 'Alertas de turnover e gestão das pesquisas de clima.', moduleId: 14, actions: ['view', 'edit'] },
+  { key: 'climate', label: 'Pesquisa de Clima', description: 'Responder às pesquisas de clima abertas para você (respostas anônimas).', moduleId: 14, actions: ['view'] },
   { key: 'indicators', label: 'Indicadores', description: 'People analytics.', moduleId: 15, actions: ['view'] }
 ];
 
@@ -138,7 +139,8 @@ export interface DefaultProfile extends ProfileLike {
   description: string;
 }
 
-const BASE_VIEW = ['dna:view', 'structure:view', 'positions:view', 'openings:view'];
+// `climate:view` = responder às pesquisas de clima: todo perfil de sistema pode, o que não dá acesso a alertas nem resultados.
+const BASE_VIEW = ['dna:view', 'structure:view', 'positions:view', 'openings:view', 'climate:view'];
 
 export const DEFAULT_PROFILES: DefaultProfile[] = [
   {

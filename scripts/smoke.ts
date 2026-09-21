@@ -109,7 +109,7 @@ async function seedFidelity() {
     check(`[${slug}] offers`, sameData(await repo.offers.list(), seed.offers ?? []));
     check(`[${slug}] onboardings`, sameData(await repo.onboardings.list(), (seed.onboardings ?? []).map((o: any) => ({ admission: [], ...o }))));
     check(`[${slug}] development`, sameData(await repo.development.list(), seed.developmentRecords ?? []));
-    check(`[${slug}] climateSurveys`, sameData(await repo.climateSurveys.list(), seed.climateSurveys ?? []));
+    check(`[${slug}] climateSurveys`, sameData(await repo.climateSurveys.list(), (seed.climateSurveys ?? []).map((s: any) => ({ commentHidden: false, ...s }))));
     check(`[${slug}] turnoverAlerts`, sameData(await repo.turnoverAlerts.list(), seed.turnoverAlerts ?? []));
     check(`[${slug}] indicators`, sameData(await repo.getIndicators(), seed.indicators));
   }
@@ -687,6 +687,148 @@ async function main() {
     check('isolation: org B cannot touch org A checklist', (await B('GET', `/api/v1/onboardings/${journey.id}/checklist-available`)).status === 404 && (await B('DELETE', `${ck}/${c1.id}`)).status === 404 && (await B('POST', ck, { title: 'x' })).status === 404);
     check('turnover alert', (await A('POST', '/api/v1/retention/alert', { collaboratorName: 'Fulano', riskLevel: 'Alto', earlyWarningSignals: 'faltas, queda', suggestedActions: '1:1' })).status === 201);
 
+    // ---- Retenção: alertas de turnover (ciclo de vida) -------------------------------------------------
+    const rt = '/api/v1/retention';
+    // the COLLABORATOR session was revoked by the deactivation test above: sign in again
+    tokens.COLLABORATOR = (await login(collab.email, 'Senha#COLLABORATOR9', slugA)).json.token;
+    const rtOverview = await A('GET', rt);
+    const fulano = (rtOverview.json.turnoverAlerts ?? []).find((a: any) => a.collaboratorName === 'Fulano');
+    check('retention overview: metrics, campaigns and lookups; raw survey answers never leave the server', rtOverview.status === 200 && rtOverview.json.metrics?.enps === null && rtOverview.json.metrics.retention90Rate === null && Array.isArray(rtOverview.json.campaigns) && Array.isArray(rtOverview.json.lookups?.departments) && !('climateSurveys' in rtOverview.json), rtOverview.json.metrics);
+    check('alert opens as "open" with its history and audit fields', fulano?.status === 'open' && fulano.history.length === 1 && fulano.history[0].kind === 'created' && fulano.earlyWarningSignals.join() === 'faltas,queda' && !!fulano.createdAt && fulano.department === 'Geral', fulano);
+    check('alert: name required / invalid level / unknown department / unknown owner -> 400', (await A('POST', `${rt}/alert`, { riskLevel: 'Alto' })).status === 400 && (await A('POST', `${rt}/alert`, { collaboratorName: 'X', riskLevel: 'Crítico' })).status === 400 && (await A('POST', `${rt}/alert`, { collaboratorName: 'X', departmentId: 'dep-nope' })).status === 400 && (await A('POST', `${rt}/alert`, { collaboratorName: 'X', ownerId: 'usr-nope' })).status === 400);
+    check('alert: more than 20 signals -> 400', (await A('POST', `${rt}/alert`, { collaboratorName: 'X', earlyWarningSignals: Array.from({ length: 21 }, (_, i) => `s${i}`) })).status === 400);
+    const tied = await A('POST', `${rt}/alert`, { collaboratorId: recruiterUser.id, collaboratorName: 'U RECRUITER', departmentId: deptId, riskLevel: 'Baixo', ownerId: recruiterUser.id, earlyWarningSignals: ['a', 'b'], suggestedActions: 'x\ny' });
+    const al = tied.json.alert;
+    check('alert tied to a real person, a department and an owner', tied.status === 201 && al.collaboratorId === recruiterUser.id && al.departmentId === deptId && !!al.department && al.ownerId === recruiterUser.id && al.suggestedActions.join() === 'x,y', tied.json);
+    check('one active alert per person: same id or same name -> 409', (await A('POST', `${rt}/alert`, { collaboratorId: recruiterUser.id, collaboratorName: 'Outro nome' })).status === 409 && (await A('POST', `${rt}/alert`, { collaboratorName: ' fulano ' })).status === 409);
+    const alertRace = await Promise.all([1, 2].map(() => A('POST', `${rt}/alert`, { collaboratorId: 'colab-race-alert', collaboratorName: 'Corrida Alerta' })));
+    check('simultaneous alerts for the same person keep a single one', alertRace.map(r => r.status).sort().join() === '201,409', alertRace.map(r => r.status));
+    check('RBAC: INTERVIEWER and COLLABORATOR cannot read or open alerts; HIRING_MANAGER can', (await R('INTERVIEWER', 'GET', rt)).status === 403 && (await R('COLLABORATOR', 'GET', rt)).status === 403 && (await R('COLLABORATOR', 'POST', `${rt}/alert`, { collaboratorName: 'x' })).status === 403 && (await R('HIRING_MANAGER', 'GET', rt)).status === 200);
+    const rtPeople = await A('GET', `${rt}/people`);
+    check('people list: members offered, people with an active alert not; only Retention editors see it', rtPeople.status === 200 && rtPeople.json.people.some((p: any) => p.origin === 'member') && !rtPeople.json.people.some((p: any) => p.id === recruiterUser.id || p.name === 'Fulano') && (await R('INTERVIEWER', 'GET', `${rt}/people`)).status === 403, rtPeople.json.people?.map((p: any) => p.name));
+
+    const ap = `${rt}/alert/${al.id}`;
+    check('action: text required / too long -> 400', (await A('POST', `${ap}/actions`, {})).status === 400 && (await A('POST', `${ap}/actions`, { action: 'x'.repeat(501) })).status === 400);
+    const acted = (await A('POST', `${ap}/actions`, { action: 'Conversa de carreira' })).json.alert;
+    check('the first action moves the alert to "monitoring" and logs both lines', acted?.status === 'monitoring' && acted.lastActionTaken === 'Conversa de carreira' && acted.history.map((h: any) => h.kind).join() === 'created,action,status', acted);
+    const acted2 = (await A('POST', `${ap}/actions`, { action: 'Revisão do PDI' })).json.alert;
+    check('a second action only appends to the history', acted2?.status === 'monitoring' && acted2.history.length === 4 && acted2.lastActionTaken === 'Revisão do PDI', acted2);
+    const raised = await A('PATCH', ap, { riskLevel: 'Alto', ownerId: null });
+    check('edit: level and owner changes are logged', raised.json.alert?.riskLevel === 'Alto' && raised.json.alert.ownerId === undefined && raised.json.alert.history.filter((h: any) => h.kind === 'risk' || h.kind === 'owner').length === 2, raised.json);
+    check('edit: the same values change nothing (no new history line)', (await A('PATCH', ap, { riskLevel: 'Alto' })).json.alert?.history.length === raised.json.alert.history.length);
+    check('edit: invalid level -> 400; unknown alert -> 404; read-only profile -> 403', (await A('PATCH', ap, { riskLevel: 'Crítico' })).status === 400 && (await A('PATCH', `${rt}/alert/alt-nope`, { riskLevel: 'Alto' })).status === 404 && (await R('INTERVIEWER', 'PATCH', ap, { riskLevel: 'Baixo' })).status === 403);
+    check('status: invalid or unchanged -> 400; dismissing / "left" without a reason -> 400', (await A('POST', `${ap}/status`, { status: 'x' })).status === 400 && (await A('POST', `${ap}/status`, { status: 'monitoring' })).status === 400 && (await A('POST', `${ap}/status`, { status: 'dismissed' })).status === 400 && (await A('POST', `${ap}/status`, { status: 'left' })).status === 400);
+    const closedAlert = (await A('POST', `${ap}/status`, { status: 'resolved', note: 'Combinado plano de carreira' })).json.alert;
+    check('resolving closes the alert, keeping the note and the time', closedAlert?.status === 'resolved' && !!closedAlert.resolvedAt && closedAlert.resolutionNote === 'Combinado plano de carreira' && closedAlert.history[closedAlert.history.length - 1].kind === 'status', closedAlert);
+    check('a closed alert cannot be edited, get actions or go to another status (only reopened)', (await A('PATCH', ap, { riskLevel: 'Baixo' })).status === 400 && (await A('POST', `${ap}/actions`, { action: 'x' })).status === 400 && (await A('POST', `${ap}/status`, { status: 'monitoring' })).status === 400);
+    const afterClose = (await A('GET', rt)).json.metrics;
+    check('closed alerts leave the active count (Fulano + Corrida Alerta remain)', afterClose.activeAlerts === 2 && afterClose.alertsByRisk.Alto === 1 && afterClose.alertsByRisk['Médio'] === 1, afterClose);
+    const second = await A('POST', `${rt}/alert`, { collaboratorId: recruiterUser.id, collaboratorName: 'U RECRUITER' });
+    check('after closing, the person can get a new alert; reopening the old one is then refused -> 409', second.status === 201 && (await A('POST', `${ap}/status`, { status: 'open' })).status === 409);
+    await A('POST', `${rt}/alert/${second.json.alert.id}/status`, { status: 'dismissed', note: 'Engano' });
+    const reopened = (await A('POST', `${ap}/status`, { status: 'open' })).json.alert;
+    check('reopening clears the closing data', reopened?.status === 'open' && reopened.resolvedAt === undefined && reopened.resolutionNote === undefined, reopened);
+    check('delete: an alert with history cannot be deleted -> 400', (await A('DELETE', ap)).status === 400);
+    const untouchedAlert = await A('POST', `${rt}/alert`, { collaboratorName: 'Sem andamento' });
+    check('delete: an untouchedAlert alert can be deleted', (await A('DELETE', `${rt}/alert/${untouchedAlert.json.alert.id}`)).status === 200 && !((await A('GET', rt)).json.turnoverAlerts ?? []).some((a: any) => a.id === untouchedAlert.json.alert.id));
+    check('delete: unknown -> 404; read-only profile -> 403', (await A('DELETE', `${rt}/alert/alt-nope`)).status === 404 && (await R('INTERVIEWER', 'DELETE', ap)).status === 403);
+    check('isolation: org B cannot read or change org A alerts', !((await B('GET', rt)).json.turnoverAlerts ?? []).some((a: any) => a.id === al.id) && (await B('PATCH', ap, { riskLevel: 'Baixo' })).status === 404 && (await B('POST', `${ap}/actions`, { action: 'x' })).status === 404 && (await B('POST', `${ap}/status`, { status: 'dismissed', note: 'x' })).status === 404 && (await B('DELETE', ap)).status === 404);
+
+    // ---- Retenção: pesquisa de clima interna (campanhas, resposta anônima, resultado) --------------------
+    const tenantA = provA.json.tenant.id as string;
+    const survey: Record<string, string> = {};
+    for (let i = 1; i <= 5; i++) {
+      const email = `survey${i}-${suffix}@smoke.test`;
+      const made = await A('POST', '/api/v1/users', { name: `Survey ${i}`, email, profileId: 'collaborator', jobTitle: 'Analista', departmentId: deptId });
+      survey[`S${i}`] = (await activateUser(slugA, email, made.json.tempPassword, `Senha#Survey${i}9`)).token;
+    }
+    check('five extra members (same department) activated for the survey', Object.values(survey).every(Boolean) && Object.keys(survey).length === 5);
+    const S = (who: string, method: string, path: string, body?: unknown) => api(method, path, { token: survey[who] ?? tokens[who], body });
+    const answerOf = (n: number, comment?: string) => ({ enps: n, categories: { lideranca: n, cultura: n, crescimento: n, remuneracao: n, ambiente: n }, ...(comment ? { comment } : {}) });
+
+    const campPath = `${rt}/campaigns`;
+    check('campaign: name and period are required -> 400', (await A('POST', campPath, { period: '2026-Q3' })).status === 400 && (await A('POST', campPath, { name: 'x' })).status === 400);
+    check('campaign: invalid audience / empty or unknown departments -> 400', (await A('POST', campPath, { name: 'x', period: 'p', audience: 'todos' })).status === 400 && (await A('POST', campPath, { name: 'x', period: 'p', audience: 'departments', departmentIds: [] })).status === 400 && (await A('POST', campPath, { name: 'x', period: 'p', audience: 'departments', departmentIds: ['dep-nope'] })).status === 400);
+    check('campaign: closing date in the past or impossible -> 400', (await A('POST', campPath, { name: 'x', period: 'p', closesOn: '2020-01-01' })).status === 400 && (await A('POST', campPath, { name: 'x', period: 'p', closesOn: '2099-02-30' })).status === 400);
+    check('RBAC: only who edits Retention creates surveys', (await R('COLLABORATOR', 'POST', campPath, { name: 'x', period: 'p' })).status === 403 && (await R('INTERVIEWER', 'POST', campPath, { name: 'x', period: 'p' })).status === 403);
+    const draft = await A('POST', campPath, { name: 'Clima T3', period: '2026-Q3', description: 'Leva 2 min', closesOn: '2099-12-31' });
+    const cid = draft.json.campaign?.id as string;
+    check('campaign is created as a draft for the whole organization', draft.status === 201 && draft.json.campaign.status === 'draft' && draft.json.campaign.audience === 'all' && draft.json.campaign.responded === 0 && draft.json.campaign.eligible >= 10, draft.json);
+    const respond = `${rt}/survey/${cid}/respond`;
+    check('a draft cannot be answered and shows no pending survey', (await S('S1', 'POST', respond, answerOf(8))).status === 400 && ((await S('S1', 'GET', `${rt}/survey/pending`)).json.surveys ?? []).length === 0);
+    check('draft: editable', (await A('PATCH', `${campPath}/${cid}`, { name: 'Clima do 3º trimestre' })).json.campaign?.name === 'Clima do 3º trimestre');
+    const publishedCampaign = await A('POST', `${campPath}/${cid}/publish`);
+    check('publish opens the survey; publishing twice -> 400', publishedCampaign.status === 200 && publishedCampaign.json.campaign.status === 'open' && !!publishedCampaign.json.campaign.publishedAt && (await A('POST', `${campPath}/${cid}/publish`)).status === 400, publishedCampaign.json);
+    check('open survey: only closing date and action plan change; it cannot be deleted', (await A('PATCH', `${campPath}/${cid}`, { name: 'x' })).status === 400 && (await A('PATCH', `${campPath}/${cid}`, { closesOn: '2099-11-30' })).json.campaign?.closesOn === '2099-11-30' && (await A('DELETE', `${campPath}/${cid}`)).status === 400);
+
+    const pend = (await S('COLLABORATOR', 'GET', `${rt}/survey/pending`)).json.surveys ?? [];
+    check('everyone in the audience sees the open survey (COLLABORATOR included)', pend.length === 1 && pend[0].campaignId === cid && pend[0].answered === false, pend);
+    check('answer: scores outside 0-10 / decimals / missing categories -> 400', (await S('COLLABORATOR', 'POST', respond, { ...answerOf(8), enps: 11 })).status === 400 && (await S('COLLABORATOR', 'POST', respond, { ...answerOf(8), enps: 7.5 })).status === 400 && (await S('COLLABORATOR', 'POST', respond, { enps: 8 })).status === 400 && (await S('COLLABORATOR', 'POST', respond, { enps: 8, categories: { lideranca: 8 } })).status === 400);
+    check('answer accepted; answering twice -> 409', (await S('COLLABORATOR', 'POST', respond, answerOf(8, 'Bom time'))).status === 201 && (await S('COLLABORATOR', 'POST', respond, answerOf(10))).status === 409);
+    check('the survey then shows as answered', ((await S('COLLABORATOR', 'GET', `${rt}/survey/pending`)).json.surveys ?? [])[0]?.answered === true);
+    check('answer: unknown survey -> 404; another org -> 404', (await S('COLLABORATOR', 'POST', `${rt}/survey/cmp-nope/respond`, answerOf(8))).status === 404 && (await B('POST', respond, answerOf(8))).status === 404);
+
+    // Anonymity threshold: 1 and 4 answers reveal nothing, the 5th releases the result
+    const results = `${campPath}/${cid}/results`;
+    const r1 = (await A('GET', results)).json.results;
+    check('results with 1 answer: nothing detailed (below the anonymity minimum)', r1.released === false && r1.enps === null && r1.comments.length === 0 && r1.departments.length === 0 && r1.campaign.responded === 1 && r1.minGroup === 5, r1);
+    check('results: only Retention viewers (COLLABORATOR, INTERVIEWER -> 403)', (await R('COLLABORATOR', 'GET', results)).status === 403 && (await R('INTERVIEWER', 'GET', results)).status === 403 && (await R('HIRING_MANAGER', 'GET', results)).status === 200);
+    await S('HIRING_MANAGER', 'POST', respond, answerOf(7));
+    await S('INTERVIEWER', 'POST', respond, answerOf(9, 'Mais reconhecimento'));
+    await A('POST', respond, answerOf(10));
+    const r4 = (await A('GET', results)).json.results;
+    check('results with 4 answers: still nothing detailed', r4.released === false && r4.enps === null && r4.campaign.responded === 4, r4);
+    const raceAnswers = await Promise.all([1, 2].map(() => S('S1', 'POST', respond, answerOf(10, 'Liderança próxima e clara'))));
+    check('the same person answering twice at once records a single answer', raceAnswers.map(r => r.status).sort().join() === '201,409', raceAnswers.map(r => r.status));
+    const r5 = (await A('GET', results)).json.results;
+    check('results with 5 answers: released', r5.released === true && r5.enps?.responses === 5 && r5.campaign.responded === 5, r5);
+    await S('S2', 'POST', respond, answerOf(10));
+    await S('S3', 'POST', respond, answerOf(9));
+    await S('S4', 'POST', respond, answerOf(5, 'Cite Fulano de Tal'));
+    const r8 = (await A('GET', results)).json.results;
+    check('a department with 4 answers is not shown', r8.released === true && r8.departments.length === 0, r8.departments);
+    await S('S5', 'POST', respond, answerOf(0));
+    const r9 = (await A('GET', results)).json.results;
+    check('eNPS: (promoters − detractors) / answers, and the neutral / promoter / detractor split', r9.enps?.score === 33 && r9.enps.promoters === 5 && r9.enps.passives === 2 && r9.enps.detractors === 2 && r9.zone === 'great', r9.enps);
+    check('category averages and participation', r9.categoryAverages?.lideranca === 7.6 && r9.campaign.responded === 9 && r9.responseRate === Math.round((9 / r9.campaign.eligible) * 100), r9.categoryAverages);
+    const deptRes = r9.departments[0];
+    check('a department with 5 answers is shown, with its own eNPS and averages', r9.departments.length === 1 && deptRes.departmentId === deptId && deptRes.responses === 5 && deptRes.enps === 20 && deptRes.categoryAverages.lideranca === 6.8, r9.departments);
+    check('comments are listed without any author', r9.comments.length === 4 && r9.comments.every((c: any) => Object.keys(c).sort().join() === 'hidden,id,text'), r9.comments);
+
+    const memberIds: string[] = (await A('GET', '/api/v1/users')).json.users.map((u: any) => u.id);
+    const surveyRows = await getPool().query('select * from public.climate_surveys where tenant_id = $1 and campaign_id = $2', [tenantA, cid]);
+    const answerCols = (await getPool().query(`select column_name from information_schema.columns where table_schema = 'public' and table_name = 'climate_surveys'`)).rows.map((r: any) => r.column_name as string);
+    const partCols = (await getPool().query(`select column_name from information_schema.columns where table_schema = 'public' and table_name = 'climate_participation'`)).rows.map((r: any) => r.column_name as string);
+    check('anonymity: the answers table has no column that could hold who answered', !answerCols.some(c => /user|member|author|respondent|email|name/.test(c)), answerCols);
+    check('anonymity: no surveyRows answer contains any member id', surveyRows.rows.length === 9 && !memberIds.some(id => JSON.stringify(surveyRows.rows).includes(id)), surveyRows.rows.length);
+    check('anonymity: participation keeps no sequence, time or answer reference', partCols.length === 4 && !partCols.includes('seq') && partCols.includes('responded_on'), partCols);
+
+    // Comments: hide (e.g. one that names a person)
+    const naming = r9.comments.find((c: any) => /Fulano de Tal/.test(c.text));
+    check('hide a comment: only Retention editors; needs a boolean; unknown -> 404', (await R('COLLABORATOR', 'PATCH', `${campPath}/${cid}/comments/${naming.id}`, { hidden: true })).status === 403 && (await A('PATCH', `${campPath}/${cid}/comments/${naming.id}`, { hidden: 'sim' })).status === 400 && (await A('PATCH', `${campPath}/${cid}/comments/cs-nope`, { hidden: true })).status === 404);
+    check('a hidden comment stays in the list flagged as hidden; showing it again restores it', (await R('HIRING_MANAGER', 'PATCH', `${campPath}/${cid}/comments/${naming.id}`, { hidden: true })).status === 200 && (await A('GET', results)).json.results.comments.find((c: any) => c.id === naming.id)?.hidden === true && (await A('PATCH', `${campPath}/${cid}/comments/${naming.id}`, { hidden: false })).status === 200 && (await A('GET', results)).json.results.comments.find((c: any) => c.id === naming.id)?.hidden === false);
+
+    // Overview: the latest released survey becomes the organization eNPS
+    const rtAfter = (await A('GET', rt)).json;
+    check('overview: eNPS of the latest released survey, trend, and no raw answers', rtAfter.metrics.enps?.score === 33 && rtAfter.metrics.zone === 'great' && rtAfter.metrics.trend.length === 1 && rtAfter.metrics.trend[0].responses === 9 && rtAfter.metrics.categoryAverages.lideranca === 7.6 && !('climateSurveys' in rtAfter), rtAfter.metrics);
+
+    // Audience by department
+    const dcp = await A('POST', campPath, { name: 'Só o time', period: '2026-Q4', audience: 'departments', departmentIds: [deptId] });
+    check('audience by department counts only its members', dcp.status === 201 && dcp.json.campaign.eligible >= 5 && dcp.json.campaign.eligible < 10 && dcp.json.campaign.departmentIds.join() === deptId, dcp.json);
+    const did = dcp.json.campaign.id as string;
+    await A('POST', `${campPath}/${did}/publish`);
+    check('only the department sees the survey and can answer it', ((await S('S1', 'GET', `${rt}/survey/pending`)).json.surveys ?? []).length === 2 && ((await S('COLLABORATOR', 'GET', `${rt}/survey/pending`)).json.surveys ?? []).length === 1 && (await S('COLLABORATOR', 'POST', `${rt}/survey/${did}/respond`, answerOf(8))).status === 403);
+    check('closing: only Retention editors; then nobody answers and it cannot be deleted', (await R('COLLABORATOR', 'POST', `${campPath}/${did}/close`)).status === 403 && (await R('HIRING_MANAGER', 'POST', `${campPath}/${did}/close`)).json.campaign?.status === 'closed' && (await S('S2', 'POST', `${rt}/survey/${did}/respond`, answerOf(8))).status === 400 && (await A('DELETE', `${campPath}/${did}`)).status === 400 && (await A('POST', `${campPath}/${did}/close`)).status === 400);
+    const scratch = await A('POST', campPath, { name: 'Rascunho descartável', period: 'x' });
+    check('a draft can be deleted', (await A('DELETE', `${campPath}/${scratch.json.campaign.id}`)).status === 200 && !((await A('GET', rt)).json.campaigns ?? []).some((c: any) => c.id === scratch.json.campaign.id));
+    check('isolation: org B cannot see, publish, close or read the results of org A surveys', !((await B('GET', rt)).json.campaigns ?? []).some((c: any) => c.id === cid) && (await B('GET', results)).status === 404 && (await B('POST', `${campPath}/${cid}/close`)).status === 404 && (await B('PATCH', `${campPath}/${cid}`, { actionPlan: 'x' })).status === 404 && (await B('DELETE', `${campPath}/${cid}`)).status === 404);
+
+    // Past the closing date the survey reads as closed by itself
+    await getPool().query(`update public.climate_campaigns set closes_on = '2020-01-01' where tenant_id = $1 and id = $2`, [tenantA, cid]);
+    const lapsed = ((await A('GET', rt)).json.campaigns ?? []).find((c: any) => c.id === cid);
+    check('past the closing date the survey is closed by itself and refuses answers', lapsed?.status === 'closed' && (await S('S5', 'POST', respond, answerOf(8))).status === 400 && ((await S('S1', 'GET', `${rt}/survey/pending`)).json.surveys ?? []).every((s: any) => s.campaignId !== cid), lapsed);
+    check('closed survey: only the action plan changes, and the result stays available', (await A('PATCH', `${campPath}/${cid}`, { name: 'x' })).status === 400 && (await A('PATCH', `${campPath}/${cid}`, { actionPlan: 'Rever a comunicação da liderança' })).json.campaign?.actionPlan === 'Rever a comunicação da liderança' && (await A('GET', results)).json.results.campaign.actionPlan === 'Rever a comunicação da liderança');
+
     // ---- Desenvolvimento (PDI): PDI da contratação, metas, andamento e 1:1s ------------------
     const devList = await A('GET', '/api/v1/development');
     const hirePdi = (devList.json.developmentRecords ?? []).find((r: any) => r.collaboratorId === candId);
@@ -976,14 +1118,14 @@ async function main() {
     // ---- Conta Mãe: editing organizations, plans and module entitlements -------------------
     const T = (method: string, path: string, body?: unknown) => api(method, path, { token: adminToken, body });
     const tA = provA.json.tenant.id, tB = provB.json.tenant.id;
-    check('new Scale orgs start with every module enabled', provA.json.tenant.enabledRoutines?.length === 15 && provB.json.tenant.enabledRoutines?.length === 15, [provA.json.tenant.enabledRoutines?.length, provB.json.tenant.enabledRoutines?.length]);
+    check('new Scale orgs start with every module enabled', provA.json.tenant.enabledRoutines?.length === PLAN_ROUTINES.Scale.length && provB.json.tenant.enabledRoutines?.length === PLAN_ROUTINES.Scale.length && provA.json.tenant.enabledRoutines.includes('climate'), [provA.json.tenant.enabledRoutines?.length, provB.json.tenant.enabledRoutines?.length]);
     const toStarter = await T('PATCH', `/api/master/tenants/${tB}`, { plan: 'Starter', enabledRoutines: PLAN_ROUTINES.Starter });
-    check('plan preset: Starter has 11 modules and no AI / development / retention / indicators', toStarter.status === 200 && toStarter.json.tenant.enabledRoutines.length === 11 && !toStarter.json.tenant.enabledRoutines.some((k: string) => ['ai_evaluation', 'development', 'retention', 'indicators'].includes(k)), toStarter.json);
+    check('plan preset: Starter has 11 modules and no AI / development / retention / indicators', toStarter.status === 200 && toStarter.json.tenant.enabledRoutines.length === 11 && !toStarter.json.tenant.enabledRoutines.some((k: string) => ['ai_evaluation', 'development', 'retention', 'climate', 'indicators'].includes(k)), toStarter.json);
     const provStarter = await api('POST', '/api/master/tenants/provision', { token: adminToken, body: { name: `Smoke C ${suffix}`, slug: `smoke-c-${suffix}`, contactEmail: `admin-c-${suffix}@smoke.test`, adminUserName: 'Admin C', plan: 'Starter' } });
     createdTenantIds.push(provStarter.json.tenant?.id);
     check('provisioning a Starter org applies the Starter preset by default', provStarter.status === 201 && provStarter.json.tenant.enabledRoutines.length === 11, provStarter.json);
     check('provisioning accepts an explicit module list (core forced in)', (await api('POST', '/api/master/tenants/provision', { token: adminToken, body: { name: 'Bad', slug: `bad-${suffix}`, contactEmail: `bad-${suffix}@smoke.test`, enabledRoutines: ['nope'] } })).status === 400);
-    check('Starter org: blocked modules do not answer even for its admin', (await B('GET', '/api/v1/indicators')).status === 403 && (await B('GET', '/api/v1/retention')).status === 403 && (await B('POST', '/api/v1/ai/evaluate-candidate', { candidateId: 'x', jobOpeningId: 'y' })).status === 403);
+    check('Starter org: blocked modules do not answer even for its admin', (await B('GET', '/api/v1/indicators')).status === 403 && (await B('GET', '/api/v1/retention')).status === 403 && (await B('GET', '/api/v1/retention/survey/pending')).status === 403 && (await B('POST', '/api/v1/ai/evaluate-candidate', { candidateId: 'x', jobOpeningId: 'y' })).status === 403);
     check('Starter org: enabled modules still work for its admin', (await B('GET', '/api/v1/candidates')).status === 200 && (await B('GET', '/api/v1/dna')).status === 200);
     const meB = (await api('GET', '/api/auth/me', { token: adminB })).json.user;
     check('/me permissions of the admin are limited to the enabled modules', !meB.permissions.some((p: string) => p.startsWith('indicators:')) && meB.permissions.includes('users:create'), meB.permissions.length);
@@ -1002,7 +1144,7 @@ async function main() {
     check('/me reflects only the enabled modules', meA.permissions.every((p: string) => ['users', 'profiles', 'dna', 'openings'].includes(p.split(':')[0])), meA.permissions);
     check('org admin cannot hand out a blocked module (grant limit)', (await A('POST', '/api/v1/profiles', { name: 'Bloqueado', permissions: ['offers:view'] })).status === 403);
     check('storage quota follows the new plan (Starter)', (await T('GET', `/api/master/tenants/${tA}`)).json.tenant.dbConfig.maxStorageMb === 1024);
-    const restored = await T('PATCH', `/api/master/tenants/${tA}`, { plan: 'Scale', enabledRoutines: ['users', 'profiles', 'dna', 'structure', 'positions', 'openings', 'candidates', 'selection', 'ai_evaluation', 'interviews', 'offers', 'onboarding', 'development', 'retention', 'indicators'] });
+    const restored = await T('PATCH', `/api/master/tenants/${tA}`, { plan: 'Scale', enabledRoutines: ['users', 'profiles', 'dna', 'structure', 'positions', 'openings', 'candidates', 'selection', 'ai_evaluation', 'interviews', 'offers', 'onboarding', 'development', 'retention', 'climate', 'indicators'] });
     check('modules re-enabled: access returns immediately', restored.status === 200 && (await A('GET', '/api/v1/candidates')).status === 200 && (await A('GET', '/api/v1/offers')).status === 200);
     check('audit trail records the module change with a diff', (await T('GET', '/api/master/audit-logs?q=' + encodeURIComponent('módulos bloqueados') + '&category=ACCESS_CONTROL')).json.logs.some((l: any) => l.action === 'TENANT_UPDATED' && l.tenantId === tA));
 
@@ -1107,6 +1249,7 @@ async function main() {
     check('audit: PASSWORD_RESET_ISSUED recorded', has('PASSWORD_RESET_ISSUED', l => l.tenantId === provA.json.tenant.id) && has('PASSWORD_RESET_ISSUED', l => l.tenantId === provB.json.tenant.id));
     check('audit: LOGIN_SUCCEEDED + LOGIN_FAILED recorded', has('LOGIN_SUCCEEDED') && has('LOGIN_FAILED'));
     check('audit: PUBLIC_APPLICATION_RECEIVED recorded', has('PUBLIC_APPLICATION_RECEIVED', l => l.tenantId === provA.json.tenant.id));
+    check('audit: alerts and surveys leave a PEOPLE_DATA trail, without the content of answers', has('TURNOVER_ALERT_OPENED', l => l.tenantId === provA.json.tenant.id && l.category === 'PEOPLE_DATA') && has('TURNOVER_ALERT_STATUS', l => l.tenantId === provA.json.tenant.id) && has('CLIMATE_SURVEY_PUBLISHED', l => l.tenantId === provA.json.tenant.id) && has('CLIMATE_SURVEY_CLOSED', l => l.tenantId === provA.json.tenant.id) && has('CLIMATE_COMMENT_HIDDEN', l => l.tenantId === provA.json.tenant.id) && !logs.some(l => /Cite Fulano de Tal|Bom time/.test(l.details)));
     check('audit: no secret material in details', !logs.some(l => /Nova#Senha42|Admin@123|scrypt\$/.test(l.details)));
     check('audit: newest first', logs.every((l, i) => i === 0 || new Date(logs[i - 1].timestamp) >= new Date(l.timestamp)));
     const tel = (await api('GET', '/api/master/telemetry', { token: adminToken })).json.telemetry;

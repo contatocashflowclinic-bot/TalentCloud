@@ -41,6 +41,7 @@ const CATEGORY: Record<SystemAuditLog['category'], { label: string; style: strin
   DB_PROVISIONING: { label: 'Provisionamento', style: 'bg-purple-100 text-purple-800' },
   AI_EXECUTION: { label: 'Execução de IA', style: 'bg-emerald-100 text-emerald-800' },
   CANDIDATE_DATA: { label: 'Dados de candidatos', style: 'bg-cyan-100 text-cyan-800' },
+  PEOPLE_DATA: { label: 'Dados de pessoas', style: 'bg-rose-100 text-rose-800' },
   ACCESS_CONTROL: { label: 'Segurança / Governança', style: 'bg-amber-100 text-amber-800' }
 };
 

@@ -20,8 +20,14 @@ import { assertValidFile, getFile, MAX_FILE_BYTES, putFile, removeFile, safeFile
 import { reviewItem, type AdmissionAction } from './tenant/admission.js';
 import {
   addGoal, addMeeting, buildGoal, cleanText, editMeeting, isMeetingEventId, parseRecordFields, parseTime, removeGoal, removeMeeting,
-  updateGoal, type RecordRefs
+  todaySP, updateGoal, type RecordRefs
 } from './tenant/development.js';
+import { changeAlertStatus, editAlert, parseAlertFields, registerAction } from './tenant/retention.js';
+import {
+  buildCampaign, buildCampaignResults, buildClimateOverview, closeCampaign, editCampaign, parseAnswer, publishCampaign, type CampaignRefs
+} from './tenant/climate.js';
+import { consumeQuota } from './rateLimit.js';
+import { ALERT_STATUS_LABEL, isActiveAlert } from '../src/retention.js';
 import type { NextMeetingRequest } from './tenant/TenantRepository.js';
 import {
   CANDIDATE_DECLARED_FIELDS,
@@ -30,7 +36,8 @@ import {
   type CollaboratorDevelopment,
   type OfferDocumentCategory,
   type OneOnOneMeeting,
-  type OnboardingChecklistItem
+  type OnboardingChecklistItem,
+  type RiskLevel
 } from '../src/types.js';
 
 // Augment Express Request interface with tenantContext
@@ -1705,26 +1712,173 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   }));
 
   // ---------------------------------------------------------
-  // MÓDULO 14: Retenção (eNPS, Clima & Termômetro de Turnover)
+  // MÓDULO 14: Retenção (alertas de turnover + pesquisa de clima interna)
+  // Permissões: retention:view consulta alertas, pesquisas e resultados; retention:edit abre e conduz alertas e pesquisas;
+  // climate:view (todo colaborador) só responde às pesquisas abertas — sem ver alertas nem resultados.
+  // As regras estão em tenant/retention.ts (alertas) e tenant/climate.ts (pesquisa). Alertas e pesquisas são dados sensíveis
+  // de pessoas: as escritas entram na auditoria (categoria PEOPLE_DATA). A resposta de uma pesquisa NUNCA guarda quem respondeu.
   // ---------------------------------------------------------
+  const peopleAudit = (req: Request, action: string, details: string, databaseAffected: string) =>
+    logAudit({
+      tenantId: ctx(req).tenant.id,
+      userId: req.auth!.id,
+      userName: req.auth!.name,
+      action,
+      category: 'PEOPLE_DATA',
+      details,
+      ipAddress: req.ip || '127.0.0.1',
+      databaseAffected
+    });
+
   app.get('/api/v1/retention', can('retention:view'), h(async (req, res) => {
     const { db } = ctx(req);
-    const [climateSurveys, turnoverAlerts] = await Promise.all([db.climateSurveys.list(), db.turnoverAlerts.list()]);
-    res.json({ success: true, climateSurveys, turnoverAlerts });
+    const [turnoverAlerts, campaigns, responses, lookups, indicators, records] = await Promise.all([
+      db.turnoverAlerts.list(),
+      db.campaignSummaries(),
+      db.climateSurveys.list(),
+      db.developmentLookups(),
+      db.getIndicators(),
+      req.auth!.permissions.includes('development:view') ? db.development.list() : Promise.resolve([])
+    ]);
+
+    const active = turnoverAlerts.filter(a => isActiveAlert(a.status));
+    const alertsByRisk: Record<RiskLevel, number> = { Baixo: 0, Médio: 0, Alto: 0 };
+    for (const a of active) alertsByRisk[a.riskLevel]++;
+    // Retention at 90 days is the complement of the early turnover of the Indicadores module (same source, same number).
+    // A brand-new organization has zeros there: no hires and no turnover is "no data", not 100%.
+    const hasBase = !!indicators && (indicators.totalHiresThisQuarter > 0 || indicators.earlyTurnover90DaysRate > 0);
+
+    // Raw answers never leave the server: only the aggregates below (anonymity threshold applied).
+    const metrics = {
+      ...buildClimateOverview(responses, campaigns),
+      alertsByRisk,
+      activeAlerts: active.length,
+      retention90Rate: hasBase ? Math.round((100 - indicators!.earlyTurnover90DaysRate) * 10) / 10 : null
+    };
+    res.json({
+      success: true,
+      turnoverAlerts,
+      campaigns,
+      metrics,
+      lookups,
+      developmentLinks: Object.fromEntries(records.map(r => [r.collaboratorId, r.id]))
+    });
+  }));
+
+  // Quem ainda pode ganhar um alerta (PDIs, contratações em onboarding e membros sem alerta ativo)
+  app.get('/api/v1/retention/people', can('retention:edit'), h(async (req, res) => {
+    res.json({ success: true, people: await ctx(req).db.retentionPeople() });
   }));
 
   app.post('/api/v1/retention/alert', can('retention:edit'), h(async (req, res) => {
-    const { collaboratorName, department, riskLevel, earlyWarningSignals, suggestedActions } = req.body;
-    const alert = await ctx(req).db.turnoverAlerts.insert({
-      id: newId('alt'),
-      collaboratorId: newId('colab'),
-      collaboratorName: required(collaboratorName, 'collaboratorName'),
-      department: department || 'Geral',
-      riskLevel: riskLevel || 'Médio',
-      earlyWarningSignals: csv(earlyWarningSignals),
-      suggestedActions: csv(suggestedActions)
-    });
+    const { db } = ctx(req);
+    const b = req.body ?? {};
+    const fields = parseAlertFields(b, false, await db.developmentLookups());
+    const collaboratorId = b.collaboratorId === undefined || b.collaboratorId === null || b.collaboratorId === ''
+      ? newId('colab')
+      : cleanText(b.collaboratorId, 'Colaborador', 80);
+    const alert = await db.createAlert(collaboratorId, fields, req.auth!.name);
+    await peopleAudit(req, 'TURNOVER_ALERT_OPENED', `Alerta de turnover aberto para ${alert.collaboratorName} (risco ${alert.riskLevel})`, 'turnover_alerts');
     res.status(201).json({ success: true, alert });
+  }));
+
+  app.patch('/api/v1/retention/alert/:id', can('retention:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const refs = await db.developmentLookups();
+    const alert = await db.changeAlert(req.params.id, current => editAlert(current, req.body ?? {}, refs, req.auth!.name));
+    res.json({ success: true, alert });
+  }));
+
+  app.post('/api/v1/retention/alert/:id/actions', can('retention:edit'), h(async (req, res) => {
+    const alert = await ctx(req).db.changeAlert(req.params.id, current => registerAction(current, req.body ?? {}, req.auth!.name));
+    res.status(201).json({ success: true, alert });
+  }));
+
+  app.post('/api/v1/retention/alert/:id/status', can('retention:edit'), h(async (req, res) => {
+    const alert = await ctx(req).db.changeAlert(req.params.id, current => changeAlertStatus(current, req.body ?? {}, req.auth!.name));
+    await peopleAudit(req, 'TURNOVER_ALERT_STATUS', `Alerta de ${alert.collaboratorName}: situação alterada para "${ALERT_STATUS_LABEL[alert.status]}"`, 'turnover_alerts');
+    res.json({ success: true, alert });
+  }));
+
+  app.delete('/api/v1/retention/alert/:id', can('retention:edit'), h(async (req, res) => {
+    await ctx(req).db.deleteAlert(req.params.id);
+    await peopleAudit(req, 'TURNOVER_ALERT_DELETED', `Alerta de turnover ${req.params.id} excluído`, 'turnover_alerts');
+    res.json({ success: true });
+  }));
+
+  // ---- Pesquisa de clima interna: campanhas (gestão) ----
+  const campaignRefs = async (db: TenantConnectionContext['db']): Promise<CampaignRefs> =>
+    ({ departmentIds: new Set((await db.departments.list()).map(d => d.id)) });
+  const summaryOf = async (db: TenantConnectionContext['db'], id: string) => (await db.campaignSummaries()).find(c => c.id === id);
+
+  app.post('/api/v1/retention/campaigns', can('retention:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const fields = buildCampaign(req.body ?? {}, await campaignRefs(db), todaySP(), { id: req.auth!.id, name: req.auth!.name });
+    const created = await db.climateCampaigns.insert({ id: newId('cmp'), ...fields });
+    res.status(201).json({ success: true, campaign: await summaryOf(db, created.id) });
+  }));
+
+  app.patch('/api/v1/retention/campaigns/:id', can('retention:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const refs = await campaignRefs(db);
+    await db.changeCampaign(req.params.id, current => editCampaign(current, req.body ?? {}, refs, todaySP()));
+    res.json({ success: true, campaign: await summaryOf(db, req.params.id) });
+  }));
+
+  app.post('/api/v1/retention/campaigns/:id/publish', can('retention:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const campaign = await db.changeCampaign(req.params.id, current => publishCampaign(current, todaySP()));
+    await peopleAudit(req, 'CLIMATE_SURVEY_PUBLISHED', `Pesquisa de clima "${campaign.name}" publicada`, 'climate_campaigns');
+    res.json({ success: true, campaign: await summaryOf(db, campaign.id) });
+  }));
+
+  app.post('/api/v1/retention/campaigns/:id/close', can('retention:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const campaign = await db.changeCampaign(req.params.id, current => closeCampaign(current));
+    await peopleAudit(req, 'CLIMATE_SURVEY_CLOSED', `Pesquisa de clima "${campaign.name}" encerrada`, 'climate_campaigns');
+    res.json({ success: true, campaign: await summaryOf(db, campaign.id) });
+  }));
+
+  app.delete('/api/v1/retention/campaigns/:id', can('retention:edit'), h(async (req, res) => {
+    await ctx(req).db.deleteCampaign(req.params.id);
+    res.json({ success: true });
+  }));
+
+  // Resultado de uma campanha, com o anonimato aplicado (grupos com poucas respostas não aparecem)
+  app.get('/api/v1/retention/campaigns/:id/results', can('retention:view'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const [campaigns, responses, departments] = await Promise.all([db.campaignSummaries(), db.climateSurveys.list(), db.departments.list()]);
+    const campaign = campaigns.find(c => c.id === req.params.id);
+    if (!campaign) throw new NotFoundError('Pesquisa não encontrada');
+    const results = buildCampaignResults({
+      campaign,
+      responses: responses.filter(r => r.campaignId === campaign.id),
+      departments: departments.map(d => ({ id: d.id, name: d.name })),
+      trend: buildClimateOverview(responses, campaigns).trend
+    });
+    res.json({ success: true, results });
+  }));
+
+  // Oculta (ou reexibe) um comentário, por exemplo um que cite uma pessoa
+  app.patch('/api/v1/retention/campaigns/:id/comments/:responseId', can('retention:edit'), h(async (req, res) => {
+    const hidden = req.body?.hidden;
+    if (typeof hidden !== 'boolean') throw new ValidationError('Informe se o comentário deve ficar oculto (hidden: true ou false).');
+    await ctx(req).db.setCommentHidden(req.params.id, req.params.responseId, hidden);
+    await peopleAudit(req, hidden ? 'CLIMATE_COMMENT_HIDDEN' : 'CLIMATE_COMMENT_SHOWN', `Comentário de pesquisa de clima ${hidden ? 'ocultado' : 'reexibido'}`, 'climate_surveys');
+    res.json({ success: true });
+  }));
+
+  // ---- Pesquisa de clima interna: quem responde ----
+  app.get('/api/v1/retention/survey/pending', can('climate:view'), h(async (req, res) => {
+    res.json({ success: true, surveys: await ctx(req).db.pendingSurveys(req.auth!.id) });
+  }));
+
+  app.post('/api/v1/retention/survey/:campaignId/respond', can('climate:view'), h(async (req, res) => {
+    const { db, tenant } = ctx(req);
+    const answer = parseAnswer(req.body ?? {});
+    await consumeQuota('climate-answer', [tenant.id, req.auth!.id], { limit: 30, windowSeconds: 3600 }, 'Muitas tentativas de resposta. Aguarde um pouco e tente de novo.');
+    await db.submitAnswer(req.params.campaignId, req.auth!.id, answer);
+    res.status(201).json({ success: true });
   }));
 
   // ---------------------------------------------------------

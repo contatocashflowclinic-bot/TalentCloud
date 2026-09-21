@@ -502,7 +502,16 @@ export function getTechCorpSeedData() {
           'Agendar conversa de carreira proativa com Rodrigo (Gestor)',
           'Revisar metas do PDI e avaliar plano de promoção para nível Sênior'
         ],
-        lastActionTaken: 'Reunião de alinhamento de PDI pré-agendada para quinta-feira.'
+        lastActionTaken: 'Reunião de alinhamento de PDI pré-agendada para quinta-feira.',
+        status: 'monitoring' as const,
+        history: [
+          { at: '2026-03-12T13:00:00.000Z', by: 'Sistema', kind: 'created' as const, text: 'Alerta aberto com risco Médio.' },
+          { at: '2026-03-13T14:30:00.000Z', by: 'Rodrigo (Gestor)', kind: 'action' as const, text: 'Reunião de alinhamento de PDI pré-agendada para quinta-feira.' },
+          { at: '2026-03-13T14:30:00.000Z', by: 'Rodrigo (Gestor)', kind: 'status' as const, text: 'Situação: Aberto → Em acompanhamento.' }
+        ],
+        createdAt: '2026-03-12T13:00:00.000Z',
+        createdBy: 'Sistema',
+        updatedAt: '2026-03-13T14:30:00.000Z'
       }
     ],
     indicators: {
