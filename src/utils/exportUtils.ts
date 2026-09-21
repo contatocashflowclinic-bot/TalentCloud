@@ -22,7 +22,9 @@ export function downloadFile(blob: Blob, filename: string) {
 export function exportCandidatesToCSV(
   candidates: Candidate[],
   evaluations: AIAssistedEvaluation[] = [],
-  tenantName: string = 'Organização'
+  tenantName: string = 'Organização',
+  /** false = organization without the AI module: the AI columns are left out. */
+  withAI = true
 ) {
   const headers = [
     'Nome Completo',
@@ -33,8 +35,7 @@ export function exportCandidatesToCSV(
     'Email',
     'Telefone',
     'Localização',
-    'Score Fit Geral IA (%)',
-    'Decisão do Gestor Humano',
+    ...(withAI ? ['Score Fit Geral IA (%)', 'Decisão do Gestor Humano'] : []),
     'Resumo Profissional'
   ];
 
@@ -54,8 +55,7 @@ export function exportCandidatesToCSV(
       `"${c.email.replace(/"/g, '""')}"`,
       `"${(c.phone || '').replace(/"/g, '""')}"`,
       `"${(c.location || '').replace(/"/g, '""')}"`,
-      `"${fitScore}"`,
-      `"${decision}"`,
+      ...(withAI ? [`"${fitScore}"`, `"${decision}"`] : []),
       `"${(c.resumeSummary || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`
     ].join(';');
   });
@@ -74,7 +74,9 @@ export function exportCandidatesToPDF(
   candidates: Candidate[],
   evaluations: AIAssistedEvaluation[] = [],
   tenantName: string = 'Organização',
-  dbName: string = 'tenant'
+  dbName: string = 'tenant',
+  /** false = organization without the AI module: the AI columns and summary are left out. */
+  withAI = true
 ) {
   const doc = new jsPDF({
     orientation: 'portrait',
@@ -121,7 +123,7 @@ export function exportCandidatesToPDF(
   doc.setTextColor(51, 65, 85);
   doc.text(`Total de Candidatos no Pool: ${total}`, 20, 55);
   doc.text(`Experiência Média: ${avgExp} anos`, 80, 55);
-  doc.text(`Avaliados com IA Assistida: ${evaluatedCount} / ${total}`, 140, 55);
+  if (withAI) doc.text(`Avaliados com IA Assistida: ${evaluatedCount} / ${total}`, 140, 55);
 
   // Table Data
   const tableData = candidates.map(c => {
@@ -136,15 +138,16 @@ export function exportCandidatesToPDF(
       c.currentRole,
       `${c.yearsOfExperience} anos`,
       c.skills.slice(0, 3).join(', '),
-      fit,
-      status,
+      ...(withAI ? [fit, status] : []),
       c.email
     ];
   });
 
   autoTable(doc, {
     startY: 66,
-    head: [['Candidato', 'Cargo Atual', 'Exp.', 'Principais Competências', 'Fit IA', 'Decisão', 'Contato']],
+    head: [withAI
+      ? ['Candidato', 'Cargo Atual', 'Exp.', 'Principais Competências', 'Fit IA', 'Decisão', 'Contato']
+      : ['Candidato', 'Cargo Atual', 'Exp.', 'Principais Competências', 'Contato']],
     body: tableData,
     theme: 'striped',
     headStyles: {
@@ -157,15 +160,9 @@ export function exportCandidatesToPDF(
       fontSize: 7.5,
       cellPadding: 2.5
     },
-    columnStyles: {
-      0: { cellWidth: 32 },
-      1: { cellWidth: 28 },
-      2: { cellWidth: 15 },
-      3: { cellWidth: 38 },
-      4: { cellWidth: 15 },
-      5: { cellWidth: 20 },
-      6: { cellWidth: 34 }
-    }
+    columnStyles: withAI
+      ? { 0: { cellWidth: 32 }, 1: { cellWidth: 28 }, 2: { cellWidth: 15 }, 3: { cellWidth: 38 }, 4: { cellWidth: 15 }, 5: { cellWidth: 20 }, 6: { cellWidth: 34 } }
+      : { 0: { cellWidth: 40 }, 1: { cellWidth: 36 }, 2: { cellWidth: 16 }, 3: { cellWidth: 50 }, 4: { cellWidth: 40 } }
   });
 
   // Footer / Confidentiality Note
@@ -205,7 +202,9 @@ function funnelRows(ind: TenantIndicators) {
  */
 export function exportIndicatorsToCSV(
   indicators: TenantIndicators | null,
-  tenantName: string = 'Organização'
+  tenantName: string = 'Organização',
+  /** false = organization without the AI module: no mention of AI in the report. */
+  withAI = true
 ) {
   if (!indicators) return; // nothing real to export
   const ind = indicators;
@@ -228,7 +227,7 @@ export function exportIndicatorsToCSV(
     ['', '', ''],
     ['GOVERNANÇA & PRINCÍPIOS DE DECISÃO HUMANA', 'SITUAÇÃO', 'DESCRIÇÃO'],
     ['Rastreabilidade & Logs Auditáveis', 'Ativa', 'Ações sensíveis registradas com carimbo de data/hora SP'],
-    ['Decisão final', 'Humana', 'A IA apoia; recrutadores e gestores decidem e justificam']
+    ['Decisão final', 'Humana', withAI ? 'A IA apoia; recrutadores e gestores decidem e justificam' : 'Recrutadores e gestores decidem e justificam']
   ];
 
   const csvContent = '\uFEFF' + rows.map(r => r.map(cell => `"${cell.replace(/"/g, '""')}"`).join(';')).join('\r\n');
@@ -244,7 +243,9 @@ export function exportIndicatorsToCSV(
 export function exportIndicatorsToPDF(
   indicators: TenantIndicators | null,
   tenantName: string = 'Organização',
-  dbName: string = 'tenant'
+  dbName: string = 'tenant',
+  /** false = organization without the AI module: no mention of AI in the report. */
+  withAI = true
 ) {
   const doc = new jsPDF({
     orientation: 'portrait',
@@ -347,7 +348,7 @@ export function exportIndicatorsToPDF(
     startY: finalY3 + 14,
     head: [['Princípio / Pilar', 'Índice Apurado', 'Garantia e Conformidade']],
     body: [
-      ['Decisão final', 'Humana', 'A IA apoia; recrutadores e gestores decidem e justificam'],
+      ['Decisão final', 'Humana', withAI ? 'A IA apoia; recrutadores e gestores decidem e justificam' : 'Recrutadores e gestores decidem e justificam'],
       ['Rastreabilidade das Ações', 'Ativa', 'Ações sensíveis registradas com carimbo de data/hora oficial de São Paulo (SP)'],
       ['Privacidade entre Organizações', 'Aplicada', 'Dados separados por organização no banco (chaves compostas + RLS)']
     ],

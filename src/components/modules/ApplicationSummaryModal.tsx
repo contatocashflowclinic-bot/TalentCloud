@@ -67,6 +67,8 @@ interface Props {
   onArchive: (reason: string) => Promise<void> | void;
   onReactivate: () => Promise<void> | void;
   onOpenAI?: () => void;
+  /** false = organization without the AI module: no AI card, and nothing about AI in the copied / printed summary. */
+  showAI?: boolean;
   onOpenProfile?: () => void;
   /** Name of the organization and of the person printing, shown on the printed page. */
   organizationName?: string;
@@ -76,7 +78,7 @@ interface Props {
 
 /** Quick analysis of a candidate on the pipeline, before moving them to the next stage. */
 export const ApplicationSummaryModal: React.FC<Props> = ({
-  application, candidate, job, evaluation, interviews, canEdit, onAdvance, onArchive, onReactivate, onOpenAI, onOpenProfile,
+  application, candidate, job, evaluation, interviews, canEdit, onAdvance, onArchive, onReactivate, onOpenAI, showAI = true, onOpenProfile,
   organizationName, printedBy, onClose
 }) => {
   const [shareOpen, setShareOpen] = useState(false);
@@ -103,7 +105,7 @@ export const ApplicationSummaryModal: React.FC<Props> = ({
   const avgScore = (i: InterviewSession) =>
     i.scorecard.length ? i.scorecard.reduce((sum, c) => sum + c.score, 0) / i.scorecard.length : null;
 
-  const data: ApplicationSummaryData = { organization: organizationName, candidate, job, application, evaluation, interviews };
+  const data: ApplicationSummaryData = { organization: organizationName, candidate, job, application, evaluation: showAI ? evaluation : undefined, interviews, aiEnabled: showAI };
   const shareTitle = `Resumo — ${candidate?.name ?? 'Candidato'} — ${job.title}`;
 
   const handlePrint = () => {
@@ -296,6 +298,7 @@ export const ApplicationSummaryModal: React.FC<Props> = ({
                 ) : <p className="text-slate-400 italic">Candidato não encontrado.</p>}
               </Card>
 
+              {showAI && (
               <Card icon={<Sparkles className="w-4 h-4" />} title="Avaliação assistida por IA">
                 {evaluation ? (
                   <div className="space-y-3">
@@ -337,6 +340,7 @@ export const ApplicationSummaryModal: React.FC<Props> = ({
                   </button>
                 )}
               </Card>
+              )}
             </div>
           </div>
 

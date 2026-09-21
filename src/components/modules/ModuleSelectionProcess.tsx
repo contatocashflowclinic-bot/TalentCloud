@@ -6,6 +6,7 @@ import { SelectionApplication, JobOpening, Candidate, AIAssistedEvaluation, Inte
 import { useAuth } from '../../context/AuthContext.js';
 import { ApplicationSummaryModal } from './ApplicationSummaryModal.js';
 import { isLocalEstimate } from '../../utils/aiEvaluation.js';
+import { useAiAccess } from '../../hooks/useAiAccess.js';
 
 export const ModuleSelectionProcess: React.FC<{
   initialJobId?: string;
@@ -14,6 +15,7 @@ export const ModuleSelectionProcess: React.FC<{
   onNavigateToCandidate?: (candidateId: string, searchTerm?: string) => void;
 }> = ({ initialJobId, initialCandidateId, onNavigateToAI, onNavigateToCandidate }) => {
   const { activeTenant } = useTenant();
+  const { aiEnabled } = useAiAccess();
   const [openings, setOpenings] = useState<JobOpening[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string>('');
   const [applications, setApplications] = useState<SelectionApplication[]>([]);
@@ -37,7 +39,7 @@ export const ModuleSelectionProcess: React.FC<{
         TenantApi.getOpenings(),
         TenantApi.getApplications(),
         TenantApi.getCandidates(),
-        TenantApi.getAIEvaluations(),
+        aiEnabled ? TenantApi.getAIEvaluations() : Promise.resolve([] as AIAssistedEvaluation[]),
         // Entrevistas só enriquecem o resumo; sem permissão de ver entrevistas o Kanban segue funcionando.
         TenantApi.getInterviews().then(setInterviews).catch(() => setInterviews([]))
       ]);
@@ -202,8 +204,8 @@ export const ModuleSelectionProcess: React.FC<{
                             </div>
                           </div>
 
-                          {/* AI Score Badge with Bar if evaluated */}
-                          {evalItem ? (
+                          {/* AI Score Badge with Bar if evaluated (never shown by organizations without the AI module) */}
+                          {aiEnabled && (evalItem ? (
                             <div className="p-2.5 rounded-xl bg-indigo-50/80 border border-indigo-100/90 space-y-1.5 text-xs">
                               <div className="flex items-center justify-between">
                                 <span className="flex items-center gap-1 font-semibold text-indigo-950 text-[11px]">
@@ -225,7 +227,7 @@ export const ModuleSelectionProcess: React.FC<{
                             <div className="px-2 py-1 rounded-lg bg-slate-50 text-[10px] text-slate-400 italic">
                               Avaliação IA não realizada
                             </div>
-                          )}
+                          ))}
 
                           {/* Actions */}
                           <div
@@ -292,6 +294,7 @@ export const ModuleSelectionProcess: React.FC<{
             onNavigateToCandidate(summaryApp.candidateId, candidate?.name);
           } : undefined}
           onOpenAI={onNavigateToAI ? () => onNavigateToAI(summaryApp.candidateId, activeJob.id) : undefined}
+          showAI={aiEnabled}
           organizationName={activeTenant?.name}
           printedBy={user?.name}
           onClose={() => setSummaryAppId(null)}

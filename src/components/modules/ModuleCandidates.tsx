@@ -9,6 +9,7 @@ import { useAuth } from '../../context/AuthContext.js';
 import { CandidateSummaryModal } from './CandidateSummaryModal.js';
 import { CandidateEditModal } from './EntityEditModals.js';
 import { isLocalEstimate } from '../../utils/aiEvaluation.js';
+import { useAiAccess } from '../../hooks/useAiAccess.js';
 
 export const ModuleCandidates: React.FC<{
   onSelectCandidateForAI?: (candidateId: string, jobId?: string) => void;
@@ -17,6 +18,7 @@ export const ModuleCandidates: React.FC<{
   initialSelectedCandidateId?: string;
 }> = ({ onSelectCandidateForAI, onNavigateToProcess, initialSearchTerm, initialSelectedCandidateId }) => {
   const { activeTenant } = useTenant();
+  const { aiEnabled } = useAiAccess();
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [openings, setOpenings] = useState<JobOpening[]>([]);
   const [evaluations, setEvaluations] = useState<AIAssistedEvaluation[]>([]);
@@ -51,7 +53,7 @@ export const ModuleCandidates: React.FC<{
       const [candData, opsData, evalsData] = await Promise.all([
         TenantApi.getCandidates(),
         TenantApi.getOpenings(),
-        TenantApi.getAIEvaluations()
+        aiEnabled ? TenantApi.getAIEvaluations() : Promise.resolve([] as AIAssistedEvaluation[])
       ]);
       setCandidates(candData);
       setOpenings(opsData);
@@ -103,7 +105,7 @@ export const ModuleCandidates: React.FC<{
   ));
 
   const handleExportCSV = () => {
-    exportCandidatesToCSV(filtered, evaluations, activeTenant?.name || 'Vértice 360');
+    exportCandidatesToCSV(filtered, evaluations, activeTenant?.name || 'Vértice 360', aiEnabled);
   };
 
   const handleExportPDF = () => {
@@ -111,7 +113,8 @@ export const ModuleCandidates: React.FC<{
       filtered,
       evaluations,
       activeTenant?.name || 'Vértice 360',
-      activeTenant?.dbConfig?.dbName || 'tenant'
+      activeTenant?.dbConfig?.dbName || 'tenant',
+      aiEnabled
     );
   };
 
@@ -218,8 +221,8 @@ export const ModuleCandidates: React.FC<{
                   </div>
                 </div>
 
-                {/* Candidate Performance / AI Evaluation Badge if evaluated */}
-                {evalItem ? (
+                {/* Candidate Performance / AI Evaluation Badge if evaluated (never shown by organizations without the AI module) */}
+                {aiEnabled && (evalItem ? (
                   <div className="p-3.5 rounded-2xl bg-indigo-50/70 border border-indigo-100/90 space-y-2 text-xs">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5 font-semibold text-indigo-950">
@@ -256,7 +259,7 @@ export const ModuleCandidates: React.FC<{
                     </span>
                     <span className="text-slate-400 font-medium italic">Pendente</span>
                   </div>
-                )}
+                ))}
 
                 {/* Professional summary */}
                 <div className="p-3 rounded-2xl bg-slate-50/70 border border-slate-100 text-xs text-slate-600 leading-relaxed line-clamp-3">
@@ -322,6 +325,7 @@ export const ModuleCandidates: React.FC<{
         <CandidateSummaryModal
           candidate={candidates.find(c => c.id === summaryId)!}
           evaluations={evaluations}
+          showAI={aiEnabled}
           openings={openings}
           canEdit={canEdit}
           onEdit={canEdit ? () => { setEditId(summaryId); setSummaryId(null); } : undefined}

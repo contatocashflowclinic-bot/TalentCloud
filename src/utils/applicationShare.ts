@@ -11,6 +11,8 @@ export interface ApplicationSummaryData {
   application: SelectionApplication;
   evaluation?: AIAssistedEvaluation;
   interviews: InterviewSession[];
+  /** false = organization without the AI module: the summary says nothing about AI. */
+  aiEnabled?: boolean;
 }
 
 const STATUS: Record<SelectionApplication['status'], string> = {
@@ -54,7 +56,9 @@ export function buildSummaryText(d: ApplicationSummaryData): string {
   ];
   if (c?.skills.length) lines.push(`Competências: ${c.skills.join(', ')}`);
   if (c?.education) lines.push(`Formação: ${c.education}`);
-  if (d.evaluation) {
+  if (d.aiEnabled === false) {
+    // organization without the AI module: nothing about AI
+  } else if (d.evaluation) {
     const e = d.evaluation;
     lines.push('', `${isLocalEstimate(e) ? 'Estimativa local (NÃO é avaliação de IA)' : 'Avaliação por IA'}: fit geral ${e.overallFitScore}% (técnico ${e.technicalFitScore}%, cultural ${e.culturalFitScore}%)`);
     if (e.keyStrengths.length) lines.push(`Pontos fortes: ${e.keyStrengths.join('; ')}`);
@@ -127,7 +131,7 @@ export function buildPrintHtml(d: ApplicationSummaryData, printedBy?: string): s
   <div class="chips">${c.skills.map(s => `<span>${esc(s)}</span>`).join('')}</div>
   ${c.languages.length ? `<div class="muted">Idiomas: ${esc(c.languages.join(', '))}</div>` : ''}` : ''}
 
-  <h2>Avaliação assistida por IA</h2>
+  ${d.aiEnabled === false ? '' : `<h2>Avaliação assistida por IA</h2>
   ${e ? `${isLocalEstimate(e) ? `<p><b>${esc(LOCAL_ESTIMATE_NOTICE)}</b> Valide em entrevista.</p>` : ''}<div class="grid">
       <div class="box"><div class="muted">Fit geral</div><div class="score">${e.overallFitScore}%</div></div>
       <div class="box"><div class="muted">Técnico</div><div class="score">${e.technicalFitScore}%</div></div>
@@ -139,7 +143,7 @@ export function buildPrintHtml(d: ApplicationSummaryData, printedBy?: string): s
       <div><b>Pontos de atenção</b>${list(e.potentialGaps)}</div>
     </div>
     <p class="muted">${e.humanReviewerDecision ? `Revisão humana: ${esc(DECISION[e.humanReviewerDecision])}${e.humanNotes ? ` — ${esc(e.humanNotes)}` : ''}` : 'Sem decisão do revisor humano. A IA apoia a decisão, não a substitui.'}</p>`
-    : '<span class="muted">Avaliação por IA ainda não realizada para esta vaga.</span>'}
+    : '<span class="muted">Avaliação por IA ainda não realizada para esta vaga.</span>'}`}
 
   ${d.interviews.length ? `<h2>Entrevistas</h2>${interviews}` : ''}
   ${d.application.notes.length ? `<h2>Histórico do processo</h2>${list([...d.application.notes].reverse())}` : ''}

@@ -28,6 +28,8 @@ interface IndicatorsOverviewChartsProps {
   indicators: TenantIndicators | null;
   departments: Department[];
   openings: JobOpening[];
+  /** false = organization without the AI module: the funnel does not mention AI. */
+  aiEnabled?: boolean;
 }
 
 const OPEN_STATUSES: JobOpening['status'][] = ['open', 'in_progress', 'offer'];
@@ -40,7 +42,8 @@ const OPEN_STATUSES: JobOpening['status'][] = ['open', 'in_progress', 'offer'];
 export const IndicatorsOverviewCharts: React.FC<IndicatorsOverviewChartsProps> = ({
   indicators,
   departments,
-  openings
+  openings,
+  aiEnabled = true
 }) => {
   const [funnelMetricView, setFunnelMetricView] = useState<'volume' | 'conversion'>('volume');
 
@@ -65,7 +68,7 @@ export const IndicatorsOverviewCharts: React.FC<IndicatorsOverviewChartsProps> =
 
   const funnelData = [
     { stage: '1. Inscrições', label: 'Triagem Inicial', candidatos: funnel.applied, conversaoEtapa: funnel.applied > 0 ? 100 : 0, conversaoGlobal: funnel.applied > 0 ? 100 : 0, dropoff: 0, color: '#4f46e5' },
-    { stage: '2. Fit Cultural IA', label: 'Calibração DNA', candidatos: funnel.screened, conversaoEtapa: pct(funnel.screened, funnel.applied), conversaoGlobal: pct(funnel.screened, funnel.applied), dropoff: Math.max(funnel.applied - funnel.screened, 0), color: '#2563eb' },
+    { stage: aiEnabled ? '2. Fit Cultural IA' : '2. Triagem', label: aiEnabled ? 'Calibração DNA' : 'Avaliação de perfil', candidatos: funnel.screened, conversaoEtapa: pct(funnel.screened, funnel.applied), conversaoGlobal: pct(funnel.screened, funnel.applied), dropoff: Math.max(funnel.applied - funnel.screened, 0), color: '#2563eb' },
     { stage: '3. Entrevista', label: 'Scorecard & Cases', candidatos: funnel.interviewed, conversaoEtapa: pct(funnel.interviewed, funnel.screened), conversaoGlobal: pct(funnel.interviewed, funnel.applied), dropoff: Math.max(funnel.screened - funnel.interviewed, 0), color: '#0891b2' },
     { stage: '4. Proposta Enviada', label: 'Oferta Salarial', candidatos: funnel.offered, conversaoEtapa: pct(funnel.offered, funnel.interviewed), conversaoGlobal: pct(funnel.offered, funnel.applied), dropoff: Math.max(funnel.interviewed - funnel.offered, 0), color: '#d97706' },
     { stage: '5. Admissão', label: 'Contratação Aceita', candidatos: funnel.hired, conversaoEtapa: pct(funnel.hired, funnel.offered), conversaoGlobal: pct(funnel.hired, funnel.applied), dropoff: Math.max(funnel.offered - funnel.hired, 0), color: '#059669' }

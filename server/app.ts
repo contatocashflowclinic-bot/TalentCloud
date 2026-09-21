@@ -1047,7 +1047,10 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // (Princípios: IA como apoio, Decisão humana, Explicação)
   // ---------------------------------------------------------
   app.get('/api/v1/ai/evaluations', can('ai_evaluation:view', 'candidates:view', 'interviews:view'), h(async (req, res) => {
-    res.json({ success: true, evaluations: await ctx(req).db.aiEvaluations.list() });
+    const { db, tenant } = ctx(req);
+    // An organization whose contract has no AI module sees no AI evaluation at all (old ones stay stored; they come back if the module is turned on again)
+    if (!tenant.enabledRoutines.includes('ai_evaluation')) return res.json({ success: true, evaluations: [] });
+    res.json({ success: true, evaluations: await db.aiEvaluations.list() });
   }));
 
   app.post('/api/v1/ai/evaluate-candidate', can('ai_evaluation:create'), h(async (req, res) => {

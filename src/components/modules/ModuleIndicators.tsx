@@ -18,9 +18,11 @@ import { TenantIndicators, Department, JobOpening, AIAssistedEvaluation } from '
 import { ExportButton } from '../ExportButton.js';
 import { exportIndicatorsToCSV, exportIndicatorsToPDF } from '../../utils/exportUtils.js';
 import { IndicatorsOverviewCharts } from '../indicators/IndicatorsOverviewCharts.js';
+import { useAiAccess } from '../../hooks/useAiAccess.js';
 
 export const ModuleIndicators: React.FC = () => {
   const { activeTenant } = useTenant();
+  const { aiEnabled } = useAiAccess();
   const [indicators, setIndicators] = useState<TenantIndicators | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,7 +38,7 @@ export const ModuleIndicators: React.FC = () => {
           TenantApi.getIndicators(),
           TenantApi.getDepartments().catch(() => [] as Department[]),
           TenantApi.getOpenings().catch(() => [] as JobOpening[]),
-          TenantApi.getAIEvaluations().catch(() => [] as AIAssistedEvaluation[])
+          aiEnabled ? TenantApi.getAIEvaluations().catch(() => [] as AIAssistedEvaluation[]) : Promise.resolve([] as AIAssistedEvaluation[])
         ]);
         setIndicators(indicatorsData);
         setDepartments(deptsData || []);
@@ -59,14 +61,15 @@ export const ModuleIndicators: React.FC = () => {
   const fmtPct = (v: number | null) => (v === null ? '—' : `${v.toFixed(1)}%`);
 
   const handleExportCSV = () => {
-    exportIndicatorsToCSV(indicators, activeTenant?.name || 'Vértice 360');
+    exportIndicatorsToCSV(indicators, activeTenant?.name || 'Vértice 360', aiEnabled);
   };
 
   const handleExportPDF = () => {
     exportIndicatorsToPDF(
       indicators,
       activeTenant?.name || 'Vértice 360',
-      activeTenant?.dbConfig?.dbName || 'tenant'
+      activeTenant?.dbConfig?.dbName || 'tenant',
+      aiEnabled
     );
   };
 
@@ -111,6 +114,7 @@ export const ModuleIndicators: React.FC = () => {
           <span>Painel de Visão Geral (Gráficos)</span>
         </button>
 
+        {aiEnabled && (
         <button
           onClick={() => setActiveTab('governance')}
           className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold rounded-t-xl transition-all border-b-2 ${
@@ -122,6 +126,7 @@ export const ModuleIndicators: React.FC = () => {
           <ShieldCheck className="w-4 h-4" />
           <span>Governança & Decisão Humana</span>
         </button>
+        )}
       </div>
 
       {/* KPI Cards Grid */}
@@ -196,11 +201,12 @@ export const ModuleIndicators: React.FC = () => {
       </div>
 
       {/* Main Tab Content */}
-      {activeTab === 'overview' ? (
+      {activeTab === 'overview' || !aiEnabled ? (
         <IndicatorsOverviewCharts
           indicators={indicators}
           departments={departments}
           openings={openings}
+          aiEnabled={aiEnabled}
         />
       ) : (
         /* Quality of Decision & Principles Tab */

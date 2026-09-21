@@ -446,6 +446,16 @@ async function main() {
     check('AI paused by the platform: evaluations still work, as the labeled local estimate', paused.status === 201 && paused.json.evaluation?.source === 'heuristic' && /pausada/.test(paused.json.evaluation.detailedExplanation), paused.json);
     check('AI usage panel: pause switch is reflected and can be turned back on', (await SU('PATCH', '/api/master/ai/settings', { enabled: true })).json.settings?.enabled === true);
 
+    // Organization that does not use the AI: the contract switch hides everything (old evaluations stay stored and come back if it is turned on again)
+    const listWithAI = await A('GET', '/api/v1/ai/evaluations');
+    check('org with the AI module lists its evaluations', listWithAI.status === 200 && listWithAI.json.evaluations.length >= 1, listWithAI.json);
+    await SU('PATCH', `/api/master/tenants/${tenantAId}`, { enabledRoutines: PLAN_ROUTINES.Scale.filter(k => k !== 'ai_evaluation') });
+    const listNoAI = await A('GET', '/api/v1/ai/evaluations');
+    const ctxNoAI = await A('GET', '/api/v1/context');
+    check('org without the AI module: no evaluation is returned and the context says the module is off', listNoAI.status === 200 && listNoAI.json.evaluations.length === 0 && Array.isArray(ctxNoAI.json.tenant?.enabledRoutines) && !ctxNoAI.json.tenant.enabledRoutines.includes('ai_evaluation'), [listNoAI.json, ctxNoAI.json.tenant?.enabledRoutines]);
+    await SU('PATCH', `/api/master/tenants/${tenantAId}`, { enabledRoutines: PLAN_ROUTINES.Scale });
+    check('turning the AI module back on brings the evaluations back', (await A('GET', '/api/v1/ai/evaluations')).json.evaluations?.length >= 1);
+
     const intv = await A('POST', '/api/v1/interviews', { jobOpeningId: jobId, candidateId: candId });
     check('create interview', intv.status === 201, intv.json);
     check('INTERVIEWER can fill a scorecard', (await api('PATCH', `/api/v1/interviews/${intv.json.interview.id}/scorecard`, { token: tokens.INTERVIEWER, body: { scorecard: [{ competency: 'X', score: 5, notes: 'top' }], recommendation: 'STRONG_YES', overallFeedback: 'ótimo' } })).json.interview?.status === 'completed');

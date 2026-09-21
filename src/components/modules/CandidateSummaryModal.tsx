@@ -61,6 +61,8 @@ function useRelated<T>(load: () => Promise<T>, fallback: T): T | null {
 interface Props {
   candidate: Candidate;
   evaluations: AIAssistedEvaluation[];
+  /** false = organization without the AI module: the AI card is not shown. */
+  showAI?: boolean;
   openings: JobOpening[];
   canEdit: boolean;
   onEdit?: () => void;
@@ -73,7 +75,7 @@ interface Props {
 
 /** Talent pool summary: profile, highlights, active application, AI evaluation and change history. */
 export const CandidateSummaryModal: React.FC<Props> = ({
-  candidate, evaluations, openings, canEdit, onEdit, onOpenAI, onOpenApplication, onArchive, onUnarchive, onClose
+  candidate, evaluations, showAI = true, openings, canEdit, onEdit, onOpenAI, onOpenApplication, onArchive, onUnarchive, onClose
 }) => {
   const applications = useRelated(() => TenantApi.getApplications(), [] as SelectionApplication[]);
   const history = useRelated(() => TenantApi.getCandidateHistory(candidate.id), [] as CandidateChange[]);
@@ -303,6 +305,7 @@ export const CandidateSummaryModal: React.FC<Props> = ({
                 </Card>
               )}
 
+              {showAI && (
               <Card
                 icon={<Sparkles className="w-4 h-4" />}
                 title="Avaliação assistida por IA"
@@ -346,6 +349,7 @@ export const CandidateSummaryModal: React.FC<Props> = ({
                   </button>
                 )}
               </Card>
+              )}
             </div>
           </div>
         </div>

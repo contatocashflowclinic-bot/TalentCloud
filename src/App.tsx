@@ -5,6 +5,7 @@ import { LoginPage } from './components/auth/LoginPage.js';
 import { OrganizationPickerPage } from './components/auth/OrganizationPickerPage.js';
 import { ChangePasswordModal } from './components/auth/ChangePasswordModal.js';
 import { canAccessModule } from './access.js';
+import { useAiAccess } from './hooks/useAiAccess.js';
 import { ShieldAlert } from 'lucide-react';
 import { Header } from './components/Header.js';
 import { Sidebar } from './components/Sidebar.js';
@@ -38,6 +39,7 @@ const ScreenFallback: React.FC = () => (
 
 const MainLayout: React.FC = () => {
   const { activeTenant, isLoading, permissions } = useTenant();
+  const { canOpenAI } = useAiAccess();
   const { user } = useAuth();
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
   const [activeModule, setActiveModule] = useState<number>(1); // Default to Module 1 (Boas-vindas)
@@ -131,7 +133,7 @@ const MainLayout: React.FC = () => {
         onOpenAgenda={() => handleSelectModule(17)}
         onNavigateToCandidate={handleNavigateToCandidate}
         onNavigateToProcess={handleNavigateToProcess}
-        onNavigateToAI={handleNavigateToAI}
+        onNavigateToAI={canOpenAI ? handleNavigateToAI : undefined}
         isSidebarCollapsed={isSidebarCollapsed}
         onToggleSidebar={() => {
           // lg+: collapse the fixed sidebar; below lg the menu is an off-canvas drawer
@@ -179,7 +181,7 @@ const MainLayout: React.FC = () => {
               )}
               {activeModule === 7 && (
                 <ModuleCandidates
-                  onSelectCandidateForAI={handleNavigateToAI}
+                  onSelectCandidateForAI={canOpenAI ? handleNavigateToAI : undefined}
                   onNavigateToProcess={handleNavigateToProcess}
                   initialSearchTerm={targetSearchTerm}
                   initialSelectedCandidateId={targetCandidateId}
@@ -189,7 +191,7 @@ const MainLayout: React.FC = () => {
                 <ModuleSelectionProcess
                   initialJobId={targetJobId}
                   initialCandidateId={targetCandidateId}
-                  onNavigateToAI={handleNavigateToAI}
+                  onNavigateToAI={canOpenAI ? handleNavigateToAI : undefined}
                   onNavigateToCandidate={handleNavigateToCandidate}
                 />
               )}

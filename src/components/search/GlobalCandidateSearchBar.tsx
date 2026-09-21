@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
+import { useAiAccess } from '../../hooks/useAiAccess.js';
 import {
   Candidate,
   JobOpening,
@@ -53,6 +54,7 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
   onNavigateToAI
 }) => {
   const { activeTenant } = useTenant();
+  const { aiEnabled } = useAiAccess();
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState<SearchFilterCategory>('all');
@@ -78,7 +80,7 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
         TenantApi.getCandidates(),
         TenantApi.getOpenings(),
         TenantApi.getApplications(),
-        TenantApi.getAIEvaluations()
+        aiEnabled ? TenantApi.getAIEvaluations() : Promise.resolve([] as AIAssistedEvaluation[])
       ]);
       setCandidates(cands);
       setOpenings(ops);
@@ -590,13 +592,15 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
                                     </button>
                                   )}
 
-                                  <button
-                                    onClick={() => handleSelectAI(candidate.id, appItem.opening?.id)}
-                                    className="p-1 rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition-colors"
-                                    title="Avaliação com IA"
-                                  >
-                                    <Sparkles className="w-3.5 h-3.5" />
-                                  </button>
+                                  {onNavigateToAI && (
+                                    <button
+                                      onClick={() => handleSelectAI(candidate.id, appItem.opening?.id)}
+                                      className="p-1 rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-700 transition-colors"
+                                      title="Avaliação com IA"
+                                    >
+                                      <Sparkles className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
                                 </div>
                               </div>
                             ))}
