@@ -687,6 +687,98 @@ async function main() {
     check('isolation: org B cannot touch org A checklist', (await B('GET', `/api/v1/onboardings/${journey.id}/checklist-available`)).status === 404 && (await B('DELETE', `${ck}/${c1.id}`)).status === 404 && (await B('POST', ck, { title: 'x' })).status === 404);
     check('turnover alert', (await A('POST', '/api/v1/retention/alert', { collaboratorName: 'Fulano', riskLevel: 'Alto', earlyWarningSignals: 'faltas, queda', suggestedActions: '1:1' })).status === 201);
 
+    // ---- Desenvolvimento (PDI): PDI da contratação, metas, andamento e 1:1s ------------------
+    const devList = await A('GET', '/api/v1/development');
+    const hirePdi = (devList.json.developmentRecords ?? []).find((r: any) => r.collaboratorId === candId);
+    check('the hire opens an empty PDI automatically', !!hirePdi && hirePdi.goals.length === 0 && hirePdi.oneOnOnes.length === 0 && hirePdi.lastReviewDate === '' && hirePdi.nextReviewDate === '' && !!hirePdi.hireDate && !!hirePdi.jobTitle, hirePdi);
+    check('accepting twice does not duplicate the PDI', (devList.json.developmentRecords ?? []).filter((r: any) => r.collaboratorId === candId).length === 1);
+    check('PDI list carries the department/manager names', Array.isArray(devList.json.lookups?.departments) && devList.json.lookups?.members?.some((m: any) => m.id === recruiterUser.id), devList.json.lookups);
+    const dv = `/api/v1/development/${hirePdi.id}`;
+    const peopleRes = await A('GET', '/api/v1/development/people');
+    check('people list: excludes who already has a PDI, offers the members', peopleRes.status === 200 && !(peopleRes.json.people ?? []).some((p: any) => p.id === candId) && (peopleRes.json.people ?? []).some((p: any) => p.origin === 'member'), peopleRes.json);
+    check('RBAC: INTERVIEWER cannot read PDIs nor the people list', (await R('INTERVIEWER', 'GET', '/api/v1/development')).status === 403 && (await R('INTERVIEWER', 'GET', '/api/v1/development/people')).status === 403);
+
+    // PDI record: create / edit / delete
+    const newRec = await A('POST', '/api/v1/development', { collaboratorName: ' Ana PDI ', jobTitle: 'Analista', hireDate: '2026-01-05', departmentId: deptId, managerId: recruiterUser.id });
+    const ana = newRec.json.developmentRecord;
+    check('create a PDI by hand', newRec.status === 201 && ana.collaboratorName === 'Ana PDI' && ana.collaboratorId.startsWith('colab-') && ana.managerId === recruiterUser.id && ana.goals.length === 0, newRec.json);
+    check('create PDI: name, cargo and admission date are required -> 400', (await A('POST', '/api/v1/development', { jobTitle: 'x', hireDate: '2026-01-05' })).status === 400 && (await A('POST', '/api/v1/development', { collaboratorName: 'x', hireDate: '2026-01-05' })).status === 400 && (await A('POST', '/api/v1/development', { collaboratorName: 'x', jobTitle: 'y' })).status === 400);
+    check('create PDI: impossible date -> 400', (await A('POST', '/api/v1/development', { collaboratorName: 'x', jobTitle: 'y', hireDate: '2026-02-30' })).status === 400);
+    check('create PDI: unknown department / manager -> 400', (await A('POST', '/api/v1/development', { collaboratorName: 'x', jobTitle: 'y', hireDate: '2026-01-05', departmentId: 'dep-nope' })).status === 400 && (await A('POST', '/api/v1/development', { collaboratorName: 'x', jobTitle: 'y', hireDate: '2026-01-05', managerId: 'usr-nope' })).status === 400);
+    check('create PDI for someone who already has one -> 409', (await A('POST', '/api/v1/development', { collaboratorId: candId, collaboratorName: 'x', jobTitle: 'y', hireDate: '2026-01-05' })).status === 409);
+    const race = await Promise.all([1, 2].map(() => A('POST', '/api/v1/development', { collaboratorId: 'colab-race', collaboratorName: 'Corrida', jobTitle: 'y', hireDate: '2026-01-05' })));
+    check('simultaneous PDI creation for the same person keeps a single record', race.map(r => r.status).sort().join() === '201,409', race.map(r => r.status));
+    check('RBAC: INTERVIEWER cannot create PDIs', (await R('INTERVIEWER', 'POST', '/api/v1/development', { collaboratorName: 'x', jobTitle: 'y', hireDate: '2026-01-05' })).status === 403);
+    const editRec = await A('PATCH', `/api/v1/development/${ana.id}`, { jobTitle: 'Analista Sr', managerId: null, nextReviewDate: '2099-02-01' });
+    check('edit PDI data (clear manager, schedule next 1:1)', editRec.json.developmentRecord?.jobTitle === 'Analista Sr' && editRec.json.developmentRecord.managerId === undefined && editRec.json.developmentRecord.nextReviewDate === '2099-02-01' && editRec.json.developmentRecord.collaboratorName === 'Ana PDI', editRec.json);
+    check('edit PDI: invalid next date / empty name -> 400', (await A('PATCH', `/api/v1/development/${ana.id}`, { nextReviewDate: 'amanhã' })).status === 400 && (await A('PATCH', `/api/v1/development/${ana.id}`, { collaboratorName: '  ' })).status === 400);
+    check('edit PDI: unknown id -> 404', (await A('PATCH', '/api/v1/development/dev-nope', { jobTitle: 'x' })).status === 404);
+    check('an empty PDI can be deleted', (await A('DELETE', `/api/v1/development/${ana.id}`)).status === 200 && !((await A('GET', '/api/v1/development')).json.developmentRecords ?? []).some((r: any) => r.id === ana.id));
+    check('delete PDI: unknown id -> 404', (await A('DELETE', '/api/v1/development/dev-nope')).status === 404);
+
+    // Goals
+    const goalRes = await A('POST', `${dv}/goals`, { title: 'Certificação Cloud', competency: 'Arquitetura', description: 'Passar no exame', deadline: '2099-12-31' });
+    const g1 = goalRes.json.goal;
+    const gp = `${dv}/goals/${g1?.id}`;
+    check('create goal: starts "not started" at 0%, description kept', goalRes.status === 201 && g1.status === 'not_started' && g1.progressPercentage === 0 && g1.competency === 'Arquitetura' && g1.description === 'Passar no exame' && goalRes.json.developmentRecord.goals.length === 1, goalRes.json);
+    const gDefault = (await A('POST', `${dv}/goals`, { title: 'Sem competência' })).json.goal;
+    check('create goal: competency defaults to "Geral" and deadline to about 90 days', gDefault?.competency === 'Geral' && /^\d{4}-\d{2}-\d{2}$/.test(gDefault.deadline) && Math.abs((new Date(`${gDefault.deadline}T12:00:00Z`).getTime() - Date.now()) / 86400000 - 90) < 2, gDefault);
+    check('create goal: title required / impossible deadline -> 400', (await A('POST', `${dv}/goals`, { title: '  ' })).status === 400 && (await A('POST', `${dv}/goals`, { title: 'x', deadline: '2026-02-30' })).status === 400);
+    check('create goal: unknown PDI -> 404 and RBAC (INTERVIEWER -> 403)', (await A('POST', '/api/v1/development/dev-nope/goals', { title: 'x' })).status === 404 && (await R('INTERVIEWER', 'POST', `${dv}/goals`, { title: 'x' })).status === 403);
+    const goalOf = (res: any, id = g1?.id) => res.json.developmentRecord?.goals?.find((x: any) => x.id === id);
+    let mv = await A('PATCH', gp, { progressPercentage: 40, note: 'Curso iniciado' });
+    check('progress 40% -> in progress, one history entry with note and author', goalOf(mv)?.status === 'in_progress' && goalOf(mv).progressPercentage === 40 && goalOf(mv).history?.length === 1 && goalOf(mv).history[0].note === 'Curso iniciado' && !!goalOf(mv).history[0].by, mv.json);
+    mv = await A('PATCH', gp, { progressPercentage: 40 });
+    check('same progress without note does not add history', goalOf(mv)?.history?.length === 1);
+    mv = await A('PATCH', gp, { title: 'Certificação Cloud Pro', deadline: '2099-06-30', competency: '' });
+    check('edit goal fields keeps the progress; empty competency becomes "Geral"', goalOf(mv)?.title === 'Certificação Cloud Pro' && goalOf(mv).deadline === '2099-06-30' && goalOf(mv).competency === 'Geral' && goalOf(mv).progressPercentage === 40, mv.json);
+    check('progress out of range / not integer / invalid status -> 400', (await A('PATCH', gp, { progressPercentage: 101 })).status === 400 && (await A('PATCH', gp, { progressPercentage: 12.5 })).status === 400 && (await A('PATCH', gp, { progressPercentage: '' })).status === 400 && (await A('PATCH', gp, { status: 'feito' })).status === 400);
+    mv = await A('PATCH', gp, { progressPercentage: 100 });
+    check('100% -> achieved, with completion date', goalOf(mv)?.status === 'achieved' && goalOf(mv).progressPercentage === 100 && !!goalOf(mv).completedAt, mv.json);
+    check('reopening a goal that is still at 100% (no lower progress given) is refused -> 400', (await A('PATCH', gp, { status: 'in_progress' })).status === 400);
+    mv = await A('PATCH', gp, { status: 'in_progress', progressPercentage: 80, note: 'Falta a prova' });
+    check('reopened goal is in progress again without completion date', goalOf(mv)?.status === 'in_progress' && goalOf(mv).progressPercentage === 80 && goalOf(mv).completedAt === undefined, mv.json);
+    check('a goal with progress cannot be deleted (cancel instead) -> 400', (await A('DELETE', gp)).status === 400);
+    mv = await A('PATCH', gp, { status: 'cancelled', note: 'Prioridade mudou' });
+    check('cancel keeps the progress and the history', goalOf(mv)?.status === 'cancelled' && goalOf(mv).progressPercentage === 80 && goalOf(mv).history?.length >= 4, mv.json);
+    check('progress of a cancelled goal is refused until it is reopened -> 400', (await A('PATCH', gp, { progressPercentage: 90 })).status === 400);
+    mv = await A('PATCH', gp, { status: 'in_progress' });
+    check('reopen a cancelled goal', goalOf(mv)?.status === 'in_progress' && goalOf(mv).progressPercentage === 80, mv.json);
+    check('update: unknown goal -> 404, INTERVIEWER -> 403', (await A('PATCH', `${dv}/goals/g-nope`, { progressPercentage: 10 })).status === 404 && (await R('INTERVIEWER', 'PATCH', gp, { progressPercentage: 10 })).status === 403);
+    check('RBAC: HIRING_MANAGER (development:edit) can add and move goals', (await R('HIRING_MANAGER', 'POST', `${dv}/goals`, { title: 'Meta do gestor' })).status === 201);
+    const untouched = (await A('POST', `${dv}/goals`, { title: 'Criada por engano' })).json.goal;
+    const delGoal = await A('DELETE', `${dv}/goals/${untouched.id}`);
+    check('an untouched goal can be deleted', delGoal.status === 200 && !delGoal.json.developmentRecord.goals.some((x: any) => x.id === untouched.id), delGoal.json);
+    check('delete goal: unknown -> 404, INTERVIEWER -> 403', (await A('DELETE', `${dv}/goals/g-nope`)).status === 404 && (await R('INTERVIEWER', 'DELETE', gp)).status === 403);
+    check('a PDI with goals cannot be deleted -> 400', (await A('DELETE', dv)).status === 400);
+
+    // 1:1s
+    const one = `${dv}/one-on-ones`;
+    const m1 = await A('POST', one, { date: '2026-03-16', keyTakeaways: ' Boa conversa ', actionItems: ['Configurar dashboard', ' ', 'Marcar mentoria'], nextMeetingDate: '2099-01-10' });
+    check('register 1:1: text and actions kept, last review set, next scheduled', m1.status === 201 && m1.json.meeting.keyTakeaways === 'Boa conversa' && m1.json.meeting.actionItems.length === 2 && !!m1.json.meeting.registeredBy && m1.json.developmentRecord.lastReviewDate === '2026-03-16' && m1.json.developmentRecord.nextReviewDate === '2099-01-10', m1.json);
+    check('register 1:1: future date, empty text, next not after the meeting, too many actions -> 400',
+      (await A('POST', one, { date: '2099-01-01', keyTakeaways: 'x' })).status === 400 && (await A('POST', one, { date: '2026-03-16', keyTakeaways: ' ' })).status === 400 &&
+      (await A('POST', one, { date: '2026-03-16', keyTakeaways: 'x', nextMeetingDate: '2026-03-16' })).status === 400 && (await A('POST', one, { date: '2026-03-16', keyTakeaways: 'x', actionItems: Array(21).fill('a') })).status === 400);
+    check('register 1:1: unknown PDI -> 404, INTERVIEWER -> 403', (await A('POST', '/api/v1/development/dev-nope/one-on-ones', { date: '2026-03-16', keyTakeaways: 'x' })).status === 404 && (await R('INTERVIEWER', 'POST', one, { date: '2026-03-16', keyTakeaways: 'x' })).status === 403);
+    const m2 = await A('POST', one, { date: '2026-03-30', keyTakeaways: 'Segundo 1:1' });
+    check('a newer 1:1 moves the last review and keeps a future next date', m2.json.developmentRecord?.lastReviewDate === '2026-03-30' && m2.json.developmentRecord.nextReviewDate === '2099-01-10' && m2.json.developmentRecord.oneOnOnes.length === 2, m2.json);
+    const both = await Promise.all([1, 2].map(i => A('POST', one, { date: '2026-04-01', keyTakeaways: `Simultâneo ${i}` })));
+    check('simultaneous 1:1s are both kept (row lock)', both.every(r => r.status === 201) && ((await A('GET', '/api/v1/development')).json.developmentRecords.find((r: any) => r.id === hirePdi.id)?.oneOnOnes.length === 4));
+    const editM = await A('PATCH', `${one}/${m1.json.meeting.id}`, { keyTakeaways: 'Conversa corrigida', actionItems: ['Nova ação'], date: '2026-03-20' });
+    const em = editM.json.developmentRecord?.oneOnOnes.find((x: any) => x.id === m1.json.meeting.id);
+    check('edit 1:1 (text, actions, date); the author is kept', em?.keyTakeaways === 'Conversa corrigida' && em.actionItems.join() === 'Nova ação' && em.date === '2026-03-20' && !!em.registeredBy, editM.json);
+    check('edit 1:1: unknown -> 404, future date -> 400, INTERVIEWER -> 403', (await A('PATCH', `${one}/1on1-nope`, { keyTakeaways: 'x' })).status === 404 && (await A('PATCH', `${one}/${m1.json.meeting.id}`, { date: '2099-01-01' })).status === 400 && (await R('INTERVIEWER', 'PATCH', `${one}/${m1.json.meeting.id}`, { keyTakeaways: 'x' })).status === 403);
+    let cleaned: any;
+    for (const meeting of (await A('GET', '/api/v1/development')).json.developmentRecords.find((r: any) => r.id === hirePdi.id).oneOnOnes) cleaned = await A('DELETE', `${one}/${meeting.id}`);
+    check('deleting every 1:1 clears the last review and keeps the scheduled next', cleaned?.json.developmentRecord?.oneOnOnes.length === 0 && cleaned.json.developmentRecord.lastReviewDate === '' && cleaned.json.developmentRecord.nextReviewDate === '2099-01-10', cleaned?.json);
+    check('delete 1:1: unknown -> 404, INTERVIEWER -> 403', (await A('DELETE', `${one}/1on1-nope`)).status === 404 && (await R('INTERVIEWER', 'DELETE', `${one}/1on1-nope`)).status === 403);
+
+    // Isolation between organizations
+    check('isolation: org B sees no PDI of org A and cannot touch it', ((await B('GET', '/api/v1/development')).json.developmentRecords ?? []).length === 0
+      && (await B('PATCH', dv, { jobTitle: 'hack' })).status === 404 && (await B('DELETE', dv)).status === 404
+      && (await B('POST', `${dv}/goals`, { title: 'x' })).status === 404 && (await B('PATCH', gp, { progressPercentage: 1 })).status === 404 && (await B('POST', one, { date: '2026-03-16', keyTakeaways: 'x' })).status === 404);
+    check('isolation: a manager or department of another org is refused -> 400', (await B('POST', '/api/v1/development', { collaboratorName: 'x', jobTitle: 'y', hireDate: '2026-01-05', managerId: recruiterUser.id })).status === 400 && (await B('POST', '/api/v1/development', { collaboratorName: 'x', jobTitle: 'y', hireDate: '2026-01-05', departmentId: deptId })).status === 400);
+
     // ---- Isolation between organizations -------------------------------------------
     for (const [label, path, key] of [
       ['candidates', '/api/v1/candidates', 'candidates'],

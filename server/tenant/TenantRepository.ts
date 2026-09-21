@@ -12,6 +12,8 @@ import {
   ClimateSurveyResponse,
   CollaboratorDevelopment,
   Department,
+  DevelopmentLookups,
+  DevelopmentPerson,
   InterviewSession,
   JobOffer,
   JobOpening,
@@ -20,7 +22,6 @@ import {
   OfferDocument,
   OnboardingJourney,
   OrganizationalDNA,
-  PDIGoal,
   SelectionApplication,
   TenantIndicators,
   TenantUser,
@@ -29,8 +30,9 @@ import {
 import { deleteRow, getRow, fromRow, insertRow, listRows, toSnake, updateRow, TableSpec } from '../db/crud.js';
 import { getPool, Queryable, withTransaction } from '../db/pool.js';
 import { TABLES } from '../db/tables.js';
-import { NotFoundError, ValidationError } from '../errors.js';
+import { ConflictError, NotFoundError, ValidationError } from '../errors.js';
 import { buildAdmissionItems, DEFAULT_ADMISSION_TEMPLATES } from './admission.js';
+import { assertRecordRemovable } from './development.js';
 import { buildChecklistItems, DEFAULT_INTEGRATION_TEMPLATES } from './integration.js';
 import { newId } from '../ids.js';
 
@@ -339,6 +341,23 @@ export class TenantRepository {
       notes: `Jornada aberta automaticamente após o aceite da proposta (${offer.contractType}).`
     }, tx);
 
+    // Development: the hire gets an empty PDI, so goals and 1:1s can start as soon as the person joins.
+    if (!(await this.development.list(tx)).some(r => r.collaboratorId === offer.candidateId)) {
+      await this.development.insert({
+        id: `dev-${offer.id}`,
+        collaboratorId: offer.candidateId,
+        collaboratorName: candidate?.name ?? 'Candidato',
+        jobTitle: job?.title ?? 'Cargo a definir',
+        departmentId: job?.departmentId,
+        managerId: job?.hiringManagerId,
+        hireDate: offer.startDate,
+        goals: [],
+        oneOnOnes: [],
+        lastReviewDate: '',
+        nextReviewDate: ''
+      }, tx);
+    }
+
     // Selection pipeline: the candidate's application ends on the "hired" stage.
     const application = (await this.applications.list(tx)).find(
       a => a.candidateId === offer.candidateId && a.jobOpeningId === offer.jobOpeningId
@@ -516,12 +535,69 @@ export class TenantRepository {
     });
   }
 
-  async addGoal(recordId: string, goal: PDIGoal): Promise<CollaboratorDevelopment> {
+  // ---- Development (PDI + 1:1s): one record per collaborator, goals and meetings live in jsonb -------------
+  /** Read-modify-write of one PDI record with its row locked; `change` returns the patch to store and may throw to abort. */
+  async changeDevelopment(
+    recordId: string,
+    change: (record: CollaboratorDevelopment) => Partial<CollaboratorDevelopment>
+  ): Promise<CollaboratorDevelopment> {
     return withTransaction(async tx => {
       const record = await getRow<CollaboratorDevelopment>(TABLES.development, this.tenantId, recordId, tx, true);
       if (!record) throw new NotFoundError('Registro de PDI não encontrado');
-      return (await this.development.update(recordId, { goals: [...record.goals, goal] }, tx))!;
+      return (await this.development.update(recordId, change(record), tx))!;
     });
+  }
+
+  /** One PDI per collaborator. The advisory lock makes two simultaneous requests for the same person create a single record. */
+  async createDevelopmentRecord(collaboratorId: string, fields: Record<string, unknown>): Promise<CollaboratorDevelopment> {
+    return withTransaction(async tx => {
+      await tx.query('select pg_advisory_xact_lock(hashtext($1))', [`development:${this.tenantId}:${collaboratorId}`]);
+      if ((await this.development.list(tx)).some(r => r.collaboratorId === collaboratorId)) {
+        throw new ConflictError('Este colaborador já tem um PDI.');
+      }
+      return this.development.insert(
+        { id: newId('dev'), collaboratorId, goals: [], oneOnOnes: [], lastReviewDate: '', nextReviewDate: '', ...fields },
+        tx
+      );
+    });
+  }
+
+  async deleteDevelopmentRecord(recordId: string): Promise<void> {
+    await withTransaction(async tx => {
+      const record = await getRow<CollaboratorDevelopment>(TABLES.development, this.tenantId, recordId, tx, true);
+      if (!record) throw new NotFoundError('Registro de PDI não encontrado');
+      assertRecordRemovable(record);
+      await this.development.delete(recordId, tx);
+    });
+  }
+
+  async developmentLookups(): Promise<DevelopmentLookups> {
+    const [users, departments] = await Promise.all([this.users.list(), this.departments.list()]);
+    return {
+      departments: departments.map(d => ({ id: d.id, name: d.name })),
+      members: users.filter(u => u.active).map(u => ({ id: u.id, name: u.name, jobTitle: u.jobTitle }))
+    };
+  }
+
+  /** People who can still get a PDI: hires in onboarding first, then active members (nobody who already has one). */
+  async developmentPeople(): Promise<DevelopmentPerson[]> {
+    const [records, journeys, users] = await Promise.all([this.development.list(), this.onboardings.list(), this.users.list()]);
+    const norm = (name: string) => name.trim().toLowerCase();
+    const taken = new Set(records.map(r => r.collaboratorId));
+    const names = new Set(records.map(r => norm(r.collaboratorName)));
+    const people: DevelopmentPerson[] = [];
+    const offer = (person: DevelopmentPerson) => {
+      if (taken.has(person.id) || names.has(norm(person.name))) return;
+      names.add(norm(person.name));
+      people.push(person);
+    };
+    for (const j of journeys) {
+      offer({ id: j.candidateId, name: j.candidateName, jobTitle: j.jobTitle, departmentId: j.departmentId, hireDate: j.hireDate, origin: 'hire' });
+    }
+    for (const u of users.filter(u => u.active)) {
+      offer({ id: u.id, name: u.name, jobTitle: u.jobTitle, departmentId: u.departmentId, origin: 'member' });
+    }
+    return people;
   }
 }
 

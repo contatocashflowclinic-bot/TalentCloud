@@ -546,13 +546,36 @@ export interface OnboardingJourney {
 }
 
 // 13. Desenvolvimento
+export const PDI_GOAL_STATUSES = ['not_started', 'in_progress', 'achieved', 'cancelled'] as const;
+export type PDIGoalStatus = (typeof PDI_GOAL_STATUSES)[number];
+
+/** Limits that keep one PDI record (stored as jsonb) from growing without bound. */
+export const PDI_MAX_GOALS = 50;
+export const PDI_MAX_ONE_ON_ONES = 300;
+export const PDI_MAX_GOAL_HISTORY = 100;
+export const PDI_MAX_ACTION_ITEMS = 20;
+
+/** One progress update of a goal (who moved it, to what, and why). */
+export interface PDIGoalCheckIn {
+  at: string;
+  by: string;
+  progressPercentage: number;
+  status: PDIGoalStatus;
+  note?: string;
+}
+
 export interface PDIGoal {
   id: string;
   title: string;
   competency: string;
   deadline: string;
-  status: 'not_started' | 'in_progress' | 'achieved';
+  status: PDIGoalStatus;
   progressPercentage: number;
+  description?: string;
+  createdAt?: string;
+  /** Set when the goal reaches "achieved"; cleared if it is reopened. */
+  completedAt?: string;
+  history?: PDIGoalCheckIn[];
 }
 
 export interface OneOnOneMeeting {
@@ -560,6 +583,7 @@ export interface OneOnOneMeeting {
   date: string;
   keyTakeaways: string;
   actionItems: string[];
+  registeredBy?: string;
 }
 
 export interface CollaboratorDevelopment {
@@ -567,13 +591,31 @@ export interface CollaboratorDevelopment {
   collaboratorId: string;
   collaboratorName: string;
   jobTitle: string;
-  departmentId: string;
-  managerId: string;
+  departmentId?: string;
+  managerId?: string;
   hireDate: string;
   goals: PDIGoal[];
   oneOnOnes: OneOnOneMeeting[];
+  /** Date of the newest 1:1 ('' while there is none). Always derived from the 1:1 history. */
   lastReviewDate: string;
+  /** Date agreed for the next 1:1 ('' when nothing is scheduled). */
   nextReviewDate: string;
+}
+
+/** Someone who can get a PDI: a hire in onboarding or a member of the organization without a PDI yet. */
+export interface DevelopmentPerson {
+  id: string;
+  name: string;
+  jobTitle: string;
+  departmentId?: string;
+  hireDate?: string;
+  origin: 'hire' | 'member';
+}
+
+/** Names behind the department / manager ids of the PDI records (also needed by read-only viewers). */
+export interface DevelopmentLookups {
+  departments: { id: string; name: string }[];
+  members: { id: string; name: string; jobTitle?: string }[];
 }
 
 // 14. Retenção

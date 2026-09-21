@@ -19,10 +19,15 @@ import { withTransaction } from './db/pool.js';
 import { assertValidFile, getFile, MAX_FILE_BYTES, putFile, removeFile, safeFileName } from './storage.js';
 import { reviewItem, type AdmissionAction } from './tenant/admission.js';
 import {
+  addGoal, addMeeting, buildGoal, cleanText, editMeeting, parseRecordFields, removeGoal, removeMeeting, updateGoal,
+  type RecordRefs
+} from './tenant/development.js';
+import {
   CANDIDATE_DECLARED_FIELDS,
   OFFER_DOCUMENT_CATEGORIES,
   type AdmissionItem,
   type OfferDocumentCategory,
+  type OneOnOneMeeting,
   type OnboardingChecklistItem
 } from '../src/types.js';
 
@@ -1592,24 +1597,88 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   }));
 
   // ---------------------------------------------------------
-  // MÓDULO 13: Desenvolvimento (PDI e 1:1s)
+  // MÓDULO 13: Desenvolvimento (PDI, metas e 1:1s)
+  // Permissões: development:view consulta; development:edit cria PDIs, metas e 1:1s e os altera ou exclui.
+  // Toda alteração devolve o PDI completo (`developmentRecord`) já atualizado. As regras estão em tenant/development.ts.
   // ---------------------------------------------------------
+  const developmentRefs = async (db: TenantConnectionContext['db']): Promise<RecordRefs> => {
+    const [departments, users] = await Promise.all([db.departments.list(), db.users.list()]);
+    return { departmentIds: new Set(departments.map(d => d.id)), memberIds: new Set(users.map(u => u.id)) };
+  };
+
   app.get('/api/v1/development', can('development:view'), h(async (req, res) => {
-    res.json({ success: true, developmentRecords: await ctx(req).db.development.list() });
+    const { db } = ctx(req);
+    const [developmentRecords, lookups] = await Promise.all([db.development.list(), db.developmentLookups()]);
+    res.json({ success: true, developmentRecords, lookups });
+  }));
+
+  // Quem ainda pode ganhar um PDI (contratações em onboarding e membros da organização sem PDI)
+  app.get('/api/v1/development/people', can('development:edit'), h(async (req, res) => {
+    res.json({ success: true, people: await ctx(req).db.developmentPeople() });
+  }));
+
+  app.post('/api/v1/development', can('development:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const b = req.body ?? {};
+    const fields = parseRecordFields(b, false, await developmentRefs(db));
+    const collaboratorId = b.collaboratorId === undefined || b.collaboratorId === null || b.collaboratorId === ''
+      ? newId('colab')
+      : cleanText(b.collaboratorId, 'Colaborador', 80);
+    res.status(201).json({ success: true, developmentRecord: await db.createDevelopmentRecord(collaboratorId, fields) });
+  }));
+
+  app.patch('/api/v1/development/:id', can('development:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const patch = parseRecordFields(req.body ?? {}, true, await developmentRefs(db));
+    res.json({ success: true, developmentRecord: await db.changeDevelopment(req.params.id, () => patch) });
+  }));
+
+  app.delete('/api/v1/development/:id', can('development:edit'), h(async (req, res) => {
+    await ctx(req).db.deleteDevelopmentRecord(req.params.id);
+    res.json({ success: true });
   }));
 
   app.post('/api/v1/development/:id/goals', can('development:edit'), h(async (req, res) => {
-    const { title, competency, deadline } = req.body;
-    const goal = {
-      id: newId('g'),
-      title: required(title, 'title'),
-      competency: competency || 'Geral',
-      deadline: deadline || new Date(Date.now() + 90 * 86400000).toISOString().split('T')[0],
-      status: 'in_progress' as const,
-      progressPercentage: 10
-    };
-    const developmentRecord = await ctx(req).db.addGoal(req.params.id, goal);
+    const goal = buildGoal(req.body ?? {});
+    const developmentRecord = await ctx(req).db.changeDevelopment(req.params.id, record => addGoal(record, goal));
     res.status(201).json({ success: true, goal, developmentRecord });
+  }));
+
+  // Edita a meta e/ou registra andamento (progressPercentage, status e note); só o que veio no corpo é alterado
+  app.patch('/api/v1/development/:id/goals/:goalId', can('development:edit'), h(async (req, res) => {
+    const developmentRecord = await ctx(req).db.changeDevelopment(
+      req.params.id,
+      record => updateGoal(record, req.params.goalId, req.body ?? {}, req.auth!.name)
+    );
+    res.json({ success: true, developmentRecord });
+  }));
+
+  app.delete('/api/v1/development/:id/goals/:goalId', can('development:edit'), h(async (req, res) => {
+    const developmentRecord = await ctx(req).db.changeDevelopment(req.params.id, record => removeGoal(record, req.params.goalId));
+    res.json({ success: true, developmentRecord });
+  }));
+
+  app.post('/api/v1/development/:id/one-on-ones', can('development:edit'), h(async (req, res) => {
+    let meeting: OneOnOneMeeting | undefined;
+    const developmentRecord = await ctx(req).db.changeDevelopment(req.params.id, record => {
+      const added = addMeeting(record, req.body ?? {}, req.auth!.name);
+      meeting = added.meeting;
+      return added.patch;
+    });
+    res.status(201).json({ success: true, meeting, developmentRecord });
+  }));
+
+  app.patch('/api/v1/development/:id/one-on-ones/:meetingId', can('development:edit'), h(async (req, res) => {
+    const developmentRecord = await ctx(req).db.changeDevelopment(
+      req.params.id,
+      record => editMeeting(record, req.params.meetingId, req.body ?? {})
+    );
+    res.json({ success: true, developmentRecord });
+  }));
+
+  app.delete('/api/v1/development/:id/one-on-ones/:meetingId', can('development:edit'), h(async (req, res) => {
+    const developmentRecord = await ctx(req).db.changeDevelopment(req.params.id, record => removeMeeting(record, req.params.meetingId));
+    res.json({ success: true, developmentRecord });
   }));
 
   // ---------------------------------------------------------

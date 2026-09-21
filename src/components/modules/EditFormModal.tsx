@@ -36,6 +36,10 @@ interface Props {
   secondaryAction?: { label: string; onClick: () => void };
   /** Overrides the save button label. */
   saveLabel?: string;
+  /** Small label above the title (defaults to "Editar"; creation forms pass "Novo"/"Registrar"). */
+  eyebrow?: string;
+  /** Creation forms: save even when nothing was edited (the pre-filled values are the record). */
+  alwaysSave?: boolean;
 }
 
 const toText = (field: FieldDef, value: unknown): string => {
@@ -64,7 +68,7 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stri
 const inputCls = 'w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white focus:outline-hidden focus:border-indigo-500';
 
 /** Generic edit form: sends ONLY the fields the user changed. */
-export const EditFormModal: React.FC<Props> = ({ title, subtitle, fields, initial, onSave, onClose, notice, secondaryAction, saveLabel }) => {
+export const EditFormModal: React.FC<Props> = ({ title, subtitle, fields, initial, onSave, onClose, notice, secondaryAction, saveLabel, eyebrow, alwaysSave }) => {
   const [values, setValues] = useState<Record<string, string>>(
     () => Object.fromEntries(fields.map(f => [f.key, toText(f, initial[f.key])]))
   );
@@ -84,7 +88,7 @@ export const EditFormModal: React.FC<Props> = ({ title, subtitle, fields, initia
         : initial[f.key];
       if (!same(next, before)) changes[f.key] = next;
     }
-    if (Object.keys(changes).length === 0) return onClose();
+    if (Object.keys(changes).length === 0 && !alwaysSave) return onClose();
     try {
       setBusy(true);
       setError('');
@@ -101,7 +105,7 @@ export const EditFormModal: React.FC<Props> = ({ title, subtitle, fields, initia
       <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[92vh] flex flex-col border border-slate-200 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-3">
           <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Editar</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">{eyebrow ?? 'Editar'}</span>
             <h3 className="text-base font-bold text-slate-900">{title}</h3>
             {subtitle && <p className="text-xs text-slate-500">{subtitle}</p>}
           </div>
