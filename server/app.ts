@@ -2,7 +2,7 @@ import express, { Request, Response, NextFunction, RequestHandler } from 'expres
 import { TenantConnectionRouter, TenantConnectionContext } from './tenant/TenantConnectionRouter.js';
 import { evaluateCandidateWithAI } from './gemini.js';
 import { assessAllowance, getAiSettings, getUsageOverview, isPeriod, recordUsage, setOrgLimit, updateAiSettings } from './aiUsage.js';
-import { parseOrgLimit, parseSettingsPatch } from './aiCost.js';
+import { parseOrgLimit, parseSettingsPatch, shouldKeepPrevious } from './aiCost.js';
 import { getPool } from './db/pool.js';
 import { newId } from './ids.js';
 import { AppError, ConflictError, ForbiddenError, NotFoundError, TooManyRequestsError, ValidationError, toHttpError } from './errors.js';
@@ -1080,6 +1080,27 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
       candidate, job, position, dna, model,
       skip: decision.mode === 'estimate' ? decision.reason : undefined
     });
+
+    // The newest evaluation already on record for this candidate + job (if any)
+    const previousRow = (await getPool().query(
+      'select id, source from public.ai_evaluations where tenant_id = $1 and candidate_id = $2 and job_opening_id = $3 order by seq desc limit 1',
+      [tenant.id, candidateId, jobOpeningId]
+    )).rows[0] as { id: string; source: string | null } | undefined;
+
+    if (shouldKeepPrevious(usage.outcome, previousRow)) {
+      // The AI could not answer this time: keep the evaluation that already exists instead of replacing it by a local estimate
+      await recordUsage({
+        ...who, model: usage.model, outcome: usage.outcome, reason: usage.reason,
+        inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, durationMs: usage.durationMs
+      }, aiSettings);
+      const kept = await db.aiEvaluations.get(previousRow!.id);
+      return res.json({
+        success: true,
+        kept: true,
+        notice: `A IA não foi usada desta vez: ${usage.reasonText ?? 'ela não respondeu'}. Mantivemos a avaliação anterior.`,
+        evaluation: kept
+      });
+    }
 
     const evaluation = await db.saveAIEvaluation({
       id: newId('eval'),

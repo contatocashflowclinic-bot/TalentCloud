@@ -100,3 +100,17 @@ Use um candidato cuja avaliação (A2) foi feita como estimativa local.
 - **Ainda vejo "Módulo N" ou o texto antigo:** Ctrl+F5 (cache do navegador) e confirme que o `npm run dev` foi reiniciado.
 - **Decisão humana aparece com o nome errado:** confirme com quem está logado (menu do usuário, canto superior direito); o nome
   gravado é sempre o da sessão.
+
+---
+
+## Parte G — Quando a IA do Google não responde (sobrecarga, modelo errado)
+
+O sistema tenta de novo sozinho quando o Google está sobrecarregado (até 3 tentativas, no máximo ~40 s). Se mesmo assim não responder:
+
+| # | O que fazer | O que deve acontecer |
+|---|---|---|
+| G1 | Numa avaliação que **já existe** (feita com IA de verdade ou de demonstração), clique **Re-analisar com IA** enquanto o Google estiver instável. | Aparece uma **faixa âmbar**: "A IA não foi usada desta vez: o serviço de IA do Google está com alta demanda neste momento… **Mantivemos a avaliação anterior.**" A avaliação anterior **continua na tela** (não é trocada por uma estimativa). Tente de novo em instantes. |
+| G2 | Para testar sem depender do Google: **Conta Mãe → Uso da IA → Regras de controle → Ajustes de custo → Modelo de IA**, digite `modelo-que-nao-existe` e salve. Na organização, **Re-analisar com IA** de novo. | A mesma faixa âmbar, agora dizendo "…o modelo de IA configurado não foi encontrado; avise a administração da plataforma. Mantivemos a avaliação anterior." (esse erro **não** é repetido: falha na hora). |
+| G3 | **Volte o campo "Modelo de IA" para vazio** (ou para o modelo que você usa) e salve. | A próxima avaliação volta a usar a IA. |
+| G4 | Escolha um candidato **sem avaliação nenhuma** e execute a avaliação com a IA fora do ar (repita G2). | Como não há avaliação anterior, sai a **estimativa local** (faixa âmbar grande) e o parecer começa com o motivo **em português** ("…o modelo de IA configurado não foi encontrado…"). |
+| G5 | Na tela de resultado, olhe **"Aderência por Pilar do DNA Cultural"**. | Só aparecem os pilares que **a organização cadastrou no DNA** (antes a IA podia inventar pilares a mais). |

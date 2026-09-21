@@ -432,7 +432,11 @@ async function main() {
     await SU('PATCH', '/api/master/ai/settings', { onLimit: 'estimate' });
     check('limit 0 for the organization is saved', (await SU('PUT', `/api/master/ai/organizations/${tenantAId}/limit`, { monthlyLimit: 0 })).status === 200);
     const capped = await A('POST', '/api/v1/ai/evaluate-candidate', { candidateId: candId, jobOpeningId: jobId });
-    check('over the limit (policy "estimate"): the evaluation still comes back as the labeled local estimate and says why', capped.status === 201 && capped.json.evaluation?.source === 'heuristic' && /limite mensal/.test(capped.json.evaluation.detailedExplanation), capped.json);
+    // A re-analysis that cannot use the AI keeps a real evaluation already on record (200 + notice); with none, the labeled estimate is saved (201)
+    const estimateOrKept = (r: any, why: RegExp) => r.json.kept
+      ? r.status === 200 && why.test(r.json.notice ?? '')
+      : r.status === 201 && r.json.evaluation?.source === 'heuristic' && why.test(r.json.evaluation.detailedExplanation);
+    check('over the limit (policy "estimate"): no AI cost; the answer is the labeled local estimate (or the previous real evaluation, kept) and says why', estimateOrKept(capped, /limite mensal/), capped.json);
     await SU('PATCH', '/api/master/ai/settings', { onLimit: 'block' });
     const overLimit = await A('POST', '/api/v1/ai/evaluate-candidate', { candidateId: candId, jobOpeningId: jobId });
     check('over the limit (policy "block"): 429 with a plain message and no evaluation created', overLimit.status === 429 && /limite mensal/.test(overLimit.json.error ?? ''), overLimit.json);
@@ -443,7 +447,7 @@ async function main() {
 
     await SU('PATCH', '/api/master/ai/settings', { enabled: false });
     const paused = await A('POST', '/api/v1/ai/evaluate-candidate', { candidateId: candId, jobOpeningId: jobId });
-    check('AI paused by the platform: evaluations still work, as the labeled local estimate', paused.status === 201 && paused.json.evaluation?.source === 'heuristic' && /pausada/.test(paused.json.evaluation.detailedExplanation), paused.json);
+    check('AI paused by the platform: evaluations still work (labeled local estimate, or the previous real evaluation kept) and say why', estimateOrKept(paused, /pausada/), paused.json);
     check('AI usage panel: pause switch is reflected and can be turned back on', (await SU('PATCH', '/api/master/ai/settings', { enabled: true })).json.settings?.enabled === true);
 
     // Organization that does not use the AI: the contract switch hides everything (old evaluations stay stored and come back if it is turned on again)

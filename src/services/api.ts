@@ -438,10 +438,14 @@ export const TenantApi = {
 
   // 9. Avaliação Assistida por IA
   getAIEvaluations: async () => (await request<{ success: boolean; evaluations: AIAssistedEvaluation[] }>('/api/v1/ai/evaluations')).evaluations,
-  evaluateCandidateWithAI: async (candidateId: string, jobOpeningId: string) => (await request<{ success: boolean; evaluation: AIAssistedEvaluation }>('/api/v1/ai/evaluate-candidate', {
-    method: 'POST',
-    body: JSON.stringify({ candidateId, jobOpeningId })
-  })).evaluation,
+  /** `kept` = the AI could not answer and the evaluation that already existed was kept (`notice` says why). */
+  evaluateCandidateWithAI: async (candidateId: string, jobOpeningId: string) => {
+    const res = await request<{ success: boolean; evaluation: AIAssistedEvaluation; kept?: boolean; notice?: string }>('/api/v1/ai/evaluate-candidate', {
+      method: 'POST',
+      body: JSON.stringify({ candidateId, jobOpeningId })
+    });
+    return { evaluation: res.evaluation, kept: !!res.kept, notice: res.notice };
+  },
   /** The reviewer is the logged-in user; the server takes it from the session. */
   submitHumanReview: async (evaluationId: string, decision: AIAssistedEvaluation['humanReviewerDecision'], humanNotes: string) => (await request<{ success: boolean; evaluation: AIAssistedEvaluation }>(`/api/v1/ai/evaluations/${evaluationId}/human-decision`, {
     method: 'PATCH',

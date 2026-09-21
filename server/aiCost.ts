@@ -61,6 +61,14 @@ export function decideAllowance(i: AllowanceInput): Allowance {
   return { mode: 'allow' };
 }
 
+/**
+ * A re-analysis that could not use the AI must not replace a real evaluation by the local estimate: the person asked for a better
+ * answer, not a worse one. Without a previous evaluation (or when the previous one is itself an estimate) the estimate is still saved.
+ */
+export function shouldKeepPrevious(outcome: 'ai' | 'failed' | 'estimate', previous?: { source?: string | null }): boolean {
+  return outcome !== 'ai' && !!previous && previous.source !== 'heuristic';
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Settings validation (what the Conta Mãe may change)
 // ---------------------------------------------------------------------------------------------------------------------

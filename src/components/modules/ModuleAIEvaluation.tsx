@@ -68,6 +68,8 @@ export const ModuleAIEvaluation: React.FC<{
   const [humanNotes, setHumanNotes] = useState('');
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Not an error: the AI could not answer and the previous evaluation was kept
+  const [notice, setNotice] = useState<string | null>(null);
 
   const loadData = async () => {
     try {
@@ -122,7 +124,9 @@ export const ModuleAIEvaluation: React.FC<{
     try {
       setIsEvaluating(true);
       setActionError(null);
-      await TenantApi.evaluateCandidateWithAI(selectedCandidateId, selectedJobId);
+      setNotice(null);
+      const result = await TenantApi.evaluateCandidateWithAI(selectedCandidateId, selectedJobId);
+      if (result.kept) setNotice(result.notice ?? 'A IA não foi usada desta vez. Mantivemos a avaliação anterior.');
       // Reload evaluations
       const updatedEvals = await TenantApi.getAIEvaluations();
       setEvaluations(updatedEvals);
@@ -229,6 +233,21 @@ export const ModuleAIEvaluation: React.FC<{
             onClick={() => setActionError(null)}
             aria-label="Fechar aviso"
             className="p-0.5 rounded-md text-rose-500 hover:bg-rose-100 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {notice && (
+        <div role="status" className="flex items-start gap-3 p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-950 text-xs">
+          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <p className="flex-1 leading-relaxed">{notice}</p>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            aria-label="Fechar aviso"
+            className="p-0.5 rounded-md text-amber-600 hover:bg-amber-100 transition-colors"
           >
             <X className="w-4 h-4" />
           </button>

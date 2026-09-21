@@ -24,6 +24,8 @@ export interface AiCallUsage {
   inputTokens: number;
   outputTokens: number;
   durationMs: number;
+  /** Plain-language reason the local estimate was used instead of the AI (only when it was). */
+  reasonText?: string;
 }
 
 // Shown to the organization's user inside the evaluation text when the local estimate replaces the AI.
@@ -32,6 +34,59 @@ const SKIP_TEXT: Record<AiSkipReason, string> = {
   limit_reached: 'o limite mensal de avaliações com IA desta organização foi atingido',
   budget_reached: 'o orçamento mensal de IA da plataforma foi atingido'
 };
+
+// The provider sometimes answers "high demand" for a while; the request is retried before giving up, but always inside a time budget:
+// the whole evaluation must finish well before the 60 s limit of the serverless function.
+const TRANSIENT_STATUS = new Set([429, 500, 502, 503, 504]);
+const RETRY_DELAYS_MS = [1200, 3500];
+const AI_TOTAL_BUDGET_MS = 42_000;
+const AI_ATTEMPT_TIMEOUT_MS = 20_000;
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+
+const isTimeout = (err: unknown) => ['AbortError', 'TimeoutError'].includes((err as { name?: string } | undefined)?.name ?? '');
+
+function isTransient(err: unknown): boolean {
+  const e = err as { status?: number; message?: string } | undefined;
+  if (typeof e?.status === 'number') return TRANSIENT_STATUS.has(e.status);
+  return isTimeout(err) || err instanceof TypeError || /fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(e?.message ?? '');
+}
+
+/**
+ * Runs `fn`, retrying only on temporary provider/network errors (never on bad key, wrong model or invalid request).
+ * Each attempt gets its own time limit (`fn` receives it) and no new attempt starts when the total budget is nearly spent.
+ */
+export async function withTransientRetry<T>(
+  fn: (attemptTimeoutMs: number) => Promise<T>,
+  delaysMs: readonly number[] = RETRY_DELAYS_MS,
+  budgetMs = AI_TOTAL_BUDGET_MS,
+  attemptTimeoutMs = AI_ATTEMPT_TIMEOUT_MS
+): Promise<T> {
+  const startedAt = Date.now();
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn(Math.max(1000, Math.min(attemptTimeoutMs, budgetMs - (Date.now() - startedAt))));
+    } catch (err) {
+      const nextDelay = delaysMs[attempt];
+      const left = budgetMs - (Date.now() - startedAt);
+      // a further attempt only makes sense if the wait plus a reasonable answer time still fit in the budget
+      if (!isTransient(err) || nextDelay === undefined || left < nextDelay + Math.min(attemptTimeoutMs, 6000)) throw err;
+      console.warn(`[AI] Google indisponível no momento (${(err as { status?: number }).status ?? 'rede'}); nova tentativa ${attempt + 1} em ${delaysMs[attempt]} ms.`);
+      await sleep(delaysMs[attempt]);
+    }
+  }
+}
+
+/** Why the call failed, in words the organization's user can act on. Never carries raw provider details. */
+export function describeFailure(err: unknown): string {
+  const status = (err as { status?: number } | undefined)?.status;
+  if (typeof status === 'number' && TRANSIENT_STATUS.has(status)) {
+    return 'o serviço de IA do Google está com alta demanda neste momento; tente "Re-analisar com IA" em alguns instantes';
+  }
+  if (isTimeout(err)) return 'o serviço de IA do Google demorou demais para responder; tente "Re-analisar com IA" em alguns instantes';
+  if (status === 401 || status === 403) return 'o Google recusou a chave de acesso da IA; avise a administração da plataforma';
+  if (status === 404) return 'o modelo de IA configurado não foi encontrado; avise a administração da plataforma';
+  return 'a chamada ao Gemini falhou ou devolveu uma resposta inválida (detalhes nos registros do servidor)';
+}
 
 let geminiClient: GoogleGenAI | null = null;
 
@@ -68,6 +123,24 @@ function toPillarScores(value: unknown): AIAssistedEvaluation['pillarScores'] {
     }
     return { pillarName: p.pillarName, score: toScore(p.score, `pillarScores[${i}]`), analysis: p.analysis };
   });
+}
+
+const normName = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+
+/**
+ * Keeps only the organization's OWN pillars, in the DNA's order and with the DNA's official names (the model sometimes adds
+ * pillars that are not in the DNA). If none of the names match, what the model answered is kept rather than showing nothing.
+ */
+export function alignPillars(
+  scores: AIAssistedEvaluation['pillarScores'],
+  dnaPillars: ReadonlyArray<{ name: string }>
+): AIAssistedEvaluation['pillarScores'] {
+  const byName = new Map(scores.map(s => [normName(s.pillarName), s]));
+  const matched = dnaPillars.flatMap(p => {
+    const s = byName.get(normName(p.name));
+    return s ? [{ ...s, pillarName: p.name }] : [];
+  });
+  return matched.length ? matched : scores;
 }
 
 export async function evaluateCandidateWithAI(params: {
@@ -127,15 +200,17 @@ DADOS DO CANDIDATO:
 - Competências Principais: ${candidate.skills.join(', ')}
 - Idiomas: ${candidate.languages.join(', ')}
 
+Em pillarScores, devolva exatamente um item para cada pilar cultural listado acima, usando o nome exato do pilar, e nenhum pilar além desses.
 Retorne um JSON com a avaliação honesta, construtiva e fundamentada.
 `;
 
-      const response = await client.models.generateContent({
+      const response = await withTransientRetry(attemptTimeoutMs => client.models.generateContent({
         model,
         contents: prompt,
         config: {
           systemInstruction: 'Você é um especialista em People Analytics e psicometria organizacional que avalia candidatos com rigor, transparência explicável e foco em apoiar a decisão humana sem viés.',
           responseMimeType: 'application/json',
+          abortSignal: AbortSignal.timeout(attemptTimeoutMs),
           responseSchema: {
             type: Type.OBJECT,
             properties: {
@@ -183,7 +258,7 @@ Retorne um JSON com a avaliação honesta, construtiva e fundamentada.
             ]
           }
         }
-      });
+      }));
 
       // The provider bills what it processed even when the answer turns out unusable, so count it before validating.
       // Thinking tokens are billed as output.
@@ -205,7 +280,7 @@ Retorne um JSON com a avaliação honesta, construtiva e fundamentada.
         keyStrengths: toStrings(parsed.keyStrengths, 'keyStrengths'),
         potentialGaps: toStrings(parsed.potentialGaps, 'potentialGaps'),
         suggestedInterviewQuestions: toStrings(parsed.suggestedInterviewQuestions, 'suggestedInterviewQuestions'),
-        pillarScores: toPillarScores(parsed.pillarScores)
+        pillarScores: alignPillars(toPillarScores(parsed.pillarScores), dna.pillars)
       };
       usage.outcome = 'ai';
       usage.reason = undefined;
@@ -213,7 +288,7 @@ Retorne um JSON com a avaliação honesta, construtiva e fundamentada.
       return { evaluation, usage };
     } catch (err) {
       console.error('[AI] A chamada ao Gemini falhou ou devolveu resposta inválida; usando estimativa local:', err);
-      fallbackReason = 'a chamada ao Gemini falhou ou devolveu uma resposta inválida (detalhes nos registros do servidor)';
+      fallbackReason = describeFailure(err);
       usage.outcome = 'failed';
       usage.reason = 'error';
     }
@@ -241,6 +316,7 @@ Retorne um JSON com a avaliação honesta, construtiva e fundamentada.
   }));
 
   usage.durationMs = Date.now() - startedAt;
+  usage.reasonText = fallbackReason;
   const evaluation: Omit<AIAssistedEvaluation, 'id' | 'evaluatedAt'> = {
     candidateId: candidate.id,
     jobOpeningId: job.id,
