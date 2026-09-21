@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { CheckCircle2, ShieldCheck, ClipboardList } from 'lucide-react';
-import { CLIMATE_CATEGORIES, type ClimateCategory, type PendingSurvey } from '../../types.js';
+import { CLIMATE_CATEGORIES, type ClimateCategory, type PendingSurvey, type SurveyAnswerValue, type SurveyQuestion } from '../../types.js';
 import { CATEGORY_LABEL } from '../../retention.js';
 import { TenantApi } from '../../services/api.js';
 import { formatDateSP } from '../../utils/dateUtils.js';
@@ -35,19 +35,77 @@ const ScoreRow: React.FC<{ label: string; value: number | null; onPick: (n: numb
   </fieldset>
 );
 
+/** One strategic question, by type: a 0–10 scale, a single choice or free text. */
+const QuestionField: React.FC<{ question: SurveyQuestion; value: SurveyAnswerValue | undefined; onChange: (value: SurveyAnswerValue | undefined) => void }> = ({ question, value, onChange }) => {
+  const label = `${question.text}${question.required ? '' : ' (opcional)'}`;
+  if (question.type === 'scale') {
+    return <ScoreRow label={label} value={typeof value === 'number' ? value : null} onPick={onChange} low="0 = discordo totalmente" high="10 = concordo totalmente" />;
+  }
+  if (question.type === 'choice') {
+    return (
+      <fieldset className="space-y-1.5">
+        <legend className="text-xs font-semibold text-slate-800">{label}</legend>
+        <div className="space-y-1.5" role="radiogroup" aria-label={question.text}>
+          {(question.options ?? []).map(option => (
+            <button
+              key={option}
+              type="button"
+              role="radio"
+              aria-checked={value === option}
+              onClick={() => onChange(option)}
+              className={`w-full px-3 py-2 rounded-xl border text-left text-xs transition-colors ${
+                value === option ? 'bg-indigo-600 border-indigo-600 text-white font-semibold' : 'bg-white border-slate-200 text-slate-700 hover:border-indigo-300 hover:bg-indigo-50'
+              }`}
+            >
+              {option}
+            </button>
+          ))}
+        </div>
+      </fieldset>
+    );
+  }
+  return (
+    <div className="space-y-1.5">
+      <label className="text-xs font-semibold text-slate-800">{label}</label>
+      <textarea
+        rows={3}
+        maxLength={1000}
+        lang="pt-BR"
+        spellCheck
+        value={typeof value === 'string' ? value : ''}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label={question.text}
+        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white focus:outline-hidden focus:border-indigo-500"
+      />
+    </div>
+  );
+};
+
+const isAnswered = (value: SurveyAnswerValue | undefined) => value !== undefined && !(typeof value === 'string' && value.trim() === '');
+
 const SurveyForm: React.FC<{ survey: PendingSurvey; onDone: () => Promise<void> }> = ({ survey, onDone }) => {
   const [enps, setEnps] = useState<number | null>(null);
   const [ratings, setRatings] = useState<Partial<Record<ClimateCategory, number>>>({});
+  const [answers, setAnswers] = useState<Record<string, SurveyAnswerValue>>({});
   const [comment, setComment] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const complete = enps !== null && CLIMATE_CATEGORIES.every(c => ratings[c] !== undefined);
+  const setAnswer = (id: string, value: SurveyAnswerValue | undefined) =>
+    setAnswers(current => {
+      const next = { ...current };
+      if (value === undefined || (typeof value === 'string' && value === '')) delete next[id];
+      else next[id] = value;
+      return next;
+    });
+
+  const blocksDone = survey.blocks.every(b => b.questions.every(q => !q.required || isAnswered(answers[q.id])));
+  const complete = enps !== null && CLIMATE_CATEGORIES.every(c => ratings[c] !== undefined) && blocksDone;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!complete) {
-      setError('Responda a recomendação e avalie todas as categorias.');
+      setError('Responda a recomendação, avalie todas as categorias e responda as perguntas obrigatórias.');
       return;
     }
     try {
@@ -56,6 +114,7 @@ const SurveyForm: React.FC<{ survey: PendingSurvey; onDone: () => Promise<void> 
       await TenantApi.submitSurveyAnswer(survey.campaignId, {
         enps: enps!,
         categories: ratings as Record<ClimateCategory, number>,
+        ...(survey.blocks.length > 0 ? { answers } : {}),
         ...(comment.trim() ? { comment: comment.trim() } : {})
       });
       window.dispatchEvent(new Event(CLIMATE_ANSWERED_EVENT));
@@ -83,6 +142,18 @@ const SurveyForm: React.FC<{ survey: PendingSurvey; onDone: () => Promise<void> 
           <ScoreRow key={c} label={CATEGORY_LABEL[c]} value={ratings[c] ?? null} onPick={(n) => setRatings(current => ({ ...current, [c]: n }))} />
         ))}
       </div>
+
+      {survey.blocks.map(block => (
+        <section key={block.id} className="space-y-4 pt-4 border-t border-slate-100">
+          <div>
+            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">{block.title}</h4>
+            {block.description && <p className="text-[11px] text-slate-500 mt-0.5">{block.description}</p>}
+          </div>
+          {block.questions.map(q => (
+            <QuestionField key={q.id} question={q} value={answers[q.id]} onChange={(value) => setAnswer(q.id, value)} />
+          ))}
+        </section>
+      ))}
 
       <div className="space-y-1.5">
         <label htmlFor={`comment-${survey.campaignId}`} className="text-xs font-semibold text-slate-800">Quer deixar um comentário? (opcional)</label>

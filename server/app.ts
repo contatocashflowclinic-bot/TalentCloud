@@ -24,8 +24,10 @@ import {
 } from './tenant/development.js';
 import { changeAlertStatus, editAlert, parseAlertFields, registerAction } from './tenant/retention.js';
 import {
-  buildCampaign, buildCampaignResults, buildClimateOverview, closeCampaign, editCampaign, parseAnswer, publishCampaign, type CampaignRefs
+  buildCampaign, buildCampaignResults, buildClimateOverview, closeCampaign, editCampaign, isEligible, parseAnswer, publishCampaign,
+  type CampaignRefs
 } from './tenant/climate.js';
+import { parseTemplateFields } from './tenant/surveyBlocks.js';
 import { consumeQuota } from './rateLimit.js';
 import { ALERT_STATUS_LABEL, isActiveAlert } from '../src/retention.js';
 import type { NextMeetingRequest } from './tenant/TenantRepository.js';
@@ -304,11 +306,11 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
 
   app.post('/api/master/tenants/:id/members', h(async (req, res) => {
     const tenant = await orgOr404(req.params.id);
-    const { name, email, profileId, jobTitle, departmentId, permissions } = req.body ?? {};
+    const { name, email, profileId, departmentId, permissions } = req.body ?? {};
     const result = await accessTx(async tx => {
       const added = await AccessService.addMember(
         tx, tenant.id,
-        { name: required(name, 'name'), email: required(email, 'email'), profileId, jobTitle, departmentId, permissions },
+        { name: required(name, 'name'), email: required(email, 'email'), profileId, departmentId, permissions },
         superActor(req),
         { linkExisting: true }
       );
@@ -322,11 +324,11 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
 
   app.patch('/api/master/tenants/:id/members/:memberId', h(async (req, res) => {
     const tenant = await orgOr404(req.params.id);
-    const { name, jobTitle, departmentId, profileId, active, permissions } = req.body ?? {};
+    const { name, departmentId, profileId, active, permissions } = req.body ?? {};
     const user = await accessTx(async tx => {
       const updated = await AccessService.updateMember(
         tx, tenant.id, req.params.memberId,
-        { name, jobTitle, departmentId, profileId, permissions, active: typeof active === 'boolean' ? active : undefined },
+        { name, departmentId, profileId, permissions, active: typeof active === 'boolean' ? active : undefined },
         superActor(req)
       );
       await masterAudit(req, tenant.id, 'USER_ACCESS_UPDATED', `Acesso de ${updated.email} em '${tenant.name}' alterado pela Conta Mãe (perfil ${updated.profileName}, ${updated.active ? 'ativo' : 'inativo'})`, tx);
@@ -399,7 +401,7 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
         const tenant = await orgOr404(String(link.tenantId ?? ''));
         const added = await AccessService.addMember(
           tx, tenant.id,
-          { name: required(name, 'name'), email: required(email, 'email'), profileId: link.profileId, jobTitle: link.jobTitle, permissions: link.permissions },
+          { name: required(name, 'name'), email: required(email, 'email'), profileId: link.profileId, permissions: link.permissions },
           superActor(req),
           { linkExisting: true }
         );
@@ -557,6 +559,12 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
       tx
     );
 
+  // Cargos a person can be given: only the ones registered in the Cargos module (id, title, department), never typed.
+  app.get('/api/v1/users/position-options', can('users:view'), h(async (req, res) => {
+    const positions = (await ctx(req).db.positions.list()).filter(p => p.status === 'active');
+    res.json({ success: true, positions: positions.map(p => ({ id: p.id, title: p.title, departmentId: p.departmentId })) });
+  }));
+
   app.get('/api/v1/users', can('users:view'), h(async (req, res) => {
     const paged = req.query.page || req.query.pageSize || req.query.search;
     if (!paged) {
@@ -574,12 +582,12 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // organizations is done only by the Conta Mãe (/api/master).
   app.post('/api/v1/users', can('users:create'), h(async (req, res) => {
     const { tenant } = ctx(req);
-    const { name, email, profileId, jobTitle, departmentId, permissions } = req.body ?? {};
+    const { name, email, profileId, positionId, departmentId, permissions } = req.body ?? {};
     const result = await accessTx(async tx => {
       const added = await AccessService.addMember(
         tx,
         tenant.id,
-        { name: required(name, 'name'), email: required(email, 'email'), profileId, jobTitle, departmentId, permissions },
+        { name: required(name, 'name'), email: required(email, 'email'), profileId, positionId, departmentId, permissions },
         actorAccess(req)
       );
       const tempPassword = added.identityCreated ? await auth.issueTempPassword(added.identityId, tx) : undefined;
@@ -596,19 +604,20 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
 
   app.patch('/api/v1/users/:id', can('users:edit'), h(async (req, res) => {
     const { tenant } = ctx(req);
-    const { name, jobTitle, departmentId, profileId, active, permissions } = req.body ?? {};
+    const { name, positionId, departmentId, profileId, active, permissions } = req.body ?? {};
     const user = await accessTx(async tx => {
       const before = await AccessService.getMember(tx, tenant.id, req.params.id);
       const updated = await AccessService.updateMember(
         tx,
         tenant.id,
         req.params.id,
-        { name, jobTitle, departmentId, profileId, permissions, active: typeof active === 'boolean' ? active : undefined },
+        { name, positionId, departmentId, profileId, permissions, active: typeof active === 'boolean' ? active : undefined },
         actorAccess(req)
       );
       const changes = [
         before && before.profileId !== updated.profileId ? `perfil ${before.profileName} → ${updated.profileName}` : '',
         before && before.active !== updated.active ? (updated.active ? 'reativado' : 'desativado') : '',
+        before && (before.positionId ?? '') !== (updated.positionId ?? '') ? `cargo ${before.jobTitle} → ${updated.positionId ? updated.jobTitle : 'sem cargo cadastrado'}` : '',
         permissions !== undefined ? 'permissões individuais ajustadas' : ''
       ].filter(Boolean);
       await audit(req, 'USER_ACCESS_UPDATED', `Acesso de ${updated.email} alterado${changes.length ? `: ${changes.join('; ')}` : ''}`, tx);
@@ -814,7 +823,11 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     if (Number(patch.maxSalary ?? current.maxSalary) < Number(patch.minSalary ?? current.minSalary)) {
       throw new ValidationError('O salário máximo não pode ser menor que o mínimo.');
     }
-    res.json({ success: true, position: await db.positions.update(req.params.id, patch) });
+    const position = await db.positions.update(req.params.id, patch);
+    if (typeof patch.title === 'string' && patch.title !== current.title) {
+      await getPool().query('update public.tenant_users set job_title = $3 where tenant_id = $1 and position_id = $2', [ctx(req).tenant.id, req.params.id, patch.title]);
+    }
+    res.json({ success: true, position });
   }));
 
   // ---------------------------------------------------------
@@ -1732,13 +1745,16 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
 
   app.get('/api/v1/retention', can('retention:view'), h(async (req, res) => {
     const { db } = ctx(req);
-    const [turnoverAlerts, campaigns, responses, lookups, indicators, records] = await Promise.all([
+    const [turnoverAlerts, campaigns, responses, lookups, indicators, records, surveyTemplates, positions, unlinkedMembers] = await Promise.all([
       db.turnoverAlerts.list(),
       db.campaignSummaries(),
       db.climateSurveys.list(),
       db.developmentLookups(),
       db.getIndicators(),
-      req.auth!.permissions.includes('development:view') ? db.development.list() : Promise.resolve([])
+      req.auth!.permissions.includes('development:view') ? db.development.list() : Promise.resolve([]),
+      db.listTemplates(),
+      db.positionOptions(),
+      db.unlinkedMembersCount()
     ]);
 
     const active = turnoverAlerts.filter(a => isActiveAlert(a.status));
@@ -1759,6 +1775,9 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
       success: true,
       turnoverAlerts,
       campaigns,
+      surveyTemplates,
+      positions,
+      unlinkedMembers,
       metrics,
       lookups,
       developmentLinks: Object.fromEntries(records.map(r => [r.collaboratorId, r.id]))
@@ -1807,8 +1826,10 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   }));
 
   // ---- Pesquisa de clima interna: campanhas (gestão) ----
-  const campaignRefs = async (db: TenantConnectionContext['db']): Promise<CampaignRefs> =>
-    ({ departmentIds: new Set((await db.departments.list()).map(d => d.id)) });
+  const campaignRefs = async (db: TenantConnectionContext['db']): Promise<CampaignRefs> => {
+    const [departments, positions] = await Promise.all([db.departments.list(), db.positions.list()]);
+    return { departmentIds: new Set(departments.map(d => d.id)), positionIds: new Set(positions.map(p => p.id)) };
+  };
   const summaryOf = async (db: TenantConnectionContext['db'], id: string) => (await db.campaignSummaries()).find(c => c.id === id);
 
   app.post('/api/v1/retention/campaigns', can('retention:edit'), h(async (req, res) => {
@@ -1847,24 +1868,53 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // Resultado de uma campanha, com o anonimato aplicado (grupos com poucas respostas não aparecem)
   app.get('/api/v1/retention/campaigns/:id/results', can('retention:view'), h(async (req, res) => {
     const { db } = ctx(req);
-    const [campaigns, responses, departments] = await Promise.all([db.campaignSummaries(), db.climateSurveys.list(), db.departments.list()]);
+    const [campaigns, responses, departments, users, positions] = await Promise.all([
+      db.campaignSummaries(), db.climateSurveys.list(), db.departments.list(), db.users.list(), db.positions.list()
+    ]);
     const campaign = campaigns.find(c => c.id === req.params.id);
     if (!campaign) throw new NotFoundError('Pesquisa não encontrada');
     const results = buildCampaignResults({
       campaign,
       responses: responses.filter(r => r.campaignId === campaign.id),
       departments: departments.map(d => ({ id: d.id, name: d.name })),
-      trend: buildClimateOverview(responses, campaigns).trend
+      trend: buildClimateOverview(responses, campaigns).trend,
+      members: users.filter(u => isEligible(campaign, u)),
+      positions: positions.map(p => ({ id: p.id, title: p.title }))
     });
     res.json({ success: true, results });
   }));
 
-  // Oculta (ou reexibe) um comentário, por exemplo um que cite uma pessoa
+  // Oculta (ou reexibe) um comentário, por exemplo um que cite uma pessoa. Com `questionId`, é a resposta de texto a uma
+  // pergunta estratégica; sem ele, o comentário do núcleo da pesquisa.
   app.patch('/api/v1/retention/campaigns/:id/comments/:responseId', can('retention:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
     const hidden = req.body?.hidden;
     if (typeof hidden !== 'boolean') throw new ValidationError('Informe se o comentário deve ficar oculto (hidden: true ou false).');
-    await ctx(req).db.setCommentHidden(req.params.id, req.params.responseId, hidden);
+    const questionId = req.body?.questionId;
+    if (questionId !== undefined) {
+      const campaign = await db.climateCampaigns.get(req.params.id);
+      if (!campaign) throw new NotFoundError('Pesquisa não encontrada');
+      const isText = (campaign.blocks ?? []).some(b => b.questions.some(q => q.id === questionId && q.type === 'text'));
+      if (!isText) throw new ValidationError('Essa pergunta não é de texto livre nesta pesquisa.');
+    }
+    await db.setCommentHidden(req.params.id, req.params.responseId, hidden, questionId);
     await peopleAudit(req, hidden ? 'CLIMATE_COMMENT_HIDDEN' : 'CLIMATE_COMMENT_SHOWN', `Comentário de pesquisa de clima ${hidden ? 'ocultado' : 'reexibido'}`, 'climate_surveys');
+    res.json({ success: true });
+  }));
+
+  // ---- Pesquisa de clima interna: templates da organização (a biblioteca do sistema vem no código) ----
+  app.post('/api/v1/retention/templates', can('retention:edit'), h(async (req, res) => {
+    const template = await ctx(req).db.createTemplate({ ...parseTemplateFields(req.body ?? {}, false), createdByName: req.auth!.name });
+    res.status(201).json({ success: true, template });
+  }));
+
+  app.patch('/api/v1/retention/templates/:id', can('retention:edit'), h(async (req, res) => {
+    const template = await ctx(req).db.changeTemplate(req.params.id, parseTemplateFields(req.body ?? {}, true));
+    res.json({ success: true, template });
+  }));
+
+  app.delete('/api/v1/retention/templates/:id', can('retention:edit'), h(async (req, res) => {
+    await ctx(req).db.deleteTemplate(req.params.id);
     res.json({ success: true });
   }));
 

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { Plus, Pencil, Send, Lock, Trash2, BarChart3, Users, CalendarClock, ClipboardList } from 'lucide-react';
-import type { ClimateCampaignSummary } from '../../types.js';
+import React, { useEffect, useState } from 'react';
+import { Plus, Pencil, Send, Lock, Trash2, BarChart3, Users, CalendarClock, ClipboardList, Layers } from 'lucide-react';
+import type { ClimateCampaignSummary, PositionOption, SurveyTemplate } from '../../types.js';
+import { templateQuestionCount } from '../../surveyTemplates.js';
 import { TenantApi } from '../../services/api.js';
 import { formatDateSP, spDateKey } from '../../utils/dateUtils.js';
 import { CAMPAIGN_STATUS_LABEL, CAMPAIGN_STATUS_STYLE } from '../../utils/retentionUtils.js';
@@ -11,13 +12,20 @@ import { CampaignResultsModal } from './CampaignResultsModal.js';
 interface Props {
   campaigns: ClimateCampaignSummary[];
   departments: { id: string; name: string }[];
+  /** Every template a new survey can start from (system library + the organization's own). */
+  templates: SurveyTemplate[];
+  positions: PositionOption[];
+  unlinkedMembers: number;
+  /** Set when coming from the Templates tab: opens the new-survey form already using that template. */
+  startWithTemplate?: SurveyTemplate;
+  onStartConsumed?: () => void;
   canEdit: boolean;
   onChanged: () => Promise<void>;
   onError: (message: string) => void;
 }
 
 type Modal =
-  | { kind: 'form'; campaign?: ClimateCampaignSummary }
+  | { kind: 'form'; campaign?: ClimateCampaignSummary; template?: SurveyTemplate }
   | { kind: 'results'; campaignId: string };
 
 interface Pending {
@@ -36,8 +44,16 @@ const audienceText = (c: ClimateCampaignSummary, departments: Props['departments
       }`;
 
 /** Aba Pesquisas: cria, publica, acompanha e encerra as pesquisas de clima aplicadas dentro do sistema. */
-export const CampaignsPanel: React.FC<Props> = ({ campaigns, departments, canEdit, onChanged, onError }) => {
+export const CampaignsPanel: React.FC<Props> = ({ campaigns, departments, templates, positions, unlinkedMembers, startWithTemplate, onStartConsumed, canEdit, onChanged, onError }) => {
   const [modal, setModal] = useState<Modal | null>(null);
+
+  useEffect(() => {
+    if (startWithTemplate && canEdit) {
+      setModal({ kind: 'form', template: startWithTemplate });
+      onStartConsumed?.();
+    }
+  }, [startWithTemplate]);
+
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
   const today = spDateKey(new Date());
@@ -122,6 +138,13 @@ export const CampaignsPanel: React.FC<Props> = ({ campaigns, departments, canEdi
                   </div>
                 )}
 
+                {c.blocks.length > 0 && (
+                  <div className="flex items-start gap-1.5 text-slate-600">
+                    <Layers className="w-3.5 h-3.5 mt-0.5 shrink-0 text-slate-400" />
+                    {templateQuestionCount(c.blocks)} {templateQuestionCount(c.blocks) === 1 ? 'pergunta estratégica' : 'perguntas estratégicas'} em {c.blocks.length} {c.blocks.length === 1 ? 'bloco' : 'blocos'}{c.templateName ? ` (${c.templateName})` : ''}
+                  </div>
+                )}
+
                 {c.actionPlan && (
                   <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-100 text-emerald-900 flex items-start gap-1.5">
                     <ClipboardList className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span className="line-clamp-2">{c.actionPlan}</span>
@@ -182,7 +205,7 @@ export const CampaignsPanel: React.FC<Props> = ({ campaigns, departments, canEdi
       )}
 
       {modal?.kind === 'form' && (
-        <CampaignFormModal campaign={modal.campaign} departments={departments} today={today} onSaved={saved} onClose={() => setModal(null)} />
+        <CampaignFormModal campaign={modal.campaign} departments={departments} templates={templates} positions={positions} unlinkedMembers={unlinkedMembers} initialTemplate={modal.template} today={today} onSaved={saved} onClose={() => setModal(null)} />
       )}
       {modal?.kind === 'results' && (
         <CampaignResultsModal campaignId={modal.campaignId} canEdit={canEdit} onClose={() => setModal(null)} />

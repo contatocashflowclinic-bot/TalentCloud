@@ -35,6 +35,7 @@ import {
   RetentionData,
   RetentionPerson,
   SurveyAnswer,
+  SurveyTemplate,
   TurnoverRiskAlert,
   TenantIndicators,
   AgendaEvent,
@@ -167,14 +168,23 @@ async function developmentChange(endpoint: string, method: 'POST' | 'PATCH' | 'D
  * Access management of ONE organization (people linked to it and its profiles). The organization screens and the
  * Conta Mãe screens share one component; only the base path differs.
  */
+/** A Cargo cadastrado que uma pessoa pode receber (o cargo nunca é digitado). */
+export interface PositionRef {
+  id: string;
+  title: string;
+  departmentId: string;
+}
+
 export interface MembersApi {
+  /** Cargos cadastrados que podem ser dados a uma pessoa. Ausente na Conta Mãe, que não enxerga dados de negócio. */
+  listPositionOptions?: () => Promise<PositionRef[]>;
   listMembers: (q: { search?: string; page?: number; pageSize?: number }) => Promise<Page<TenantUser>>;
   listProfiles: () => Promise<AccessProfile[]>;
   createMember: (p: {
-    name: string; email: string; profileId: string; jobTitle?: string; permissions?: string[];
+    name: string; email: string; profileId: string; positionId?: string; permissions?: string[];
   }) => Promise<{ user: TenantUser; tempPassword?: string; linkedExisting: boolean }>;
   updateMember: (id: string, p: {
-    name?: string; jobTitle?: string; profileId?: string; active?: boolean; permissions?: string[];
+    name?: string; positionId?: string | null; profileId?: string; active?: boolean; permissions?: string[];
   }) => Promise<TenantUser>;
   resetPassword: (id: string) => Promise<{ user: TenantUser; tempPassword: string }>;
   createProfile: (p: { name: string; description?: string; permissions: string[] }) => Promise<AccessProfile>;
@@ -182,9 +192,12 @@ export interface MembersApi {
   deleteProfile: (id: string) => Promise<void>;
 }
 
-function membersApi(base: string, members: 'users' | 'members'): MembersApi {
+function membersApi(base: string, members: 'users' | 'members', withPositions = false): MembersApi {
   const json = (method: string, body?: unknown): RequestInit => ({ method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   return {
+    ...(withPositions ? {
+      listPositionOptions: async () => (await request<{ success: boolean; positions: PositionRef[] }>(`${base}/users/position-options`)).positions
+    } : {}),
     listMembers: async q => {
       const res = await request<{ success: boolean; users: TenantUser[]; total: number; page: number; pageSize: number }>(
         `${base}/${members}${qs({ page: 1, pageSize: 25, ...q })}`
@@ -233,7 +246,7 @@ export const MasterApi = {
   createUser: async (payload: {
     name: string;
     email: string;
-    link?: { tenantId: string; profileId: string; jobTitle?: string; permissions?: string[] };
+    link?: { tenantId: string; profileId: string; permissions?: string[] };
   }) => {
     const res = await request<{ success: boolean; user: PlatformUser; tempPassword: string }>('/api/master/users', {
       method: 'POST',
@@ -376,7 +389,7 @@ export const TenantApi = {
   // 2. Usuários e Permissões
   /** Lookup list (names for owners, approvers...). Management screens use `members` (paginated). */
   getUsers: async () => (await request<{ success: boolean; users: TenantUser[] }>('/api/v1/users')).users,
-  members: membersApi('/api/v1', 'users'),
+  members: membersApi('/api/v1', 'users', true),
 
   // 3. DNA Organizacional
   getDNA: async () => (await request<{ success: boolean; dna: OrganizationalDNA }>('/api/v1/dna')).dna,
@@ -623,9 +636,19 @@ export const TenantApi = {
   closeCampaign: async (id: string) => (await request<{ success: boolean; campaign: ClimateCampaignSummary }>(`/api/v1/retention/campaigns/${id}/close`, { method: 'POST' })).campaign,
   deleteCampaign: async (id: string) => { await request<{ success: boolean }>(`/api/v1/retention/campaigns/${id}`, { method: 'DELETE' }); },
   getCampaignResults: async (id: string) => (await request<{ success: boolean; results: CampaignResults }>(`/api/v1/retention/campaigns/${id}/results`)).results,
-  setCommentHidden: async (campaignId: string, responseId: string, hidden: boolean) => {
-    await request<{ success: boolean }>(`/api/v1/retention/campaigns/${campaignId}/comments/${responseId}`, { method: 'PATCH', body: JSON.stringify({ hidden }) });
+  /** `questionId`: the text answer to a strategic question; without it, the comment of the survey core. */
+  setCommentHidden: async (campaignId: string, responseId: string, hidden: boolean, questionId?: string) => {
+    await request<{ success: boolean }>(`/api/v1/retention/campaigns/${campaignId}/comments/${responseId}`, { method: 'PATCH', body: JSON.stringify({ hidden, ...(questionId ? { questionId } : {}) }) });
   },
+  createSurveyTemplate: async (payload: Record<string, unknown>) => (await request<{ success: boolean; template: SurveyTemplate }>('/api/v1/retention/templates', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })).template,
+  updateSurveyTemplate: async (id: string, payload: Record<string, unknown>) => (await request<{ success: boolean; template: SurveyTemplate }>(`/api/v1/retention/templates/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).template,
+  deleteSurveyTemplate: async (id: string) => { await request<{ success: boolean }>(`/api/v1/retention/templates/${id}`, { method: 'DELETE' }); },
 
   // 14. Retenção — pesquisa de clima interna (quem responde)
   getPendingSurveys: async () => (await request<{ success: boolean; surveys: PendingSurvey[] }>('/api/v1/retention/survey/pending')).surveys,

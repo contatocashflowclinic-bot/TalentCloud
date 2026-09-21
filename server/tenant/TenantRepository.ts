@@ -25,9 +25,10 @@ import {
   OnboardingJourney,
   OrganizationalDNA,
   PendingSurvey,
+  PositionOption,
   RetentionPerson,
   SelectionApplication,
-  SurveyAnswer,
+  SurveyTemplate,
   TenantIndicators,
   TenantUser,
   TurnoverRiskAlert
@@ -41,7 +42,8 @@ import {
   assertRecordRemovable, DEFAULT_MEETING_TIME, isMeetingEventId, MEETING_ID_PREFIX, MEETING_MINUTES, meetingEventPrefix,
   newMeetingEventId, nextMeetingDetails, recordIdOfMeetingEvent, spDate, spInstant, spTime, todaySP
 } from './development.js';
-import { assertCampaignRemovable, isEligible, withEffectiveStatus } from './climate.js';
+import { assertCampaignRemovable, isEligible, withEffectiveStatus, type ParsedAnswer } from './climate.js';
+import { parseBlockAnswers, toPendingBlocks, visibleBlocks } from './surveyBlocks.js';
 import { assertAlertRemovable, buildAlert, normName, type AlertPatch } from './retention.js';
 import { isActiveAlert, sentimentOf } from '../../src/retention.js';
 import { buildChecklistItems, DEFAULT_INTEGRATION_TEMPLATES } from './integration.js';
@@ -72,6 +74,9 @@ export interface NextMeetingRequest {
   time?: string;
 }
 
+/** Cap on the templates an organization keeps (the system library does not count). */
+const MAX_ORG_TEMPLATES = 50;
+
 const INDICATOR_FIELDS = [
   'period', 'timeToHireDays', 'costPerHire', 'earlyTurnover90DaysRate', 'averageCulturalFit', 'openPositionsCount',
   'totalHiresThisQuarter', 'retentionRate12Months', 'candidateNPS', 'recruitmentFunnel'
@@ -99,6 +104,7 @@ export class TenantRepository {
   readonly onboardings: Entity<OnboardingJourney>;
   readonly development: Entity<CollaboratorDevelopment>;
   readonly climateCampaigns: Entity<ClimateCampaign>;
+  readonly surveyTemplates: Entity<Omit<SurveyTemplate, 'system'>>;
   readonly climateSurveys: Entity<ClimateSurveyResponse>;
   readonly turnoverAlerts: Entity<TurnoverRiskAlert>;
   readonly agendaEvents: Entity<AgendaEvent>;
@@ -120,6 +126,7 @@ export class TenantRepository {
     this.onboardings = new Entity(TABLES.onboardings, tenantId);
     this.development = new Entity(TABLES.development, tenantId);
     this.climateCampaigns = new Entity(TABLES.climateCampaigns, tenantId);
+    this.surveyTemplates = new Entity(TABLES.surveyTemplates, tenantId);
     this.climateSurveys = new Entity(TABLES.climateSurveys, tenantId);
     this.turnoverAlerts = new Entity(TABLES.turnoverAlerts, tenantId);
     this.agendaEvents = new Entity(TABLES.agendaEvents, tenantId);
@@ -830,7 +837,9 @@ export class TenantRepository {
     const { rows } = await getPool().query('select campaign_id from public.climate_participation where tenant_id = $1 and user_id = $2', [this.tenantId, memberId]);
     const answered = new Set(rows.map(r => r.campaign_id as string));
     return open.map(c => ({
-      campaignId: c.id, name: c.name, period: c.period, description: c.description, closesOn: c.closesOn, answered: answered.has(c.id)
+      campaignId: c.id, name: c.name, period: c.period, description: c.description, closesOn: c.closesOn, answered: answered.has(c.id),
+      // only the strategic blocks that apply to this person's job title
+      blocks: toPendingBlocks(visibleBlocks(c.blocks ?? [], member))
     }));
   }
 
@@ -839,7 +848,7 @@ export class TenantRepository {
    * transaction but share NO key: the answer never carries the user. The primary key of the participation is what
    * stops a second answer from the same person.
    */
-  async submitAnswer(campaignId: string, memberId: string, answer: SurveyAnswer & { comment?: string }): Promise<void> {
+  async submitAnswer(campaignId: string, memberId: string, answer: ParsedAnswer): Promise<void> {
     await withTransaction(async tx => {
       await tx.query('select 1 from public.climate_campaigns where tenant_id = $1 and id = $2 for share', [this.tenantId, campaignId]);
       const stored = await getRow<ClimateCampaign>(TABLES.climateCampaigns, this.tenantId, campaignId, tx);
@@ -850,6 +859,8 @@ export class TenantRepository {
       }
       const member = await this.users.get(memberId, tx);
       if (!member || !isEligible(campaign, member)) throw new ForbiddenError('Você não faz parte do público desta pesquisa.');
+      // the strategic questions this person's job title sees (and only those) must be answered correctly
+      const blockAnswers = parseBlockAnswers(visibleBlocks(campaign.blocks ?? [], member), answer.rawAnswers);
 
       const recorded = await tx.query(
         'insert into public.climate_participation (tenant_id, campaign_id, user_id, responded_on) values ($1, $2, $3, $4) on conflict do nothing',
@@ -865,18 +876,82 @@ export class TenantRepository {
         categoryRatings: answer.categories,
         anonymousComment: answer.comment,
         campaignId,
-        departmentId: member.departmentId
+        departmentId: member.departmentId,
+        blockAnswers
       }, tx);
     });
   }
 
-  /** Hides (or shows again) one comment of a campaign, e.g. one that names a person. */
-  async setCommentHidden(campaignId: string, responseId: string, hidden: boolean): Promise<void> {
-    const { rowCount } = await getPool().query(
-      'update public.climate_surveys set comment_hidden = $4 where tenant_id = $1 and campaign_id = $2 and id = $3',
-      [this.tenantId, campaignId, responseId, hidden]
-    );
+  /**
+   * Hides (or shows again) one comment of a campaign, e.g. one that names a person. Without `questionId` it is the
+   * comment of the survey core; with it, the text answer to that strategic question.
+   */
+  async setCommentHidden(campaignId: string, responseId: string, hidden: boolean, questionId?: string): Promise<void> {
+    const { rowCount } = questionId
+      ? await getPool().query(
+        `update public.climate_surveys
+            set hidden_texts = case when $5 then array_append(array_remove(hidden_texts, $4), $4) else array_remove(hidden_texts, $4) end
+          where tenant_id = $1 and campaign_id = $2 and id = $3`,
+        [this.tenantId, campaignId, responseId, questionId, hidden]
+      )
+      : await getPool().query(
+        'update public.climate_surveys set comment_hidden = $4 where tenant_id = $1 and campaign_id = $2 and id = $3',
+        [this.tenantId, campaignId, responseId, hidden]
+      );
     if (!rowCount) throw new NotFoundError('Comentário não encontrado');
+  }
+
+  // ---- Survey templates of the organization (the system library lives in src/surveyTemplates.ts) -------
+  /** Registered Cargos (module Cargos) that are active, with how many active people are linked to each. */
+  async positionOptions(): Promise<PositionOption[]> {
+    const [positions, users] = await Promise.all([this.positions.list(), this.users.list()]);
+    const linked = new Map<string, number>();
+    for (const u of users) if (u.active && u.positionId) linked.set(u.positionId, (linked.get(u.positionId) ?? 0) + 1);
+    return positions
+      .filter(p => p.status === 'active')
+      .map(p => ({ id: p.id, title: p.title, departmentId: p.departmentId, level: p.level, careerTrack: p.careerTrack, count: linked.get(p.id) ?? 0 }))
+      .sort((a, b) => a.title.localeCompare(b.title, 'pt-BR'));
+  }
+
+  /** Active people with no registered Cargo: they cannot be reached by blocks aimed at cargos. */
+  async unlinkedMembersCount(): Promise<number> {
+    return (await this.users.list()).filter(u => u.active && !u.positionId).length;
+  }
+
+  /** The organization's own templates (the `system` flag is what tells them from the library ones). */
+  async listTemplates(db?: Queryable): Promise<SurveyTemplate[]> {
+    return (await this.surveyTemplates.list(db)).map(t => ({ ...t, system: false as const }));
+  }
+
+  private async assertTemplateNameFree(name: string, exceptId: string | undefined, db: Queryable): Promise<void> {
+    const clash = (await this.surveyTemplates.list(db)).find(t => t.id !== exceptId && t.name.trim().toLowerCase() === name.trim().toLowerCase());
+    if (clash) throw new ConflictError(`Já existe um template chamado “${clash.name}”.`);
+  }
+
+  async createTemplate(fields: Record<string, unknown>): Promise<SurveyTemplate> {
+    return withTransaction(async tx => {
+      await tx.query('select pg_advisory_xact_lock(hashtext($1))', [`survey-template:${this.tenantId}`]);
+      const existing = await this.surveyTemplates.list(tx);
+      if (existing.length >= MAX_ORG_TEMPLATES) throw new ValidationError(`A organização pode ter no máximo ${MAX_ORG_TEMPLATES} templates próprios.`);
+      await this.assertTemplateNameFree(String(fields.name), undefined, tx);
+      const created = await this.surveyTemplates.insert({ id: newId('tpl'), ...fields }, tx);
+      return { ...created, system: false as const };
+    });
+  }
+
+  async changeTemplate(templateId: string, patch: Record<string, unknown>): Promise<SurveyTemplate> {
+    return withTransaction(async tx => {
+      await tx.query('select pg_advisory_xact_lock(hashtext($1))', [`survey-template:${this.tenantId}`]);
+      const before = await getRow<Omit<SurveyTemplate, 'system'>>(TABLES.surveyTemplates, this.tenantId, templateId, tx, true);
+      if (!before) throw new NotFoundError('Template não encontrado');
+      if (typeof patch.name === 'string') await this.assertTemplateNameFree(patch.name, templateId, tx);
+      const updated = (await this.surveyTemplates.update(templateId, { ...patch, updatedAt: new Date().toISOString() }, tx))!;
+      return { ...updated, system: false as const };
+    });
+  }
+
+  async deleteTemplate(templateId: string): Promise<void> {
+    if (!(await this.surveyTemplates.delete(templateId))) throw new NotFoundError('Template não encontrado');
   }
 }
 

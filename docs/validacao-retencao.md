@@ -1,8 +1,54 @@
 # Passo a passo de validação (visão do usuário) — Retenção de Talentos & Clima
 
-**Preparação:** aplique a migration nova (`20260921000020_retention.sql`, com `npm run db -- migrate`) e rode `npm run dev`. Entre em uma organização dos planos **Scale** ou **Enterprise** (a Retenção não existe no Starter) com um usuário **Administrador**. Para as partes de pesquisa você precisa de **pelo menos 5 pessoas ativas** na organização (crie usuários em **Usuários e Permissões** se preciso; o perfil **Colaborador** basta). Repita a parte D no celular.
+## Roteiro rápido (uns 15 minutos)
 
-O módulo tem quatro abas: **Visão geral**, **Alertas de risco**, **Pesquisas** e **Responder pesquisa**. Quem gerencia vê as três primeiras; qualquer colaborador vê só a última.
+**Antes:** rode `npm run dev`, abra o sistema e entre como **Administrador** de uma organização. Se estiver logado desde antes, saia e entre de novo.
+
+### Parte 1 — Alertas de risco
+
+| # | Faça isto | Deve acontecer |
+|---|---|---|
+| 1 | Menu **Retenção** → aba **Visão geral**. | Aparecem 3 cartões (eNPS, Alertas ativos, Retenção 90 dias). Onde não há dado, aparece **—**, sem número inventado. |
+| 2 | Aba **Alertas de risco** → **Registrar Sinal de Risco** → escolha uma pessoa da lista. | O formulário abre já com o nome preenchido. |
+| 3 | Escolha o risco **Alto**, escreva um sinal e uma ação (uma por linha) → **Salvar alerta**. | O cartão aparece com **Risco Alto** e situação **Aberto**. |
+| 4 | No cartão, **Registrar ação** → escreva algo → salvar. | A situação vira **Em acompanhamento** e a ação aparece em **Última ação**. |
+| 5 | Clique em **Histórico**. | Mostra cada passo com quem fez e quando. |
+| 6 | **Alterar situação** → **Resolvido** → salvar. | O alerta sai da lista (filtro "Ativos") e o contador da Visão geral diminui. |
+| 7 | Tente abrir outro alerta para a **mesma pessoa** enquanto houver um ativo. | O sistema recusa: "Já existe um alerta ativo…". |
+
+### Parte 2 — Pesquisa de clima
+
+| # | Faça isto | Deve acontecer |
+|---|---|---|
+| 8 | Aba **Pesquisas** → **Nova pesquisa** → dê um nome → **Criar rascunho**. | Aparece um cartão **Rascunho**. |
+| 9 | Clique **Publicar** e confirme. | O cartão vira **Aberta**, com "Participação 0 de N". |
+| 10 | Abra o sistema como **outra pessoa** (perfil Colaborador; aba anônima ou outro navegador). | Na tela inicial aparece a faixa **"Você tem uma pesquisa de clima aberta"**. |
+| 11 | Clique na faixa, dê as notas (recomendação + 5 categorias) → **Enviar resposta**. | Aparece "Obrigado! Sua resposta foi registrada de forma anônima" e a faixa some. Esse usuário **não vê** alertas nem resultados. |
+| 12 | Volte como Administrador → **Pesquisas** → **Ver resultado**. | Participação "1 de N". Com menos de 5 respostas **não mostra notas nem comentários**, só o aviso de que o resultado é liberado a partir de 5 (proteção do anonimato). |
+| 13 | **Encerrar** a pesquisa e confirme. | Vira **Encerrada**. Ninguém mais consegue responder. |
+
+**Opcional:** para ver o resultado completo (eNPS, notas, comentários), faça **5 pessoas diferentes** responderem antes de encerrar. Ao chegar na 5ª resposta, o resultado é liberado.
+
+### Parte 3 — Templates e perguntas por cargo
+
+| # | Faça isto | Deve acontecer |
+|---|---|---|
+| 14 | Aba **Templates**. | Aparece a **Biblioteca do sistema** (Clima geral, Liderança, Tecnologia, Comercial, Atendimento, Saúde, Primeiros 90 dias, Trabalho híbrido, Cultura). Embaixo, **Da sua organização**, vazia no começo. |
+| 15 | Num template (ex.: **Tecnologia e produto**), clique **Ver perguntas**. | Mostra os blocos, cada pergunta, o tipo (escala, escolha, texto) e para quais cargos o bloco vale. |
+| 16 | Antes, em **Usuários e Permissões**, edite as pessoas e escolha o **Cargo** de cada uma **na lista** (só aparecem cargos do módulo **Cargos**). Depois, no template **Tecnologia e produto**, clique **Usar em nova pesquisa**. | A pesquisa abre com o template e o nome sugerido. O bloco de tecnologia já vem com os **cargos cadastrados** da trilha Técnica marcados (agrupados por departamento) e mostra quantas pessoas veem o bloco. |
+| 17 | Ajuste os cargos marcados, se quiser, e clique **Criar rascunho** e depois **Publicar**. | O cartão mostra "10 perguntas estratégicas em 2 blocos". |
+| 18 | Entre como uma pessoa **vinculada a um cargo marcado** e responda. Depois, como uma **sem cargo** ou de outro cargo. | Quem tem o cargo marcado vê o bloco de tecnologia; quem não tem **não vê**. As perguntas para todos aparecem para todos. |
+| 19 | Volte à aba **Templates** → **Copiar e editar** num template da biblioteca, mude o nome e salve. | A cópia aparece em **Da sua organização** e pode ser editada ou excluída. A biblioteca do sistema não muda. |
+
+**Se algo não bater:** atualize a página com Ctrl+F5. Se o colaborador não vê a pesquisa, confira se o perfil dele tem **Pesquisa de Clima → Visualizar** (perfis personalizados antigos precisam dessa marcação).
+
+---
+
+## Guia detalhado
+
+**Preparação:** aplique as migrations novas (`20260921000020_retention.sql`, `20260921000021_survey_templates.sql` e `20260921000022_member_position.sql`, com `npm run db -- migrate`) e rode `npm run dev`. Entre em uma organização dos planos **Scale** ou **Enterprise** (a Retenção não existe no Starter) com um usuário **Administrador**. Para as partes de pesquisa você precisa de **pelo menos 5 pessoas ativas** na organização (crie usuários em **Usuários e Permissões** se preciso; o perfil **Colaborador** basta). Repita a parte D no celular.
+
+O módulo tem cinco abas: **Visão geral**, **Alertas de risco**, **Pesquisas**, **Templates** e **Responder pesquisa**. Quem gerencia vê as quatro primeiras; qualquer colaborador vê só a última.
 
 ## A. Visão geral (sem números inventados)
 
@@ -67,7 +113,7 @@ O módulo tem quatro abas: **Visão geral**, **Alertas de risco**, **Pesquisas**
 | E3 | Confira o eNPS. | É **% de promotores (notas 9–10) − % de detratores (0–6)**, de −100 a +100. Ex.: 5 promotores, 2 neutros e 2 detratores em 9 respostas dão **+33**. |
 | E4 | Olhe **Por departamento**. | Só aparecem departamentos com **5 respostas ou mais** (com eNPS e médias). Com 4, o departamento **não aparece**. |
 | E5 | Olhe os comentários. | Aparecem **sem autor e sem data**, em ordem embaralhada (não é a ordem em que chegaram). |
-| E6 | Num comentário que cita uma pessoa, clique **Ocultar**. | Ele vira "Comentário oculto pelo RH." e sai da contagem; **Reexibir** desfaz. (Só quem altera a Retenção vê o botão.) |
+| E6 | Num comentário que cita uma pessoa, clique **Ocultar**. | Ele vira "Resposta ocultada pelo RH." e sai da contagem; **Reexibir** desfaz. (Só quem altera a Retenção vê o botão. Vale também para respostas de texto das perguntas estratégicas.) |
 | E7 | Volte à **Visão geral**. | O eNPS da organização passa a ser o da pesquisa mais recente com resultado liberado, e ela entra na **Evolução do eNPS** (com "antes: … " no resultado quando há pesquisa anterior). |
 
 ## F. Encerrar e plano de ação
@@ -93,6 +139,36 @@ O módulo tem quatro abas: **Visão geral**, **Alertas de risco**, **Pesquisas**
 | # | O que fazer | O que deve acontecer |
 |---|---|---|
 | H1 | Na Conta Mãe, abra **Auditoria** e filtre a categoria **Dados de pessoas**. | Estão registrados: alerta aberto, mudança de situação, alerta excluído, pesquisa publicada/encerrada e comentário ocultado/reexibido. **Nenhum registro traz o texto de uma resposta ou de um comentário.** |
+
+## I. Templates e perguntas estratégicas por cargo
+
+| # | O que fazer | O que deve acontecer |
+|---|---|---|
+| I1 | Aba **Templates**. | Nove templates do sistema (somente leitura) e a área **Da sua organização**. Quem só consulta a Retenção vê tudo, mas **sem botões** de usar, copiar ou editar. |
+| I2 | **Novo template**. Dê um nome e clique **Adicionar bloco de perguntas**. | Um bloco pede título, uma explicação curta e **Quem responde**: **Todos** ou **Só alguns cargos**. Para cargos, o template marca **Nível do cargo** e **Trilha de carreira** (caixas de seleção, dados do cadastro de Cargos). **Não existe campo para digitar cargos ou palavras.** |
+| I3 | Adicione perguntas de cada tipo: **Escala de 0 a 10**, **Escolha única** (uma opção por linha, de 2 a 8) e **Texto livre**. Use as setas para reordenar. | Cada pergunta tem "Resposta obrigatória". Texto livre começa como opcional. |
+| I4 | Salve com um bloco **sem perguntas**, ou com uma escolha de **uma só opção**. | O sistema recusa e explica o motivo. Limites: 6 blocos, 12 perguntas por bloco e 30 no total. |
+| I5 | Crie outro template com o **mesmo nome** (maiúsculas não importam). | Recusado: "Já existe um template chamado …". |
+| I6 | Numa **nova pesquisa**, escolha um template no campo **Começar de um template**. | Os blocos entram na pesquisa e ficam **editáveis** até publicar. Em blocos por cargo, os **cargos cadastrados** que combinam com o nível e a trilha do template já vêm marcados; a lista é agrupada por departamento e mostra quantas pessoas estão vinculadas a cada cargo. |
+| I7 | Num bloco por cargo, deixe **nenhum cargo** marcado e tente **Publicar**. | Recusado: "Escolha ao menos um cargo para o bloco …". Um bloco sem perguntas também impede a publicação. (Um template que não encontra nenhum cargo combinando **não vira "todos"**: o bloco fica sem cargos até você escolher.) |
+| I8 | Marque cargos que somam **menos de 5 pessoas**. | Aparece o aviso de que o resultado desse bloco só será liberado com 5 respostas (proteção do anonimato). Se houver pessoas **sem cargo cadastrado**, aparece também um aviso dizendo que elas não verão os blocos por cargo. |
+| I9 | Publique e tente alterar os blocos. | Depois de publicada, os blocos **não mudam** mais (só a data de encerramento e o plano de ação). |
+| I10 | Responda como pessoas de cargos diferentes e como alguém sem cargo cadastrado. | Cada pessoa vê **só os blocos dos cargos a que está vinculada** (o cargo vem do cadastro de Cargos). Quem não tem cargo cadastrado vê só os blocos para todos. Perguntas obrigatórias travam o envio até serem respondidas. |
+| I11 | **Ver resultado** com 5 ou mais respostas de um bloco. | O bloco mostra "X de Y responderam" e, por pergunta: **média** (escala), **quantidade e % por opção** (escolha) ou **respostas em texto sem autor** (texto, com **Ocultar**). |
+| I12 | Olhe um bloco com menos de 5 respostas. | Só aparece "O resultado é liberado a partir de 5". Uma pergunta de texto com menos de 5 respostas também não é detalhada, mesmo que o bloco esteja liberado. |
+
+## J. O cargo é sempre o cadastrado (nunca digitado)
+
+| # | O que fazer | O que deve acontecer |
+|---|---|---|
+| J1 | Em **Usuários e Permissões**, clique **Cadastrar Usuário** (ou **Editar** numa pessoa) e olhe o campo **Cargo**. | É uma **lista**, não um campo de texto. Ela traz só os cargos **ativos** do módulo **Cargos** e a opção "— sem cargo cadastrado —". Embaixo: "Só cargos do módulo Cargos. Para incluir um novo, cadastre-o lá." |
+| J2 | Escolha um cargo e salve. | A lista de usuários mostra o **título do cargo cadastrado**. |
+| J3 | Olhe as pessoas que ainda não têm cargo escolhido (por exemplo, as criadas antes desta versão). | Aparece **"sem cargo cadastrado"** embaixo do cargo antigo (só o rótulo que já existia). Elas não veem blocos de pesquisa por cargo até você escolher o cargo delas. |
+| J4 | No módulo **Cargos**, arquive um cargo e volte ao formulário de usuários. | O cargo arquivado **não aparece** mais na lista. |
+| J5 | No módulo **Cargos**, mude o **título** de um cargo. | O cargo mostrado nas pessoas vinculadas a ele acompanha o novo título. |
+| J6 | Na **Conta Mãe**, abra os usuários de uma organização. | O campo de cargo mostra "O cargo é escolhido pela própria organização, no cadastro de Cargos." A Conta Mãe não digita cargo. |
+
+> Nas pessoas que já existiam, o sistema vincula o cargo **automaticamente** quando o texto antigo é igual ao título de **um único** cargo ativo da organização. As demais ficam para o RH escolher.
 
 ## Se algo falhar
 

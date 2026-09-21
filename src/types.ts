@@ -112,7 +112,10 @@ export interface TenantUser {
   profileId: string;
   profileName?: string;
   departmentId?: string;
+  /** Título do cargo. Vem do Cargo cadastrado (`positionId`); nas pessoas ainda não vinculadas é só o rótulo antigo. */
   jobTitle: string;
+  /** Cargo cadastrado (módulo Cargos) desta pessoa. O cargo nunca é digitado: é sempre escolhido no cadastro. */
+  positionId?: string;
   avatarUrl?: string;
   active: boolean;
   /** Ausente enquanto o vínculo nunca foi usado. */
@@ -166,18 +169,23 @@ export interface Squad {
 }
 
 // 5. Cargos
+export const POSITION_LEVELS = ['Júnior', 'Pleno', 'Sênior', 'Especialista', 'Coordenação', 'Gerência', 'Diretoria'] as const;
+export type PositionLevel = (typeof POSITION_LEVELS)[number];
+export const CAREER_TRACKS = ['Y_TECNICO', 'GESTÃO', 'OPERACIONAL'] as const;
+export type CareerTrack = (typeof CAREER_TRACKS)[number];
+
 export interface JobPosition {
   id: string;
   title: string;
   departmentId: string;
-  level: 'Júnior' | 'Pleno' | 'Sênior' | 'Especialista' | 'Coordenação' | 'Gerência' | 'Diretoria';
+  level: PositionLevel;
   description: string;
   technicalRequirements: string[];
   behavioralCompetencies: string[];
   minSalary: number;
   maxSalary: number;
   currency: string;
-  careerTrack: 'Y_TECNICO' | 'GESTÃO' | 'OPERACIONAL';
+  careerTrack: CareerTrack;
   status: 'active' | 'archived';
 }
 
@@ -628,6 +636,60 @@ export interface DevelopmentLookups {
 export const CLIMATE_CATEGORIES = ['lideranca', 'cultura', 'crescimento', 'remuneracao', 'ambiente'] as const;
 export type ClimateCategory = (typeof CLIMATE_CATEGORIES)[number];
 
+// ---- Perguntas estratégicas por cargo (blocos e templates) ----
+export const QUESTION_TYPES = ['scale', 'choice', 'text'] as const;
+/** scale: nota de 0 a 10 · choice: escolha única entre as opções · text: resposta livre. */
+export type SurveyQuestionType = (typeof QUESTION_TYPES)[number];
+
+export interface SurveyQuestion {
+  id: string;
+  text: string;
+  type: SurveyQuestionType;
+  /** Só para `choice`: de 2 a SURVEY_LIMITS.options opções. */
+  options?: string[];
+  required: boolean;
+}
+
+/** Como um template sugere os cargos de um bloco: pelos atributos do cadastro de Cargos (nível e trilha), nunca por texto livre. */
+export interface TargetHints {
+  levels: PositionLevel[];
+  careerTracks: CareerTrack[];
+}
+
+/**
+ * Grupo de perguntas estratégicas. `audience: 'all'` vale para todos; `'roles'` só para quem tem um dos Cargos cadastrados em
+ * `positionIds`. Nos templates, `targetHints` sugere esses cargos quando o template vira uma pesquisa.
+ */
+export interface SurveyBlock {
+  id: string;
+  title: string;
+  description?: string;
+  audience: 'all' | 'roles';
+  positionIds: string[];
+  targetHints: TargetHints;
+  questions: SurveyQuestion[];
+}
+
+export const SURVEY_LIMITS = { blocks: 6, questionsPerBlock: 12, questions: 30, options: 8 } as const;
+
+export interface SurveyTemplate {
+  id: string;
+  name: string;
+  description: string;
+  /** Área a que o template se dirige (ex.: "Tecnologia"). */
+  focus?: string;
+  blocks: SurveyBlock[];
+  /** true = biblioteca do sistema (somente leitura). */
+  system: boolean;
+  /** Template do sistema de onde esta cópia saiu. */
+  basedOn?: string;
+  createdByName?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type SurveyAnswerValue = number | string;
+
 /** Uma resposta ANÔNIMA de pesquisa de clima. Nunca carrega quem respondeu. `campaignId` ausente = pesquisa histórica. */
 export interface ClimateSurveyResponse {
   id: string;
@@ -639,6 +701,10 @@ export interface ClimateSurveyResponse {
   campaignId?: string;
   departmentId?: string;
   commentHidden?: boolean;
+  /** Respostas às perguntas dos blocos, por id de pergunta. */
+  blockAnswers?: Record<string, SurveyAnswerValue>;
+  /** Ids das perguntas de texto cuja resposta o RH ocultou. */
+  hiddenTexts?: string[];
 }
 
 export const ALERT_STATUSES = ['open', 'monitoring', 'resolved', 'dismissed', 'left'] as const;
@@ -700,6 +766,10 @@ export interface ClimateCampaign {
   departmentIds: string[];
   closesOn?: string;
   actionPlan?: string;
+  /** Perguntas estratégicas (cópia do template no momento da criação). Só editável enquanto for rascunho. */
+  blocks: SurveyBlock[];
+  /** Nome do template que originou a pesquisa (informativo). */
+  templateName?: string;
   createdById: string;
   createdByName: string;
   createdAt: string;
@@ -744,9 +814,25 @@ export interface RetentionMetrics {
   retention90Rate: number | null;
 }
 
+/** Cargo cadastrado (módulo Cargos) e quantas pessoas ativas estão vinculadas a ele. */
+export interface PositionOption {
+  id: string;
+  title: string;
+  departmentId: string;
+  level: PositionLevel;
+  careerTrack: CareerTrack;
+  count: number;
+}
+
 export interface RetentionData {
   turnoverAlerts: TurnoverRiskAlert[];
   campaigns: ClimateCampaignSummary[];
+  /** Templates da organização (a biblioteca do sistema vem no código: src/surveyTemplates.ts). */
+  surveyTemplates: SurveyTemplate[];
+  /** Cargos ativos do cadastro (onde os blocos por cargo escolhem). */
+  positions: PositionOption[];
+  /** Pessoas ativas ainda sem Cargo cadastrado: elas não veem blocos por cargo até o RH vinculá-las. */
+  unlinkedMembers: number;
   metrics: RetentionMetrics;
   lookups: DevelopmentLookups;
   /** collaboratorId -> id do PDI dessa pessoa (para abrir o PDI a partir do alerta). */
@@ -762,9 +848,42 @@ export interface CampaignDepartmentResult {
 }
 
 export interface CampaignComment {
+  /** Id da resposta (não identifica a pessoa). */
   id: string;
+  /** Presente quando o texto responde a uma pergunta de bloco; ausente no comentário do núcleo. */
+  questionId?: string;
   text: string;
   hidden: boolean;
+}
+
+export interface QuestionResult {
+  questionId: string;
+  text: string;
+  type: SurveyQuestionType;
+  responses: number;
+  /** false = poucas respostas (menos que o mínimo): nada é detalhado. */
+  released: boolean;
+  /** scale */
+  average?: number;
+  /** choice */
+  options?: { label: string; count: number }[];
+  /** text */
+  comments?: CampaignComment[];
+}
+
+export interface BlockResult {
+  blockId: string;
+  title: string;
+  description?: string;
+  audience: 'all' | 'roles';
+  /** Títulos dos Cargos cadastrados a que o bloco se dirige. */
+  positionTitles: string[];
+  /** Pessoas do público da pesquisa que veem o bloco. */
+  eligible: number;
+  /** Pessoas que responderam a ao menos uma pergunta do bloco. */
+  responded: number;
+  released: boolean;
+  questions: QuestionResult[];
 }
 
 /** Resultado de uma campanha. Grupos com poucas respostas não são detalhados (anonimato): `released` diz se já pode. */
@@ -778,8 +897,13 @@ export interface CampaignResults {
   categoryAverages: Record<ClimateCategory, number> | null;
   departments: CampaignDepartmentResult[];
   comments: CampaignComment[];
+  /** Perguntas estratégicas, bloco a bloco (cada bloco respeita o mínimo de respostas). */
+  blocks: BlockResult[];
   previous: { name: string; enps: number } | null;
 }
+
+/** Bloco como a pessoa o vê ao responder: só o que ela precisa (sem cargos-alvo). */
+export type PendingBlock = Pick<SurveyBlock, 'id' | 'title' | 'description' | 'questions'>;
 
 /** Pesquisa aberta que a pessoa pode (ou já pode ter) respondido. */
 export interface PendingSurvey {
@@ -789,12 +913,16 @@ export interface PendingSurvey {
   description?: string;
   closesOn?: string;
   answered: boolean;
+  /** Blocos de perguntas estratégicas que valem para o cargo desta pessoa. */
+  blocks: PendingBlock[];
 }
 
 export interface SurveyAnswer {
   enps: number;
   categories: Record<ClimateCategory, number>;
   comment?: string;
+  /** Respostas às perguntas dos blocos, por id de pergunta. */
+  answers?: Record<string, SurveyAnswerValue>;
 }
 
 // 15. Indicadores

@@ -17,6 +17,7 @@ import {
 import { CATEGORY_LABEL, MIN_GROUP, categoryAverages, enpsOf, zoneOf } from '../../src/retention.js';
 import { ValidationError } from '../errors.js';
 import { cleanText, isoDay, requiredText } from './development.js';
+import { assertBlocksReady, buildBlockResults, parseBlocks } from './surveyBlocks.js';
 
 /**
  * Business rules of the internal climate survey: campaigns, who may answer, validation of an answer and the results with
@@ -39,9 +40,11 @@ export const withEffectiveStatus = <T extends Pick<ClimateCampaign, 'status' | '
 
 export interface CampaignRefs {
   departmentIds: ReadonlySet<string>;
+  /** Registered Cargos the strategic blocks may point to. */
+  positionIds: ReadonlySet<string>;
 }
 
-const CAMPAIGN_FIELDS = ['name', 'period', 'description', 'audience', 'departmentIds', 'closesOn', 'actionPlan'] as const;
+const CAMPAIGN_FIELDS = ['name', 'period', 'description', 'audience', 'departmentIds', 'closesOn', 'actionPlan', 'blocks', 'templateName'] as const;
 
 /** What can still be changed in each situation. */
 const EDITABLE: Record<CampaignStatus, readonly string[]> = {
@@ -74,12 +77,15 @@ function audienceOf(body: Body, current: Pick<ClimateCampaign, 'audience' | 'dep
 export function buildCampaign(body: Body, refs: CampaignRefs, today: string, by: { id: string; name: string }): CampaignPatch {
   const description = cleanText(body.description, 'Descrição', 500);
   const closesOn = closingDate(body.closesOn, today);
+  const templateName = cleanText(body.templateName, 'Template', 120);
   return {
     name: requiredText(body.name, 'Nome da pesquisa', 120),
     period: requiredText(body.period, 'Período', 40),
     ...(description ? { description } : {}),
     ...audienceOf(body, undefined, refs),
     ...(closesOn ? { closesOn } : {}),
+    blocks: parseBlocks(body.blocks, refs),
+    ...(templateName ? { templateName } : {}),
     status: 'draft',
     createdById: by.id,
     createdByName: by.name
@@ -104,6 +110,8 @@ export function editCampaign(campaign: ClimateCampaign, body: Body, refs: Campai
   if (has(body, 'description')) patch.description = cleanText(body.description, 'Descrição', 500) || null;
   if (has(body, 'closesOn')) patch.closesOn = closingDate(body.closesOn, today);
   if (has(body, 'actionPlan')) patch.actionPlan = cleanText(body.actionPlan, 'Plano de ação', 2000) || null;
+  if (has(body, 'blocks')) patch.blocks = parseBlocks(body.blocks, refs);
+  if (has(body, 'templateName')) patch.templateName = cleanText(body.templateName, 'Template', 120) || null;
   if (has(body, 'audience') || has(body, 'departmentIds')) Object.assign(patch, audienceOf(body, campaign, refs));
   return patch;
 }
@@ -111,6 +119,7 @@ export function editCampaign(campaign: ClimateCampaign, body: Body, refs: Campai
 export function publishCampaign(campaign: ClimateCampaign, today: string): CampaignPatch {
   if (campaign.status !== 'draft') throw new ValidationError('Só uma pesquisa em rascunho pode ser publicada.');
   if (campaign.closesOn && campaign.closesOn < today) throw new ValidationError('A data de encerramento já passou. Ajuste-a antes de publicar.');
+  assertBlocksReady(campaign.blocks ?? []);
   return { status: 'open', publishedAt: new Date().toISOString() };
 }
 
@@ -137,7 +146,13 @@ function score(value: unknown, label: string): number {
   return value;
 }
 
-export function parseAnswer(body: Body): SurveyAnswer & { comment?: string } {
+/**
+ * The core of an answer, validated. The answers to the strategic blocks (`rawAnswers`) can only be checked once we know
+ * which blocks the respondent sees, so they travel as they came and are validated by `parseBlockAnswers`.
+ */
+export type ParsedAnswer = Omit<SurveyAnswer, 'answers'> & { comment?: string; rawAnswers?: unknown };
+
+export function parseAnswer(body: Body): ParsedAnswer {
   const categories = body.categories;
   if (!categories || typeof categories !== 'object') throw new ValidationError('Avalie todas as categorias.');
   const comment = cleanText(body.comment, 'Comentário', 1000);
@@ -146,7 +161,8 @@ export function parseAnswer(body: Body): SurveyAnswer & { comment?: string } {
     categories: Object.fromEntries(
       CLIMATE_CATEGORIES.map(c => [c, score((categories as Record<string, unknown>)[c], CATEGORY_LABEL[c])])
     ) as Record<ClimateCategory, number>,
-    ...(comment ? { comment } : {})
+    ...(comment ? { comment } : {}),
+    rawAnswers: body.answers
   };
 }
 
@@ -212,8 +228,12 @@ export function buildCampaignResults(input: {
   responses: readonly ClimateSurveyResponse[];
   departments: readonly { id: string; name: string }[];
   trend: readonly ClimateTrendPoint[];
+  /** People of the survey's audience (who could answer): the base of "N people see this block". */
+  members: readonly { positionId?: string }[];
+  /** Registered Cargos (to name the cargos each block is aimed at). */
+  positions: readonly { id: string; title: string }[];
 }): CampaignResults {
-  const { campaign, responses, departments, trend } = input;
+  const { campaign, responses, departments, trend, members, positions } = input;
   const released = responses.length >= MIN_GROUP;
 
   const enps = released ? enpsOf(responses.map(r => r.enpsScore)) : null;
@@ -253,6 +273,7 @@ export function buildCampaignResults(input: {
     categoryAverages: released ? categoryAverages(responses.map(r => r.categoryRatings)) : null,
     departments: byDepartment,
     comments,
+    blocks: buildBlockResults({ blocks: campaign.blocks ?? [], responses, members, positions }),
     previous: before ? { name: before.label, enps: before.enps } : null
   };
 }

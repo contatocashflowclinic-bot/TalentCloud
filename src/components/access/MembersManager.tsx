@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { UserPlus, Check, Mail, Lock, KeyRound, Copy, AlertTriangle, Pencil, SlidersHorizontal, Link2, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { MembersApi } from '../../services/api.js';
 import { AccessProfile, TenantUser } from '../../types.js';
+import type { PositionRef } from '../../services/api.js';
 import { formatDateTimeSP } from '../../utils/dateUtils.js';
 import { PermissionMatrix } from './PermissionMatrix.js';
 import { ProfileCaps, ProfilesPanel } from './ProfilesPanel.js';
@@ -10,7 +11,8 @@ interface UserDraft {
   id?: string;
   name: string;
   email: string;
-  jobTitle: string;
+  /** Cargo cadastrado (módulo Cargos); vazio = sem cargo. Nunca é texto livre. */
+  positionId: string;
   profileId: string;
   active: boolean;
   custom: boolean;
@@ -53,6 +55,8 @@ export const MembersManager: React.FC<{
   const [search, setSearch] = useState(initialSearch ?? '');
   const [debounced, setDebounced] = useState((initialSearch ?? '').trim());
   const [profiles, setProfiles] = useState<AccessProfile[]>([]);
+  /** Cargos cadastrados que podem ser dados a uma pessoa (a Conta Mãe não os enxerga). */
+  const [positionOptions, setPositionOptions] = useState<PositionRef[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState<UserDraft | null>(null);
   const [saving, setSaving] = useState(false);
@@ -74,14 +78,16 @@ export const MembersManager: React.FC<{
     const mine = ++seq.current; // ignore out-of-order responses
     try {
       setLoading(true);
-      const [u, p] = await Promise.all([
+      const [u, p, cargos] = await Promise.all([
         api.listMembers({ search: debounced, page, pageSize: PAGE_SIZE }),
-        canSeeProfiles ? api.listProfiles() : Promise.resolve([] as AccessProfile[])
+        canSeeProfiles ? api.listProfiles() : Promise.resolve([] as AccessProfile[]),
+        api.listPositionOptions ? api.listPositionOptions().catch(() => [] as PositionRef[]) : Promise.resolve([] as PositionRef[])
       ]);
       if (mine !== seq.current) return;
       setUsers(u.items);
       setTotal(u.total);
       setProfiles(p);
+      setPositionOptions(cargos);
     } catch (err) {
       console.error('Failed to load members:', err);
     } finally {
@@ -94,13 +100,13 @@ export const MembersManager: React.FC<{
   const openCreate = () => {
     const first = profiles.find(p => !p.isAdmin) ?? profiles[0];
     setError(null);
-    setDraft({ name: '', email: '', jobTitle: '', profileId: first?.id ?? '', active: true, custom: false, permissions: first?.permissions ?? [] });
+    setDraft({ name: '', email: '', positionId: '', profileId: first?.id ?? '', active: true, custom: false, permissions: first?.permissions ?? [] });
   };
 
   const openEdit = (u: TenantUser) => {
     setError(null);
     setDraft({
-      id: u.id, name: u.name, email: u.email, jobTitle: u.jobTitle, profileId: u.profileId, active: u.active,
+      id: u.id, name: u.name, email: u.email, positionId: u.positionId ?? '', profileId: u.profileId, active: u.active,
       custom: u.grantedPermissions.length + u.revokedPermissions.length > 0,
       permissions: u.permissions ?? []
     });
@@ -125,11 +131,11 @@ export const MembersManager: React.FC<{
     setError(null);
     try {
       if (draft.id) {
-        await api.updateMember(draft.id, { name: draft.name, jobTitle: draft.jobTitle, profileId: draft.profileId, active: draft.active, permissions });
+        await api.updateMember(draft.id, { name: draft.name, ...(api.listPositionOptions ? { positionId: draft.positionId || null } : {}), profileId: draft.profileId, active: draft.active, permissions });
         setNotice('Acesso atualizado.');
       } else {
         const created = await api.createMember({
-          name: draft.name, email: draft.email, jobTitle: draft.jobTitle || undefined, profileId: draft.profileId,
+          name: draft.name, email: draft.email, positionId: draft.positionId || undefined, profileId: draft.profileId,
           permissions: draft.custom && profile && !sameSet(draft.permissions, profile.permissions) ? draft.permissions : undefined
         });
         if (created.tempPassword) {
@@ -271,7 +277,12 @@ export const MembersManager: React.FC<{
                       <div className="text-xs text-slate-400 flex items-center gap-1 mt-0.5"><Mail className="w-3 h-3" /> {u.email}</div>
                     </td>
                     <td className="px-5 py-3.5">{profileBadge(u)}</td>
-                    <td className="px-5 py-3.5 text-xs text-slate-700 hidden md:table-cell">{u.jobTitle}</td>
+                    <td className="px-5 py-3.5 text-xs text-slate-700 hidden md:table-cell">
+                      {u.jobTitle}
+                      {api.listPositionOptions && !u.positionId && (
+                        <span className="block text-[10px] text-amber-700" title="Escolha um cargo do cadastro de Cargos ao editar a pessoa.">sem cargo cadastrado</span>
+                      )}
+                    </td>
                     <td className="px-5 py-3.5">
                       <span className={`inline-flex items-center gap-1 text-xs font-medium ${u.active ? 'text-emerald-700' : 'text-slate-400'}`}>
                         <span className={`w-1.5 h-1.5 rounded-full ${u.active ? 'bg-emerald-500' : 'bg-slate-300'}`}></span> {u.active ? 'Ativo' : 'Inativo'}
@@ -360,8 +371,18 @@ export const MembersManager: React.FC<{
               </label>
               <label className="block">
                 <span className="block font-semibold text-slate-700 mb-1">Cargo</span>
-                <input value={draft.jobTitle} onChange={(e) => setDraft({ ...draft, jobTitle: e.target.value })} placeholder="Ex: Tech Recruiter Senior"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-hidden focus:border-indigo-500" />
+                {api.listPositionOptions ? (
+                  <>
+                    <select value={draft.positionId} onChange={(e) => setDraft({ ...draft, positionId: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg-white focus:outline-hidden focus:border-indigo-500">
+                      <option value="">— sem cargo cadastrado —</option>
+                      {positionOptions.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+                    </select>
+                    <span className="block text-[11px] text-slate-400 mt-1">Só cargos do módulo Cargos. Para incluir um novo, cadastre-o lá.</span>
+                  </>
+                ) : (
+                  <span className="block px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 text-xs text-slate-500">O cargo é escolhido pela própria organização, no cadastro de Cargos.</span>
+                )}
               </label>
               <label className="block">
                 <span className="block font-semibold text-slate-700 mb-1">Perfil de acesso</span>

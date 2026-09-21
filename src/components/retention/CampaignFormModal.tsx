@@ -1,15 +1,25 @@
 import React, { useState } from 'react';
 import { X } from 'lucide-react';
-import type { ClimateCampaignSummary } from '../../types.js';
+import { Link2Off } from 'lucide-react';
+import type { ClimateCampaignSummary, PositionOption, SurveyBlock, SurveyTemplate } from '../../types.js';
 import { useBackdropClose } from '../../hooks/useBackdropClose.js';
 import { TenantApi } from '../../services/api.js';
 import { DateInputBR } from '../DateInputBR.js';
 import { currentQuarter } from '../../utils/retentionUtils.js';
+import { BlocksEditor, blocksFromTemplate } from './BlocksEditor.js';
 
 interface Props {
   /** Absent = new survey. */
   campaign?: ClimateCampaignSummary;
   departments: { id: string; name: string }[];
+  /** Every template (the system library and the organization's own): the ones a new survey can start from. */
+  templates: SurveyTemplate[];
+  /** Registered Cargos (module Cargos), with the people linked to each: the only way to aim a block at cargos. */
+  positions: PositionOption[];
+  /** Active people with no registered Cargo (they do not see blocks aimed at cargos). */
+  unlinkedMembers: number;
+  /** Template a new survey starts from (coming from the Templates tab). */
+  initialTemplate?: SurveyTemplate;
   /** Today (AAAA-MM-DD, São Paulo): suggests the period of a new survey. */
   today: string;
   onSaved: () => Promise<void>;
@@ -22,9 +32,12 @@ const inputCls = 'w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg
  * Form of a survey (campaign). A draft is fully editable; once published only the closing date and the action plan can
  * change, and once closed only the action plan.
  */
-export const CampaignFormModal: React.FC<Props> = ({ campaign, departments, today, onSaved, onClose }) => {
+export const CampaignFormModal: React.FC<Props> = ({ campaign, departments, templates, positions, unlinkedMembers, initialTemplate, today, onSaved, onClose }) => {
   const status = campaign?.status ?? 'draft';
-  const [name, setName] = useState(campaign?.name ?? '');
+  const [name, setName] = useState(campaign?.name ?? (initialTemplate && initialTemplate.blocks.length > 0 ? `Pesquisa — ${initialTemplate.name}` : ''));
+  const [templateId, setTemplateId] = useState(initialTemplate?.id ?? '');
+  const [templateName, setTemplateName] = useState(campaign?.templateName ?? initialTemplate?.name ?? '');
+  const [blocks, setBlocks] = useState<SurveyBlock[]>(() => campaign?.blocks ?? (initialTemplate ? blocksFromTemplate(initialTemplate.blocks, positions) : []));
   const [period, setPeriod] = useState(campaign?.period ?? currentQuarter(today));
   const [description, setDescription] = useState(campaign?.description ?? '');
   const [audience, setAudience] = useState<'all' | 'departments'>(campaign?.audience ?? 'all');
@@ -37,6 +50,15 @@ export const CampaignFormModal: React.FC<Props> = ({ campaign, departments, toda
 
   const isDraft = status === 'draft';
   const canEditClosing = status !== 'closed';
+
+  /** Choosing a template fills the strategic blocks (with the cargos that match) and, if empty, the name. */
+  const chooseTemplate = (id: string) => {
+    setTemplateId(id);
+    const template = templates.find(t => t.id === id);
+    setTemplateName(template?.name ?? '');
+    setBlocks(template ? blocksFromTemplate(template.blocks, positions) : []);
+    if (template && template.blocks.length > 0 && !name.trim()) setName(`Pesquisa — ${template.name}`);
+  };
 
   const toggleDepartment = (id: string) =>
     setDepartmentIds(current => {
@@ -52,9 +74,9 @@ export const CampaignFormModal: React.FC<Props> = ({ campaign, departments, toda
       setBusy(true);
       setError('');
       if (!campaign) {
-        await TenantApi.createCampaign({ name, period, description, audience, departmentIds: [...departmentIds], closesOn });
+        await TenantApi.createCampaign({ name, period, description, audience, departmentIds: [...departmentIds], closesOn, blocks, templateName });
       } else if (isDraft) {
-        await TenantApi.updateCampaign(campaign.id, { name, period, description, audience, departmentIds: [...departmentIds], closesOn, actionPlan });
+        await TenantApi.updateCampaign(campaign.id, { name, period, description, audience, departmentIds: [...departmentIds], closesOn, actionPlan, blocks, templateName });
       } else {
         await TenantApi.updateCampaign(campaign.id, { ...(canEditClosing ? { closesOn } : {}), actionPlan });
       }
@@ -68,7 +90,7 @@ export const CampaignFormModal: React.FC<Props> = ({ campaign, departments, toda
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" {...backdrop}>
-      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[92vh] flex flex-col border border-slate-200 shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[94vh] flex flex-col border border-slate-200 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-3">
           <div>
             <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">{campaign ? 'Editar pesquisa' : 'Nova pesquisa de clima'}</span>
@@ -88,6 +110,24 @@ export const CampaignFormModal: React.FC<Props> = ({ campaign, departments, toda
 
         <form onSubmit={submit} className="flex flex-col min-h-0">
           <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3.5 text-xs overflow-y-auto">
+            {isDraft && !campaign && (
+              <div className="sm:col-span-2 p-3 rounded-xl bg-indigo-50 border border-indigo-100 space-y-1.5">
+                <label className="block font-semibold text-indigo-900" htmlFor="cmp-template">Começar de um template (opcional)</label>
+                <select id="cmp-template" value={templateId} onChange={(e) => chooseTemplate(e.target.value)} className={inputCls}>
+                  <option value="">Sem template — só as perguntas-padrão</option>
+                  <optgroup label="Biblioteca do sistema">
+                    {templates.filter(t => t.system).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </optgroup>
+                  {templates.some(t => !t.system) && (
+                    <optgroup label="Da sua organização">
+                      {templates.filter(t => !t.system).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </optgroup>
+                  )}
+                </select>
+                <p className="text-[11px] text-indigo-800">As perguntas do template entram na pesquisa e podem ser ajustadas abaixo, antes de publicar.</p>
+              </div>
+            )}
+
             {isDraft && (
               <>
                 <div className="sm:col-span-2">
@@ -138,6 +178,17 @@ export const CampaignFormModal: React.FC<Props> = ({ campaign, departments, toda
                     </div>
                   )}
                 </fieldset>
+
+                <div className="sm:col-span-2 space-y-2">
+                  <h4 className="font-bold text-slate-900 uppercase tracking-wider text-[11px]">Perguntas estratégicas por cargo{templateName ? ` — ${templateName}` : ''}</h4>
+                  {unlinkedMembers > 0 && blocks.some(b => b.audience === 'roles') && (
+                    <p className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-start gap-2 leading-relaxed">
+                      <Link2Off className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>{unlinkedMembers} {unlinkedMembers === 1 ? 'pessoa ativa ainda não tem' : 'pessoas ativas ainda não têm'} cargo cadastrado e não {unlinkedMembers === 1 ? 'verá' : 'verão'} os blocos por cargo. Vincule cada pessoa a um cargo em <strong>Usuários e Permissões</strong>.</span>
+                    </p>
+                  )}
+                  <BlocksEditor blocks={blocks} onChange={setBlocks} mode="campaign" positions={positions} departments={departments} />
+                </div>
               </>
             )}
 

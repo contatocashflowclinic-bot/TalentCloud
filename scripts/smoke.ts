@@ -19,6 +19,8 @@ import {
 } from '../server/tenant/masterSeed.js';
 import { closePool, getPool } from '../server/db/pool.js';
 import { PLAN_ROUTINES } from '../src/access.js';
+import { SYSTEM_TEMPLATES, hasHints, noHints, suggestPositions } from '../src/surveyTemplates.js';
+import { parseBlocks } from '../server/tenant/surveyBlocks.js';
 import { TenantRepository } from '../server/tenant/TenantRepository.js';
 import { AccessService } from '../server/auth/AccessService.js';
 import { removeFile } from '../server/storage.js';
@@ -109,7 +111,7 @@ async function seedFidelity() {
     check(`[${slug}] offers`, sameData(await repo.offers.list(), seed.offers ?? []));
     check(`[${slug}] onboardings`, sameData(await repo.onboardings.list(), (seed.onboardings ?? []).map((o: any) => ({ admission: [], ...o }))));
     check(`[${slug}] development`, sameData(await repo.development.list(), seed.developmentRecords ?? []));
-    check(`[${slug}] climateSurveys`, sameData(await repo.climateSurveys.list(), (seed.climateSurveys ?? []).map((s: any) => ({ commentHidden: false, ...s }))));
+    check(`[${slug}] climateSurveys`, sameData(await repo.climateSurveys.list(), (seed.climateSurveys ?? []).map((s: any) => ({ commentHidden: false, blockAnswers: {}, hiddenTexts: [], ...s }))));
     check(`[${slug}] turnoverAlerts`, sameData(await repo.turnoverAlerts.list(), seed.turnoverAlerts ?? []));
     check(`[${slug}] indicators`, sameData(await repo.getIndicators(), seed.indicators));
   }
@@ -736,13 +738,41 @@ async function main() {
 
     // ---- Retenção: pesquisa de clima interna (campanhas, resposta anônima, resultado) --------------------
     const tenantA = provA.json.tenant.id as string;
+    // Cargos: the cargo of a person is always a REGISTERED Cargo (module Cargos), never typed text
+    const posBody = (title: string, level: string, careerTrack: string) => ({ title, departmentId: deptId, level, careerTrack });
+    const analystPos = (await A('POST', '/api/v1/positions', posBody('Analista', 'Pleno', 'Y_TECNICO'))).json.position;
+    const managerPos = (await A('POST', '/api/v1/positions', posBody('Gestor da Vaga', 'Gerência', 'GESTÃO'))).json.position;
+    check('two cargos registered for the survey tests', !!analystPos?.id && !!managerPos?.id);
     const survey: Record<string, string> = {};
     for (let i = 1; i <= 5; i++) {
       const email = `survey${i}-${suffix}@smoke.test`;
-      const made = await A('POST', '/api/v1/users', { name: `Survey ${i}`, email, profileId: 'collaborator', jobTitle: 'Analista', departmentId: deptId });
+      const made = await A('POST', '/api/v1/users', { name: `Survey ${i}`, email, profileId: 'collaborator', positionId: analystPos.id, departmentId: deptId });
       survey[`S${i}`] = (await activateUser(slugA, email, made.json.tempPassword, `Senha#Survey${i}9`)).token;
     }
     check('five extra members (same department) activated for the survey', Object.values(survey).every(Boolean) && Object.keys(survey).length === 5);
+    const allUsers = (await A('GET', '/api/v1/users')).json.users as any[];
+    const hmMember = allUsers.find(u => u.profileId === 'hiring_manager');
+    const linkHm = await A('PATCH', `/api/v1/users/${hmMember.id}`, { positionId: managerPos.id });
+    const s1Member = allUsers.find(u => u.email === `survey1-${suffix}@smoke.test`);
+    check('a person given a registered cargo carries its id and its title', s1Member.positionId === analystPos.id && s1Member.jobTitle === 'Analista' && linkHm.json.user?.positionId === managerPos.id && linkHm.json.user.jobTitle === 'Gestor da Vaga', [s1Member, linkHm.json]);
+    const typed = await A('POST', '/api/v1/users', { name: 'Texto Livre', email: `livre-${suffix}@smoke.test`, profileId: 'collaborator', jobTitle: 'Astronauta' });
+    check('a typed cargo is never accepted: jobTitle is ignored (no cargo linked, default label)', typed.status === 201 && typed.json.user.jobTitle !== 'Astronauta' && typed.json.user.positionId === undefined, typed.json.user);
+    const typedPatch = await A('PATCH', `/api/v1/users/${typed.json.user.id}`, { jobTitle: 'Astronauta' });
+    check('editing a person with a typed jobTitle changes nothing', typedPatch.status === 200 && typedPatch.json.user.jobTitle !== 'Astronauta');
+    const archivedPos = (await A('POST', '/api/v1/positions', posBody('Cargo Arquivado', 'Júnior', 'OPERACIONAL'))).json.position;
+    await A('PATCH', `/api/v1/positions/${archivedPos.id}`, { status: 'archived' });
+    const userPost = (positionId: string) => A('POST', '/api/v1/users', { name: 'Cargo X', email: `cargox-${Math.random().toString(36).slice(2, 8)}-${suffix}@smoke.test`, profileId: 'collaborator', positionId });
+    const deptB = (await B('POST', '/api/v1/departments', { name: 'Dep B', headcountTarget: 5 })).json.department;
+    const posB = (await B('POST', '/api/v1/positions', { title: 'Cargo da Org B', departmentId: deptB.id })).json.position;
+    check('a cargo that is not registered (unknown, archived or from another organization) is refused -> 400', (await userPost('pos-nope')).status === 400 && (await userPost(archivedPos.id)).status === 400 && (await userPost(posB.id)).status === 400);
+    const options = await A('GET', '/api/v1/users/position-options');
+    check('the list of cargos a person can be given: active registered cargos only; needs users:view', options.status === 200 && options.json.positions.some((o: any) => o.id === analystPos.id) && !options.json.positions.some((o: any) => o.id === archivedPos.id || o.id === posB.id) && (await R('COLLABORATOR', 'GET', '/api/v1/users/position-options')).status === 403, options.json.positions?.length);
+    const linked = await A('PATCH', `/api/v1/users/${typed.json.user.id}`, { positionId: analystPos.id });
+    const unlinked = await A('PATCH', `/api/v1/users/${typed.json.user.id}`, { positionId: null });
+    check('a person can be linked and unlinked from a cargo (the last title stays only as a label)', linked.json.user?.positionId === analystPos.id && unlinked.status === 200 && unlinked.json.user.positionId === undefined && unlinked.json.user.jobTitle === 'Analista', [linked.json, unlinked.json]);
+    await A('PATCH', `/api/v1/positions/${managerPos.id}`, { title: 'Gestor da Vaga (renomeado)' });
+    check('renaming a cargo keeps the title of the people linked to it in step', ((await A('GET', '/api/v1/users')).json.users as any[]).find(u => u.id === hmMember.id).jobTitle === 'Gestor da Vaga (renomeado)');
+    await A('PATCH', `/api/v1/positions/${managerPos.id}`, { title: 'Gestor da Vaga' });
     const S = (who: string, method: string, path: string, body?: unknown) => api(method, path, { token: survey[who] ?? tokens[who], body });
     const answerOf = (n: number, comment?: string) => ({ enps: n, categories: { lideranca: n, cultura: n, crescimento: n, remuneracao: n, ambiente: n }, ...(comment ? { comment } : {}) });
 
@@ -828,6 +858,125 @@ async function main() {
     const lapsed = ((await A('GET', rt)).json.campaigns ?? []).find((c: any) => c.id === cid);
     check('past the closing date the survey is closed by itself and refuses answers', lapsed?.status === 'closed' && (await S('S5', 'POST', respond, answerOf(8))).status === 400 && ((await S('S1', 'GET', `${rt}/survey/pending`)).json.surveys ?? []).every((s: any) => s.campaignId !== cid), lapsed);
     check('closed survey: only the action plan changes, and the result stays available', (await A('PATCH', `${campPath}/${cid}`, { name: 'x' })).status === 400 && (await A('PATCH', `${campPath}/${cid}`, { actionPlan: 'Rever a comunicação da liderança' })).json.campaign?.actionPlan === 'Rever a comunicação da liderança' && (await A('GET', results)).json.results.campaign.actionPlan === 'Rever a comunicação da liderança');
+
+    // ---- Retenção: templates de pesquisa e perguntas estratégicas por cargo -----------------------------
+    check('library: every system template passes the validation the server applies, with unique ids', SYSTEM_TEMPLATES.length >= 8 && new Set(SYSTEM_TEMPLATES.map(t => t.id)).size === SYSTEM_TEMPLATES.length && SYSTEM_TEMPLATES.every(t => {
+      try {
+        const parsed = parseBlocks(t.blocks);
+        const ids = parsed.flatMap(b => [b.id, ...b.questions.map(q => q.id)]);
+        return t.system && t.id.startsWith('sys-') && parsed.length === t.blocks.length && parsed.every(b => b.questions.length > 0) && new Set(ids).size === ids.length;
+      } catch { return false; }
+    }));
+    const cargos = [
+      { id: 'a', level: 'Gerência', careerTrack: 'GESTÃO' }, { id: 'b', level: 'Pleno', careerTrack: 'Y_TECNICO' },
+      { id: 'c', level: 'Coordenação', careerTrack: 'OPERACIONAL' }, { id: 'd', level: 'Júnior', careerTrack: 'OPERACIONAL' }
+    ] as any[];
+    const ids = (hints: any) => suggestPositions(hints, cargos).map(x => x.id).join();
+    check('cargo suggestion: by level and/or career track of the registered cargo (both must match when both are given); no hint, no suggestion', ids({ levels: ['Coordenação', 'Gerência', 'Diretoria'], careerTracks: [] }) === 'a,c' && ids({ levels: [], careerTracks: ['OPERACIONAL'] }) === 'c,d' && ids({ levels: ['Coordenação'], careerTracks: ['OPERACIONAL'] }) === 'c' && ids(noHints()) === '' && !hasHints(noHints()));
+    check('library: no template carries cargo ids or typed keywords; blocks for everyone carry no suggestion', SYSTEM_TEMPLATES.every(t => t.blocks.every(b => b.positionIds.length === 0 && (b.audience === 'all' ? !hasHints(b.targetHints) : true) && !('targetKeywords' in b))));
+
+    const tp = `${rt}/templates`;
+    const tplOverview = (await A('GET', rt)).json;
+    check('overview lists the organization templates (none yet), the registered cargos with their people and who is still without a cargo', Array.isArray(tplOverview.surveyTemplates) && tplOverview.surveyTemplates.length === 0 && tplOverview.positions.find((c: any) => c.id === analystPos.id)?.count === 5 && !tplOverview.positions.some((c: any) => c.id === archivedPos.id) && tplOverview.unlinkedMembers >= 1, [tplOverview.positions, tplOverview.unlinkedMembers]);
+    const lead = SYSTEM_TEMPLATES.find(t => t.id === 'sys-lideranca')!;
+    check('RBAC: only Retention editors manage templates', (await R('COLLABORATOR', 'POST', tp, { name: 'x', blocks: [] })).status === 403 && (await R('INTERVIEWER', 'POST', tp, { name: 'x', blocks: [] })).status === 403);
+    const oneQ = (over: any = {}) => ({ text: 'Pergunta?', type: 'scale', ...over });
+    const oneBlock = (over: any = {}) => ({ title: 'Bloco', audience: 'all', questions: [oneQ()], ...over });
+    check('template: name required; block without questions; invalid type; choice needs 2+ options -> 400', (await A('POST', tp, { blocks: [oneBlock()] })).status === 400 && (await A('POST', tp, { name: 'T', blocks: [oneBlock({ questions: [] })] })).status === 400 && (await A('POST', tp, { name: 'T', blocks: [oneBlock({ questions: [oneQ({ type: 'estrela' })] })] })).status === 400 && (await A('POST', tp, { name: 'T', blocks: [oneBlock({ questions: [oneQ({ type: 'choice', options: ['só uma'] })] })] })).status === 400);
+    check('template: limits (7 blocks, 13 questions in a block, 9 options, 31 questions) -> 400', (await A('POST', tp, { name: 'T', blocks: Array.from({ length: 7 }, () => oneBlock()) })).status === 400 && (await A('POST', tp, { name: 'T', blocks: [oneBlock({ questions: Array.from({ length: 13 }, () => oneQ()) })] })).status === 400 && (await A('POST', tp, { name: 'T', blocks: [oneBlock({ questions: [oneQ({ type: 'choice', options: Array.from({ length: 9 }, (_, i) => `o${i}`) })] })] })).status === 400 && (await A('POST', tp, { name: 'T', blocks: Array.from({ length: 3 }, () => oneBlock({ questions: Array.from({ length: 11 }, () => oneQ()) })) })).status === 400);
+    check('template: invalid audience / blocks not a list -> 400', (await A('POST', tp, { name: 'T', blocks: [oneBlock({ audience: 'ninguem' })] })).status === 400 && (await A('POST', tp, { name: 'T', blocks: 'nada' })).status === 400);
+    const copy = await A('POST', tp, { name: 'Liderança — nossa versão', description: 'Ajustado pelo RH', focus: 'Liderança', basedOn: lead.id, blocks: lead.blocks });
+    const tpl = copy.json.template;
+    check('a system template can be copied as the organization template (blocks, suggestions and ids kept)', copy.status === 201 && tpl.system === false && tpl.basedOn === lead.id && tpl.blocks.length === 2 && tpl.blocks[1].audience === 'roles' && tpl.blocks[1].targetHints.levels.includes('Gerência') && tpl.blocks[0].questions[0].id === lead.blocks[0].questions[0].id && !!tpl.createdAt, copy.json);
+    const noIds = await A('POST', tp, { name: 'Sem ids de cargo', blocks: [oneBlock({ audience: 'roles', positionIds: [analystPos.id], targetHints: { levels: ['Pleno'] } })] });
+    check('template: hints must be real levels / tracks; a template never keeps cargo ids', (await A('POST', tp, { name: 'Hint ruim', blocks: [oneBlock({ audience: 'roles', targetHints: { levels: ['Rei'] } })] })).status === 400 && (await A('POST', tp, { name: 'Hint ruim 2', blocks: [oneBlock({ audience: 'roles', targetHints: { careerTracks: ['MAGICA'] } })] })).status === 400 && noIds.status === 201 && noIds.json.template.blocks[0].positionIds.length === 0 && noIds.json.template.blocks[0].targetHints.levels.join() === 'Pleno', noIds.json);
+    check('template: duplicate name (any case) -> 409', (await A('POST', tp, { name: 'liderança — NOSSA versão', blocks: [oneBlock()] })).status === 409);
+    const editedTpl = await A('PATCH', `${tp}/${tpl.id}`, { name: 'Liderança 2026', blocks: [oneBlock({ title: 'Só um', questions: [oneQ({ text: 'Confia na liderança?' })] })] });
+    check('template: edit name and blocks (updatedAt moves); invalid edit / unknown -> 400 / 404', editedTpl.status === 200 && editedTpl.json.template.name === 'Liderança 2026' && editedTpl.json.template.blocks.length === 1 && editedTpl.json.template.blocks[0].questions[0].text === 'Confia na liderança?' && (await A('PATCH', `${tp}/${tpl.id}`, { blocks: [oneBlock({ questions: [] })] })).status === 400 && (await A('PATCH', `${tp}/tpl-nope`, { name: 'x' })).status === 404, editedTpl.json);
+    check('template: renaming to the name of another one -> 409', (await A('POST', tp, { name: 'Outro template', blocks: [oneBlock()] })).status === 201 && (await A('PATCH', `${tp}/${tpl.id}`, { name: 'outro template' })).status === 409);
+    check('isolation: org B does not see, edit or delete org A templates', !((await B('GET', rt)).json.surveyTemplates ?? []).some((t: any) => t.id === tpl.id) && (await B('PATCH', `${tp}/${tpl.id}`, { name: 'x' })).status === 404 && (await B('DELETE', `${tp}/${tpl.id}`)).status === 404);
+    check('template: delete (unknown -> 404; read-only profile -> 403)', (await R('INTERVIEWER', 'DELETE', `${tp}/${tpl.id}`)).status === 403 && (await A('DELETE', `${tp}/${tpl.id}`)).status === 200 && (await A('DELETE', `${tp}/${tpl.id}`)).status === 404);
+
+    // Strategic blocks by job title inside one survey
+    const sBlocks = [
+      { title: 'Para todos', audience: 'all', questions: [{ text: 'A empresa comunica bem?', type: 'scale' }, { text: 'Qual benefício você mais valoriza?', type: 'choice', options: ['Saúde', 'Alimentação', 'Outro'] }, { text: 'Alguma sugestão?', type: 'text', required: false }] },
+      { title: 'Só analistas', audience: 'roles', positionIds: [analystPos.id], targetHints: { levels: ['Pleno'] }, questions: [{ text: 'As ferramentas são adequadas?', type: 'scale' }, { text: 'O que mais atrapalha?', type: 'text', required: false }] },
+      { title: 'Só gestores', audience: 'roles', positionIds: [managerPos.id], questions: [{ text: 'Você tem autonomia para decidir?', type: 'scale' }] }
+    ];
+    check('campaign with blocks: not a list / invalid block -> 400', (await A('POST', campPath, { name: 'x', period: 'p', blocks: 'nada' })).status === 400 && (await A('POST', campPath, { name: 'x', period: 'p', blocks: [{ audience: 'all', questions: [] }] })).status === 400);
+    const withBlocks = await A('POST', campPath, { name: 'Estratégicas por cargo', period: '2026-Q4', templateName: 'Feito à mão', blocks: sBlocks });
+    const bc = withBlocks.json.campaign;
+    check('campaign keeps its blocks (ids generated, "todos" without cargos, roles with the registered cargo) and the template name', withBlocks.status === 201 && bc.blocks.length === 3 && bc.blocks.every((b: any) => b.id && b.questions.every((q: any) => q.id)) && bc.blocks[0].positionIds.length === 0 && bc.blocks[1].positionIds.join() === analystPos.id && bc.templateName === 'Feito à mão', withBlocks.json);
+    check('a block can only point to cargos registered in this organization (unknown or another org -> 400)', (await A('POST', campPath, { name: 'x', period: 'p', blocks: [{ title: 'B', audience: 'roles', positionIds: ['pos-nope'], questions: [oneQ()] }] })).status === 400 && (await A('POST', campPath, { name: 'x', period: 'p', blocks: [{ title: 'B', audience: 'roles', positionIds: [posB.id], questions: [oneQ()] }] })).status === 400);
+    const scratchBlocks = await A('POST', campPath, { name: 'Rascunho de blocos', period: 'x', blocks: [{ title: 'Vazio', audience: 'all', questions: [] }] });
+    const scratchRoles = await A('POST', campPath, { name: 'Rascunho de cargos', period: 'x', blocks: [{ title: 'Sem cargo', audience: 'roles', questions: [oneQ()] }] });
+    check('saving an incomplete draft is fine, but publishing needs questions in every block and cargos in every "cargos" block -> 400', scratchBlocks.status === 201 && scratchRoles.status === 201 && (await A('POST', `${campPath}/${scratchBlocks.json.campaign.id}/publish`)).status === 400 && (await A('POST', `${campPath}/${scratchRoles.json.campaign.id}/publish`)).status === 400);
+    const bid = bc.id as string;
+    const bRespond = `${rt}/survey/${bid}/respond`;
+    const edB = await A('PATCH', `${campPath}/${bid}`, { blocks: [...bc.blocks, { title: 'Provisório', audience: 'all', questions: [oneQ()] }] });
+    check('draft: blocks can be editedTpl (add a block, then remove it)', edB.json.campaign?.blocks.length === 4 && (await A('PATCH', `${campPath}/${bid}`, { blocks: bc.blocks })).json.campaign?.blocks.length === 3);
+    check('publish survey with blocks', (await A('POST', `${campPath}/${bid}/publish`)).json.campaign?.status === 'open');
+    check('open survey: blocks are locked', (await A('PATCH', `${campPath}/${bid}`, { blocks: [] })).status === 400);
+
+    const pendOf = async (who: string) => ((await S(who, 'GET', `${rt}/survey/pending`)).json.surveys ?? []).find((s: any) => s.campaignId === bid);
+    const titlesOf = (s: any) => (s?.blocks ?? []).map((b: any) => b.title).join();
+    const pS1 = await pendOf('S1'), pHM = await pendOf('HIRING_MANAGER'), pCO = await pendOf('COLLABORATOR'), pAD = (((await A('GET', `${rt}/survey/pending`)).json.surveys ?? []).find((s: any) => s.campaignId === bid));
+    check('each person sees only the blocks of their cargo (analyst / manager / everyone else)', titlesOf(pS1) === 'Para todos,Só analistas' && titlesOf(pHM) === 'Para todos,Só gestores' && titlesOf(pCO) === 'Para todos' && titlesOf(pAD) === 'Para todos', [titlesOf(pS1), titlesOf(pHM), titlesOf(pCO), titlesOf(pAD)]);
+    check('the blocks reach the respondent without the cargos they were aimed at', pS1.blocks.every((b: any) => !('positionIds' in b) && !('targetHints' in b) && !('audience' in b)));
+
+    const qid = (p: any, blockTitle: string, i: number) => p.blocks.find((b: any) => b.title === blockTitle).questions[i].id as string;
+    const analystAnswers = (p: any, comm: number, benefit: string, tools: number, text?: string) => ({
+      [qid(p, 'Para todos', 0)]: comm, [qid(p, 'Para todos', 1)]: benefit, [qid(p, 'Só analistas', 0)]: tools, ...(text ? { [qid(p, 'Só analistas', 1)]: text } : {})
+    });
+    const withCore = (n: number, answers: unknown) => ({ ...answerOf(n), answers });
+    const badTries = [
+      withCore(8, {}),                                                                           // required questions missing
+      withCore(8, { ...analystAnswers(pS1, 8, 'Saúde', 6), [qid(pHM, 'Só gestores', 0)]: 9 }),      // a question of a block aimed at another cargo
+      withCore(8, analystAnswers(pS1, 11, 'Saúde', 6)),                                          // scale outside 0-10
+      withCore(8, analystAnswers(pS1, 8, 'Vinho', 6)),                                           // not one of the options
+      withCore(8, analystAnswers(pS1, 8, 'Saúde', 6, 'x'.repeat(1001))),                         // text too long
+      withCore(8, { ...analystAnswers(pS1, 8, 'Saúde', 6), 'q-inexistente': 1 }),                // unknown question
+      withCore(8, 'texto')                                                                       // not an object
+    ];
+    const badStatuses: number[] = [];
+    for (const body of badTries) badStatuses.push((await S('S1', 'POST', bRespond, body)).status);
+    check('answers to strategic questions are validated (required, other cargo, range, options, length, unknown, format) -> 400', badStatuses.every(s => s === 400), badStatuses);
+    check('a manager cannot skip the manager block, an analyst cannot answer it', (await S('HIRING_MANAGER', 'POST', bRespond, withCore(8, { [qid(pHM, 'Para todos', 0)]: 8, [qid(pHM, 'Para todos', 1)]: 'Saúde' }))).status === 400);
+    check('a survey without strategic blocks refuses any block answer', (await S('S2', 'POST', `${rt}/survey/${did}/respond`, withCore(8, { 'q-x': 1 }))).status === 400);
+
+    // answer order chosen to test the per-block threshold: 4 outsiders + 4 analysts, then the 5th analyst
+    check('answers from people outside the analyst group', (await S('COLLABORATOR', 'POST', bRespond, withCore(4, { [qid(pCO, 'Para todos', 0)]: 4, [qid(pCO, 'Para todos', 1)]: 'Alimentação' }))).status === 201
+      && (await S('INTERVIEWER', 'POST', bRespond, withCore(6, { [qid(pCO, 'Para todos', 0)]: 6, [qid(pCO, 'Para todos', 1)]: 'Saúde' }))).status === 201
+      && (await S('HIRING_MANAGER', 'POST', bRespond, withCore(8, { [qid(pHM, 'Para todos', 0)]: 8, [qid(pHM, 'Para todos', 1)]: 'Saúde', [qid(pHM, 'Só gestores', 0)]: 9, [qid(pHM, 'Para todos', 2)]: 'Mais clareza' }))).status === 201
+      && (await A('POST', bRespond, withCore(10, { [qid(pAD, 'Para todos', 0)]: 10, [qid(pAD, 'Para todos', 1)]: 'Outro' }))).status === 201);
+    const scores: [string, number, string, number, string?][] = [['S1', 8, 'Saúde', 10, 'Falta integração'], ['S2', 8, 'Saúde', 8, 'Sistema lento'], ['S3', 6, 'Saúde', 6, 'Cite Beltrano'], ['S4', 10, 'Alimentação', 4, 'Muitas reuniões']];
+    for (const [who, comm, benefit, tools, text] of scores) {
+      const p = await pendOf(who);
+      await S(who, 'POST', bRespond, withCore(comm, analystAnswers(p, comm, benefit, tools, text)));
+    }
+    const bResults = `${campPath}/${bid}/results`;
+    const b8 = (await A('GET', bResults)).json.results;
+    const blk = (r: any, title: string) => r.blocks.find((b: any) => b.title === title);
+    check('a block with 4 answers stays hidden (analysts), while the block for everyone is already shown', b8.campaign.responded === 8 && blk(b8, 'Só analistas').responded === 4 && blk(b8, 'Só analistas').released === false && blk(b8, 'Só analistas').questions.every((q: any) => q.released === false && q.average === undefined && q.comments === undefined) && blk(b8, 'Para todos').released === true, b8.blocks);
+    const p5 = await pendOf('S5');
+    await S('S5', 'POST', bRespond, withCore(10, analystAnswers(p5, 10, 'Outro', 2, 'Poucos treinamentos')));
+    const b9 = (await A('GET', bResults)).json.results;
+    const all = blk(b9, 'Para todos'), analysts = blk(b9, 'Só analistas'), managers = blk(b9, 'Só gestores');
+    check('the 5th analyst releases the analyst block; audience and response counts per block', analysts.released === true && analysts.responded === 5 && analysts.eligible === 5 && managers.eligible === 1 && managers.responded === 1 && all.responded === 9 && all.eligible === b9.campaign.eligible, [analysts.responded, analysts.eligible, managers.eligible, all.responded]);
+    check('scale questions: average of the answers (block for everyone 7.8; analysts 6)', all.questions[0].average === 7.8 && analysts.questions[0].average === 6, [all.questions[0].average, analysts.questions[0].average]);
+    check('choice questions: count per option', all.questions[1].options.map((o: any) => `${o.label}:${o.count}`).join() === 'Saúde:5,Alimentação:2,Outro:2', all.questions[1].options);
+    check('a text question below the minimum is not detailed; at 5 answers it lists comments without author', all.questions[2].responses === 1 && all.questions[2].released === false && all.questions[2].comments === undefined && analysts.questions[1].released === true && analysts.questions[1].comments.length === 5 && analysts.questions[1].comments.every((c: any) => Object.keys(c).sort().join() === 'hidden,id,questionId,text'), [all.questions[2], analysts.questions[1].comments]);
+    check('a block aimed at a single person never releases (manager block: 1 answer)', managers.released === false && managers.questions[0].released === false && managers.questions[0].average === undefined, managers);
+    const naming2 = analysts.questions[1].comments.find((c: any) => /Beltrano/.test(c.text));
+    const textQ = analysts.questions[1].questionId as string;
+    check('hide a text answer of a strategic question: only editors, only text questions, unknown response -> 404', (await R('COLLABORATOR', 'PATCH', `${campPath}/${bid}/comments/${naming2.id}`, { hidden: true, questionId: textQ })).status === 403 && (await A('PATCH', `${campPath}/${bid}/comments/${naming2.id}`, { hidden: true, questionId: analysts.questions[0].questionId })).status === 400 && (await A('PATCH', `${campPath}/${bid}/comments/cs-nope`, { hidden: true, questionId: textQ })).status === 404);
+    const hid = await R('HIRING_MANAGER', 'PATCH', `${campPath}/${bid}/comments/${naming2.id}`, { hidden: true, questionId: textQ });
+    const b9b = blk((await A('GET', bResults)).json.results, 'Só analistas');
+    check('the hidden text is flagged (not the other answers); showing it again restores it', hid.status === 200 && b9b.questions[1].comments.find((c: any) => c.id === naming2.id).hidden === true && b9b.questions[1].comments.filter((c: any) => c.hidden).length === 1 && (await A('PATCH', `${campPath}/${bid}/comments/${naming2.id}`, { hidden: false, questionId: textQ })).status === 200 && blk((await A('GET', bResults)).json.results, 'Só analistas').questions[1].comments.every((c: any) => !c.hidden));
+    const bRows = await getPool().query('select * from public.climate_surveys where tenant_id = $1 and campaign_id = $2', [tenantA, bid]);
+    const memberIds2: string[] = (await A('GET', '/api/v1/users')).json.users.map((u: any) => u.id);
+    check('anonymity holds for strategic answers: stored with no member id and no cargo (only the question ids)', bRows.rows.length === 9 && !memberIds2.some(id => JSON.stringify(bRows.rows).includes(id)) && !bRows.rows.some((r: any) => JSON.stringify(r).includes(analystPos.id) || JSON.stringify(r).includes(managerPos.id)) && bRows.rows.some((r: any) => Object.keys(r.block_answers).length >= 3), bRows.rows.length);
+    check('the results of a survey without blocks carry an empty block list (older surveys)', (await A('GET', `${campPath}/${cid}/results`)).json.results.blocks.length === 0);
 
     // ---- Desenvolvimento (PDI): PDI da contratação, metas, andamento e 1:1s ------------------
     const devList = await A('GET', '/api/v1/development');
@@ -995,7 +1144,7 @@ async function main() {
       ['offers', '/api/v1/offers', 'offers'],
       ['ai evaluations', '/api/v1/ai/evaluations', 'evaluations']
     ] as const) {
-      check(`isolation: org B sees no ${label} of org A`, (await B('GET', path)).json[key]?.length === 0);
+      check(`isolation: org B sees no ${label} of org A`, ((await B('GET', path)).json[key] ?? []).every((item: any) => [deptB.id, posB.id].includes(item.id))); // (only what org B created itself for the cargo tests may be there)
     }
     check('isolation: org B cannot read A users', !(await B('GET', '/api/v1/users')).json.users.some((u: any) => u.email.endsWith(`-${suffix}@smoke.test`) && u.email !== emailB));
     check('isolation: A DNA update did not touch B', (await B('GET', '/api/v1/dna')).json.dna.mission !== 'Missão atualizada');

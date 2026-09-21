@@ -5,7 +5,7 @@ export const TABLES = {
     table: 'tenant_users',
     exposeTenantId: true,
     columns: [
-      'id', 'userId', 'name', 'email', 'profileId', 'departmentId', 'jobTitle', 'avatarUrl', 'active', 'lastLoginAt',
+      'id', 'userId', 'name', 'email', 'profileId', 'departmentId', 'jobTitle', 'positionId', 'avatarUrl', 'active', 'lastLoginAt',
       'grantedPermissions', 'revokedPermissions'
     ]
   },
@@ -105,17 +105,24 @@ export const TABLES = {
   },
   climateCampaigns: {
     table: 'climate_campaigns',
+    json: ['blocks'],
     columns: [
-      'id', 'name', 'period', 'description', 'status', 'audience', 'departmentIds', 'closesOn', 'actionPlan', 'createdById',
-      'createdByName', 'createdAt', 'publishedAt', 'closedAt'
+      'id', 'name', 'period', 'description', 'status', 'audience', 'departmentIds', 'closesOn', 'actionPlan', 'blocks',
+      'templateName', 'createdById', 'createdByName', 'createdAt', 'publishedAt', 'closedAt'
     ]
   },
   climateSurveys: {
     table: 'climate_surveys',
-    json: ['categoryRatings'],
+    json: ['categoryRatings', 'blockAnswers'],
     columns: [
-      'id', 'period', 'enpsScore', 'sentiment', 'categoryRatings', 'anonymousComment', 'campaignId', 'departmentId', 'commentHidden'
+      'id', 'period', 'enpsScore', 'sentiment', 'categoryRatings', 'anonymousComment', 'campaignId', 'departmentId', 'commentHidden',
+      'blockAnswers', 'hiddenTexts'
     ]
+  },
+  surveyTemplates: {
+    table: 'survey_templates',
+    json: ['blocks'],
+    columns: ['id', 'name', 'description', 'focus', 'blocks', 'basedOn', 'createdByName', 'createdAt', 'updatedAt']
   },
   turnoverAlerts: {
     table: 'turnover_alerts',

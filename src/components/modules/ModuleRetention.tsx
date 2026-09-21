@@ -1,15 +1,17 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { LayoutDashboard, AlertTriangle, BarChart3, ClipboardCheck, X } from 'lucide-react';
+import { LayoutDashboard, AlertTriangle, BarChart3, ClipboardCheck, Library, X } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { useAuth } from '../../context/AuthContext.js';
 import { TenantApi } from '../../services/api.js';
-import type { RetentionData } from '../../types.js';
+import type { RetentionData, SurveyTemplate } from '../../types.js';
+import { SYSTEM_TEMPLATES } from '../../surveyTemplates.js';
 import { RetentionOverview } from '../retention/RetentionOverview.js';
 import { AlertsPanel } from '../retention/AlertsPanel.js';
 import { CampaignsPanel } from '../retention/CampaignsPanel.js';
+import { TemplatesPanel } from '../retention/TemplatesPanel.js';
 import { SurveyAnswerPanel } from '../retention/SurveyAnswerPanel.js';
 
-type Tab = 'overview' | 'alerts' | 'surveys' | 'answer';
+type Tab = 'overview' | 'alerts' | 'surveys' | 'templates' | 'answer';
 
 interface Props {
   /** Opens the PDI of a collaborator in the Development module. */
@@ -33,7 +35,8 @@ export const ModuleRetention: React.FC<Props> = ({ onOpenDevelopment }) => {
     ...(canView ? [
       { id: 'overview' as const, label: 'Visão geral', icon: LayoutDashboard },
       { id: 'alerts' as const, label: 'Alertas de risco', icon: AlertTriangle },
-      { id: 'surveys' as const, label: 'Pesquisas', icon: BarChart3 }
+      { id: 'surveys' as const, label: 'Pesquisas', icon: BarChart3 },
+      { id: 'templates' as const, label: 'Templates', icon: Library }
     ] : []),
     ...(canAnswer ? [{ id: 'answer' as const, label: 'Responder pesquisa', icon: ClipboardCheck }] : [])
   ];
@@ -44,6 +47,8 @@ export const ModuleRetention: React.FC<Props> = ({ onOpenDevelopment }) => {
   const [data, setData] = useState<RetentionData | null>(null);
   const [loading, setLoading] = useState(canView);
   const [feedback, setFeedback] = useState('');
+  /** Template chosen in the Templates tab: the Pesquisas tab opens a new survey already using it. */
+  const [startTemplate, setStartTemplate] = useState<SurveyTemplate | undefined>(undefined);
 
   /** `silent` refreshes after a change without blanking the screen. */
   const loadData = useCallback(async (silent = false) => {
@@ -117,10 +122,23 @@ export const ModuleRetention: React.FC<Props> = ({ onOpenDevelopment }) => {
           onChanged={reload}
           onError={setFeedback}
         />
+      ) : activeTab === 'templates' ? (
+        <TemplatesPanel
+          templates={data.surveyTemplates}
+          canEdit={canEdit}
+          onUse={(template) => { setStartTemplate(template); setTab('surveys'); }}
+          onChanged={reload}
+          onError={setFeedback}
+        />
       ) : (
         <CampaignsPanel
           campaigns={data.campaigns}
           departments={data.lookups.departments}
+          templates={[...SYSTEM_TEMPLATES, ...data.surveyTemplates]}
+          positions={data.positions}
+          unlinkedMembers={data.unlinkedMembers}
+          startWithTemplate={startTemplate}
+          onStartConsumed={() => setStartTemplate(undefined)}
           canEdit={canEdit}
           onChanged={reload}
           onError={setFeedback}

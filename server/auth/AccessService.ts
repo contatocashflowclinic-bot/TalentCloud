@@ -24,7 +24,10 @@ export interface MemberInput {
   name: string;
   email: string;
   profileId: string;
+  /** Only for system-generated members (seed, provisioning). People are given a Cargo through `positionId`. */
   jobTitle?: string;
+  /** A registered Cargo (module Cargos): the person's cargo is always chosen there, never typed. */
+  positionId?: string;
   departmentId?: string;
   avatarUrl?: string;
   active?: boolean;
@@ -35,7 +38,8 @@ export interface MemberInput {
 
 export interface MemberPatch {
   name?: string;
-  jobTitle?: string;
+  /** A registered Cargo, or null to leave the person without one. */
+  positionId?: string | null;
   departmentId?: string | null;
   profileId?: string;
   active?: boolean;
@@ -56,7 +60,7 @@ const toProfile = (r: Record<string, any>): AccessProfile => ({
 });
 
 const MEMBER_SELECT = `
-  select tu.id, tu.user_id, tu.tenant_id, tu.name, tu.email, tu.profile_id, tu.department_id, tu.job_title,
+  select tu.id, tu.user_id, tu.tenant_id, tu.name, tu.email, tu.profile_id, tu.department_id, tu.job_title, tu.position_id,
          tu.avatar_url, tu.active, tu.last_login_at, tu.granted_permissions, tu.revoked_permissions,
          ap.name as profile_name, ap.is_admin, ap.permissions as profile_permissions
     from public.tenant_users tu
@@ -72,6 +76,7 @@ const toMember = (r: Record<string, any>): TenantUser => ({
   profileName: r.profile_name,
   ...(r.department_id ? { departmentId: r.department_id } : {}),
   jobTitle: r.job_title,
+  ...(r.position_id ? { positionId: r.position_id } : {}),
   ...(r.avatar_url ? { avatarUrl: r.avatar_url } : {}),
   active: r.active,
   ...(r.last_login_at ? { lastLoginAt: r.last_login_at } : {}),
@@ -83,6 +88,14 @@ const toMember = (r: Record<string, any>): TenantUser => ({
     r.revoked_permissions
   )
 });
+
+/** The title of a registered Cargo of this organization; refuses anything that is not in the Cargos module. */
+async function positionTitle(db: Queryable, tenantId: string, positionId: string): Promise<string> {
+  const { rows } = await db.query('select title, status from public.job_positions where tenant_id = $1 and id = $2', [tenantId, positionId]);
+  if (!rows[0]) throw new ValidationError('Cargo não encontrado no cadastro de Cargos desta organização.');
+  if (rows[0].status !== 'active') throw new ValidationError('Este cargo está arquivado. Escolha um cargo ativo do cadastro.');
+  return rows[0].title as string;
+}
 
 /** Exceptions that turn the profile's permissions into the desired effective set. */
 function exceptionsFor(profile: AccessProfile, desired: readonly string[]) {
@@ -377,7 +390,9 @@ export const AccessService = {
         email,
         profileId: profile.id,
         departmentId: input.departmentId || undefined,
-        jobTitle: text(input.jobTitle) || 'Colaborador',
+        // the cargo is the registered one (its title); only system-generated members carry a plain label
+        jobTitle: input.positionId ? await positionTitle(db, tenantId, input.positionId) : text(input.jobTitle) || 'Colaborador',
+        positionId: input.positionId || undefined,
         avatarUrl: input.avatarUrl,
         active: input.active ?? true,
         lastLoginAt: input.lastLoginAt, // never used yet = no last access (does not count as "most recently used")
@@ -425,16 +440,22 @@ export const AccessService = {
 
     const name = patch.name === undefined ? current.name : text(patch.name);
     if (!name) throw new ValidationError('O nome não pode ficar vazio.');
+    // Cargo: always a registered one. Clearing it keeps the last title only as a label of "not linked".
+    let positionId: string | null = current.positionId ?? null;
+    let jobTitle = current.jobTitle;
+    if (patch.positionId !== undefined) {
+      positionId = patch.positionId ? text(patch.positionId) : null;
+      if (positionId) jobTitle = await positionTitle(db, tenantId, positionId);
+    }
     await db.query(
       `update public.tenant_users
           set name = $3, job_title = $4, department_id = $5, profile_id = $6, active = $7,
-              granted_permissions = $8, revoked_permissions = $9
+              granted_permissions = $8, revoked_permissions = $9, position_id = $10
         where tenant_id = $1 and id = $2`,
       [
-        tenantId, id, name,
-        patch.jobTitle === undefined ? current.jobTitle : text(patch.jobTitle) || current.jobTitle,
+        tenantId, id, name, jobTitle,
         patch.departmentId === undefined ? current.departmentId ?? null : patch.departmentId || null,
-        profile.id, active, granted, revoked
+        profile.id, active, granted, revoked, positionId
       ]
     );
     if (!active) {

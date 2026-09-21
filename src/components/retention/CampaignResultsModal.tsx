@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { X, Eye, EyeOff, ShieldCheck, TrendingUp, TrendingDown } from 'lucide-react';
-import { CLIMATE_CATEGORIES, type CampaignResults } from '../../types.js';
+import { X, Eye, EyeOff, ShieldCheck, TrendingUp, TrendingDown, Users, Lock } from 'lucide-react';
+import { CLIMATE_CATEGORIES, type BlockResult, type CampaignResults, type QuestionResult } from '../../types.js';
 import { CATEGORY_LABEL, ZONE_LABEL } from '../../retention.js';
 import { useBackdropClose } from '../../hooks/useBackdropClose.js';
 import { TenantApi } from '../../services/api.js';
@@ -16,6 +16,90 @@ interface Props {
 const Bar: React.FC<{ value: number; label: string }> = ({ value, label }) => (
   <div className="h-2 rounded-full bg-slate-100 overflow-hidden" role="img" aria-label={`${label}: ${value} de 10`}>
     <div className="h-full rounded-full bg-indigo-500" style={{ width: `${(value / 10) * 100}%` }} />
+  </div>
+);
+
+const CommentList: React.FC<{ comments: NonNullable<QuestionResult['comments']>; canEdit: boolean; onToggle: (id: string, hidden: boolean, questionId?: string) => void }> = ({ comments, canEdit, onToggle }) => (
+  <ul className="space-y-2">
+    {comments.map(cm => (
+      <li key={`${cm.id}-${cm.questionId ?? ''}`} className={`p-3 rounded-xl border flex items-start justify-between gap-3 ${cm.hidden ? 'bg-slate-50 border-slate-200 text-slate-400' : 'bg-white border-slate-200 text-slate-700'}`}>
+        <span className={`leading-relaxed ${cm.hidden ? 'italic' : ''}`}>{cm.hidden ? 'Resposta ocultada pelo RH.' : cm.text}</span>
+        {canEdit && (
+          <button
+            type="button"
+            onClick={() => onToggle(cm.id, !cm.hidden, cm.questionId)}
+            className="shrink-0 px-2 py-1 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold flex items-center gap-1"
+            title={cm.hidden ? 'Reexibir' : 'Ocultar (por exemplo, se citar uma pessoa)'}
+          >
+            {cm.hidden ? <><Eye className="w-3 h-3" /> Reexibir</> : <><EyeOff className="w-3 h-3" /> Ocultar</>}
+          </button>
+        )}
+      </li>
+    ))}
+  </ul>
+);
+
+const QuestionBlockResult: React.FC<{ question: QuestionResult }> = ({ question }) => {
+  if (question.type === 'scale' && question.average !== undefined) {
+    return (
+      <div className="space-y-1">
+        <div className="flex items-center justify-between gap-3"><span className="text-slate-700">{question.text}</span><span className="font-mono text-slate-600 shrink-0">{question.average.toLocaleString('pt-BR')} <span className="text-slate-400">· {question.responses} resp.</span></span></div>
+        <Bar value={question.average} label={question.text} />
+      </div>
+    );
+  }
+  if (question.type === 'choice' && question.options) {
+    return (
+      <div className="space-y-1.5">
+        <div className="text-slate-700">{question.text} <span className="text-slate-400">· {question.responses} resp.</span></div>
+        {question.options.map(o => {
+          const pct = question.responses > 0 ? Math.round((o.count / question.responses) * 100) : 0;
+          return (
+            <div key={o.label} className="space-y-0.5">
+              <div className="flex items-center justify-between gap-3 text-[11px]"><span className="text-slate-600">{o.label}</span><span className="font-mono text-slate-500 shrink-0">{o.count} ({pct}%)</span></div>
+              <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden" role="img" aria-label={`${o.label}: ${pct}%`}><div className="h-full rounded-full bg-indigo-400" style={{ width: `${pct}%` }} /></div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+  return null;
+};
+
+const BlockResultCard: React.FC<{ block: BlockResult; minGroup: number; canEdit: boolean; onToggle: (id: string, hidden: boolean, questionId?: string) => void }> = ({ block, minGroup, canEdit, onToggle }) => (
+  <div className="rounded-xl border border-slate-200 p-4 space-y-3">
+    <div className="flex flex-wrap items-start justify-between gap-2">
+      <div className="min-w-0">
+        <h5 className="font-bold text-slate-900 text-sm">{block.title}</h5>
+        <p className="text-slate-500 flex items-center gap-1 mt-0.5"><Users className="w-3 h-3 shrink-0" /> {block.audience === 'all' ? 'Todos' : `Cargos: ${block.positionTitles.join(', ') || '—'}`}</p>
+      </div>
+      <span className="font-mono text-slate-600 shrink-0">{block.responded} de {block.eligible} responderam</span>
+    </div>
+
+    {!block.released ? (
+      <p className="p-3 rounded-lg bg-slate-50 border border-dashed border-slate-300 text-slate-600 flex items-start gap-1.5">
+        <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+        Este bloco tem {block.responded} {block.responded === 1 ? 'resposta' : 'respostas'}. O resultado é liberado a partir de {minGroup}, para proteger o anonimato.
+      </p>
+    ) : (
+      <div className="space-y-3.5">
+        {block.questions.map(q => (
+          <div key={q.questionId}>
+            {!q.released ? (
+              <p className="text-slate-500">{q.text} <span className="text-slate-400">— {q.responses} {q.responses === 1 ? 'resposta' : 'respostas'} (menos de {minGroup}: não detalhado)</span></p>
+            ) : q.type === 'text' ? (
+              <div className="space-y-2">
+                <div className="text-slate-700">{q.text} <span className="text-slate-400">· {q.responses} resp.</span></div>
+                <CommentList comments={q.comments ?? []} canEdit={canEdit} onToggle={onToggle} />
+              </div>
+            ) : (
+              <QuestionBlockResult question={q} />
+            )}
+          </div>
+        ))}
+      </div>
+    )}
   </div>
 );
 
@@ -37,9 +121,9 @@ export const CampaignResultsModal: React.FC<Props> = ({ campaignId, canEdit, onC
     void load();
   }, [campaignId]);
 
-  const toggleComment = async (id: string, hidden: boolean) => {
+  const toggleComment = async (id: string, hidden: boolean, questionId?: string) => {
     try {
-      await TenantApi.setCommentHidden(campaignId, id, hidden);
+      await TenantApi.setCommentHidden(campaignId, id, hidden, questionId);
       await load();
     } catch (err: any) {
       setError(err.message || 'Não foi possível alterar o comentário.');
@@ -166,25 +250,18 @@ export const CampaignResultsModal: React.FC<Props> = ({ campaignId, canEdit, onC
                     {results.comments.length === 0 ? (
                       <p className="text-slate-500">Ninguém deixou comentário.</p>
                     ) : (
-                      <ul className="space-y-2">
-                        {results.comments.map(cm => (
-                          <li key={cm.id} className={`p-3 rounded-xl border flex items-start justify-between gap-3 ${cm.hidden ? 'bg-slate-50 border-slate-200 text-slate-400' : 'bg-white border-slate-200 text-slate-700'}`}>
-                            <span className={`leading-relaxed ${cm.hidden ? 'italic' : ''}`}>{cm.hidden ? 'Comentário oculto pelo RH.' : cm.text}</span>
-                            {canEdit && (
-                              <button
-                                type="button"
-                                onClick={() => void toggleComment(cm.id, !cm.hidden)}
-                                className="shrink-0 px-2 py-1 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold flex items-center gap-1"
-                                title={cm.hidden ? 'Reexibir comentário' : 'Ocultar comentário (por exemplo, se citar uma pessoa)'}
-                              >
-                                {cm.hidden ? <><Eye className="w-3 h-3" /> Reexibir</> : <><EyeOff className="w-3 h-3" /> Ocultar</>}
-                              </button>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
+                      <CommentList comments={results.comments} canEdit={canEdit} onToggle={(id, hidden) => void toggleComment(id, hidden)} />
                     )}
                   </div>
+
+                  {results.blocks.length > 0 && (
+                    <div className="space-y-3">
+                      <h4 className="font-bold text-slate-900 uppercase tracking-wider text-[11px]">Perguntas estratégicas</h4>
+                      {results.blocks.map(b => (
+                        <BlockResultCard key={b.blockId} block={b} minGroup={results.minGroup} canEdit={canEdit} onToggle={(id, hidden, questionId) => void toggleComment(id, hidden, questionId)} />
+                      ))}
+                    </div>
+                  )}
                 </>
               )}
 
