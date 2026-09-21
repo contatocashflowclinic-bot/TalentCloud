@@ -6,7 +6,7 @@ import { useBackdropClose } from '../../hooks/useBackdropClose.js';
 import { TenantApi } from '../../services/api.js';
 import { DateInputBR } from '../DateInputBR.js';
 import { currentQuarter } from '../../utils/retentionUtils.js';
-import { BlocksEditor, blocksFromTemplate } from './BlocksEditor.js';
+import { BlocksEditor, blocksFromTemplate, duplicateBlocks } from './BlocksEditor.js';
 
 interface Props {
   /** Absent = new survey. */
@@ -20,6 +20,8 @@ interface Props {
   unlinkedMembers: number;
   /** Template a new survey starts from (coming from the Templates tab). */
   initialTemplate?: SurveyTemplate;
+  /** A new survey that starts as a copy of this one (name, audience, blocks). */
+  duplicateOf?: ClimateCampaignSummary;
   /** Today (AAAA-MM-DD, São Paulo): suggests the period of a new survey. */
   today: string;
   onSaved: () => Promise<void>;
@@ -32,16 +34,16 @@ const inputCls = 'w-full px-3 py-2 rounded-xl border border-slate-200 text-sm bg
  * Form of a survey (campaign). A draft is fully editable; once published only the closing date and the action plan can
  * change, and once closed only the action plan.
  */
-export const CampaignFormModal: React.FC<Props> = ({ campaign, departments, templates, positions, unlinkedMembers, initialTemplate, today, onSaved, onClose }) => {
+export const CampaignFormModal: React.FC<Props> = ({ campaign, departments, templates, positions, unlinkedMembers, initialTemplate, duplicateOf, today, onSaved, onClose }) => {
   const status = campaign?.status ?? 'draft';
-  const [name, setName] = useState(campaign?.name ?? (initialTemplate && initialTemplate.blocks.length > 0 ? `Pesquisa — ${initialTemplate.name}` : ''));
+  const [name, setName] = useState(campaign?.name ?? (duplicateOf ? `${duplicateOf.name} (cópia)` : initialTemplate && initialTemplate.blocks.length > 0 ? `Pesquisa — ${initialTemplate.name}` : ''));
   const [templateId, setTemplateId] = useState(initialTemplate?.id ?? '');
-  const [templateName, setTemplateName] = useState(campaign?.templateName ?? initialTemplate?.name ?? '');
-  const [blocks, setBlocks] = useState<SurveyBlock[]>(() => campaign?.blocks ?? (initialTemplate ? blocksFromTemplate(initialTemplate.blocks, positions) : []));
+  const [templateName, setTemplateName] = useState(campaign?.templateName ?? duplicateOf?.templateName ?? initialTemplate?.name ?? '');
+  const [blocks, setBlocks] = useState<SurveyBlock[]>(() => campaign?.blocks ?? (duplicateOf ? duplicateBlocks(duplicateOf.blocks) : initialTemplate ? blocksFromTemplate(initialTemplate.blocks, positions) : []));
   const [period, setPeriod] = useState(campaign?.period ?? currentQuarter(today));
-  const [description, setDescription] = useState(campaign?.description ?? '');
-  const [audience, setAudience] = useState<'all' | 'departments'>(campaign?.audience ?? 'all');
-  const [departmentIds, setDepartmentIds] = useState<Set<string>>(new Set(campaign?.departmentIds ?? []));
+  const [description, setDescription] = useState(campaign?.description ?? duplicateOf?.description ?? '');
+  const [audience, setAudience] = useState<'all' | 'departments'>(campaign?.audience ?? duplicateOf?.audience ?? 'all');
+  const [departmentIds, setDepartmentIds] = useState<Set<string>>(new Set(campaign?.departmentIds ?? duplicateOf?.departmentIds ?? []));
   const [closesOn, setClosesOn] = useState(campaign?.closesOn ?? '');
   const [actionPlan, setActionPlan] = useState(campaign?.actionPlan ?? '');
   const [busy, setBusy] = useState(false);
@@ -93,7 +95,7 @@ export const CampaignFormModal: React.FC<Props> = ({ campaign, departments, temp
       <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[94vh] flex flex-col border border-slate-200 shadow-xl" onClick={(e) => e.stopPropagation()}>
         <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-3">
           <div>
-            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">{campaign ? 'Editar pesquisa' : 'Nova pesquisa de clima'}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-600">{campaign ? 'Editar pesquisa' : duplicateOf ? 'Duplicar pesquisa' : 'Nova pesquisa de clima'}</span>
             <h3 className="text-base font-bold text-slate-900">{campaign ? campaign.name : 'Pesquisa interna, anônima'}</h3>
             <p className="text-xs text-slate-500">
               {isDraft
@@ -110,7 +112,7 @@ export const CampaignFormModal: React.FC<Props> = ({ campaign, departments, temp
 
         <form onSubmit={submit} className="flex flex-col min-h-0">
           <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3.5 text-xs overflow-y-auto">
-            {isDraft && !campaign && (
+            {isDraft && !campaign && !duplicateOf && (
               <div className="sm:col-span-2 p-3 rounded-xl bg-indigo-50 border border-indigo-100 space-y-1.5">
                 <label className="block font-semibold text-indigo-900" htmlFor="cmp-template">Começar de um template (opcional)</label>
                 <select id="cmp-template" value={templateId} onChange={(e) => chooseTemplate(e.target.value)} className={inputCls}>

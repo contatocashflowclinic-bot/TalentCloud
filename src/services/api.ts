@@ -175,7 +175,20 @@ export interface PositionRef {
   departmentId: string;
 }
 
+/** Pessoa ativa sem Cargo cadastrado; `suggestedPositionId` = o único cargo cadastrado com título igual ao rótulo antigo. */
+export interface UnlinkedMember {
+  id: string;
+  name: string;
+  email: string;
+  jobTitle: string;
+  departmentId?: string;
+  suggestedPositionId?: string;
+}
+
 export interface MembersApi {
+  /** Vínculo de cargos em lote (só a organização: a Conta Mãe não enxerga cargos). */
+  listUnlinked?: () => Promise<{ members: UnlinkedMember[]; positions: PositionRef[] }>;
+  linkPositions?: (links: { memberId: string; positionId: string }[]) => Promise<number>;
   /** Cargos cadastrados que podem ser dados a uma pessoa. Ausente na Conta Mãe, que não enxerga dados de negócio. */
   listPositionOptions?: () => Promise<PositionRef[]>;
   listMembers: (q: { search?: string; page?: number; pageSize?: number }) => Promise<Page<TenantUser>>;
@@ -196,6 +209,12 @@ function membersApi(base: string, members: 'users' | 'members', withPositions = 
   const json = (method: string, body?: unknown): RequestInit => ({ method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   return {
     ...(withPositions ? {
+      listUnlinked: async () => {
+        const res = await request<{ success: boolean; members: UnlinkedMember[]; positions: PositionRef[] }>(`${base}/users/unlinked`);
+        return { members: res.members, positions: res.positions };
+      },
+      linkPositions: async (links: { memberId: string; positionId: string }[]) =>
+        (await request<{ success: boolean; linked: number }>(`${base}/users/positions`, json('POST', { links }))).linked,
       listPositionOptions: async () => (await request<{ success: boolean; positions: PositionRef[] }>(`${base}/users/position-options`)).positions
     } : {}),
     listMembers: async q => {

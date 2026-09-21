@@ -122,7 +122,12 @@ export function nextMeetingDetails(record: CollaboratorDevelopment, memberIds: R
 export interface RecordRefs {
   departmentIds: ReadonlySet<string>;
   memberIds: ReadonlySet<string>;
+  /** Active Cargos of the Cargos module (id -> title): the only cargos a PDI can carry. */
+  positionTitles: ReadonlyMap<string, string>;
 }
+
+/** Shown while a PDI has no registered Cargo (the cargo is never typed). */
+export const NO_POSITION_LABEL = 'Sem cargo cadastrado';
 
 const optionalRef = (value: unknown, ids: ReadonlySet<string>, notFound: string): string | null => {
   if (isBlank(value)) return null;
@@ -134,7 +139,18 @@ const optionalRef = (value: unknown, ids: ReadonlySet<string>, notFound: string)
 export function parseRecordFields(body: Body, partial: boolean, refs: RecordRefs): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (!partial || has(body, 'collaboratorName')) out.collaboratorName = requiredText(body.collaboratorName, 'Nome do colaborador', 120);
-  if (!partial || has(body, 'jobTitle')) out.jobTitle = requiredText(body.jobTitle, 'Cargo', 120);
+  // The cargo is always a REGISTERED Cargo; a typed `jobTitle` is ignored. The title follows the Cargo.
+  if (has(body, 'positionId')) {
+    if (isBlank(body.positionId)) {
+      out.positionId = null;
+    } else {
+      const title = typeof body.positionId === 'string' ? refs.positionTitles.get(body.positionId) : undefined;
+      if (!title) throw new ValidationError('Cargo não encontrado no cadastro de Cargos desta organização (ou arquivado).');
+      out.positionId = body.positionId;
+      out.jobTitle = title;
+    }
+  }
+  if (!partial && out.jobTitle === undefined) out.jobTitle = NO_POSITION_LABEL;
   if (!partial || has(body, 'hireDate')) out.hireDate = isoDay(body.hireDate, 'Data de admissão');
   if (has(body, 'departmentId')) out.departmentId = optionalRef(body.departmentId, refs.departmentIds, 'Departamento não encontrado nesta organização.');
   if (has(body, 'managerId')) out.managerId = optionalRef(body.managerId, refs.memberIds, 'Gestor não encontrado nesta organização.');

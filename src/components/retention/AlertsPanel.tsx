@@ -20,6 +20,8 @@ type Modal =
 
 interface Props {
   alerts: TurnoverRiskAlert[];
+  /** 'all': every alert of the organization · 'team': only the alerts of the viewer's team. */
+  scope: 'all' | 'team';
   lookups: DevelopmentLookups;
   /** collaboratorId -> id do PDI dessa pessoa */
   developmentLinks: Record<string, string>;
@@ -36,7 +38,7 @@ type StatusFilter = 'active' | 'all' | AlertStatus;
 
 const selectCls = 'px-3 py-2 rounded-xl border border-slate-200 text-xs bg-white focus:outline-hidden focus:border-indigo-500';
 
-export const AlertsPanel: React.FC<Props> = ({ alerts, lookups, developmentLinks, canEdit, canOpenPdi, onOpenPdi, onChanged, onError }) => {
+export const AlertsPanel: React.FC<Props> = ({ alerts, scope, lookups, developmentLinks, canEdit, canOpenPdi, onOpenPdi, onChanged, onError }) => {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
   const [riskFilter, setRiskFilter] = useState<'all' | (typeof RISK_LEVELS)[number]>('all');
   const [query, setQuery] = useState('');
@@ -240,12 +242,18 @@ export const AlertsPanel: React.FC<Props> = ({ alerts, lookups, developmentLinks
             <AlertTriangle className="w-4 h-4 text-amber-600" />
             Termômetro de Risco & Sinais de Desengajamento
           </h3>
-          <span className="text-xs text-slate-400 shrink-0">Sigiloso para Gestores e RH</span>
+          <span className="text-xs text-slate-400 shrink-0">{scope === 'all' ? 'Sigiloso para RH e Administração' : 'Sigiloso: só a sua equipe'}</span>
         </div>
+
+        {scope === 'team' && (
+          <p className="p-3 rounded-xl bg-indigo-50 border border-indigo-100 text-xs text-indigo-900 leading-relaxed">
+            Você vê só os alertas da <strong>sua equipe</strong>: as pessoas de quem você é gestor (no PDI ou na chefia do departamento), os alertas de que você é responsável e os que você abriu. Os demais ficam restritos ao RH e à administração.
+          </p>
+        )}
 
         {shown.length === 0 ? (
           <p className="text-xs text-slate-500 py-6 text-center">
-            {alerts.length === 0 ? 'Nenhum sinal de risco registrado ainda.' : 'Nenhum alerta com esses filtros.'}
+            {alerts.length === 0 ? (scope === 'team' ? 'Nenhum alerta na sua equipe.' : 'Nenhum sinal de risco registrado ainda.') : 'Nenhum alerta com esses filtros.'}
           </p>
         ) : (
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">

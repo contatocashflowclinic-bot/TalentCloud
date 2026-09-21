@@ -598,7 +598,10 @@ export interface CollaboratorDevelopment {
   id: string;
   collaboratorId: string;
   collaboratorName: string;
+  /** Título do cargo. Vem do Cargo cadastrado (`positionId`); nos PDIs ainda não vinculados é só o rótulo antigo. */
   jobTitle: string;
+  /** Cargo cadastrado (módulo Cargos). O cargo nunca é digitado. */
+  positionId?: string;
   departmentId?: string;
   managerId?: string;
   hireDate: string;
@@ -616,6 +619,8 @@ export interface DevelopmentPerson {
   name: string;
   jobTitle: string;
   departmentId?: string;
+  /** Cargo cadastrado da pessoa (quando já vinculada), para pré-preencher o PDI. */
+  positionId?: string;
   hireDate?: string;
   origin: 'hire' | 'member';
 }
@@ -630,6 +635,8 @@ export interface DevelopmentChange {
 export interface DevelopmentLookups {
   departments: { id: string; name: string }[];
   members: { id: string; name: string; jobTitle?: string }[];
+  /** Cargos ativos do cadastro de Cargos, os únicos que um PDI pode receber. */
+  positions: { id: string; title: string; departmentId: string }[];
 }
 
 // 14. Retenção
@@ -738,6 +745,8 @@ export interface TurnoverRiskAlert {
   history: AlertHistoryEntry[];
   createdAt?: string;
   createdBy?: string;
+  /** Quem abriu o alerta (id do vínculo na organização): sempre enxerga o próprio alerta. */
+  createdById?: string;
   updatedAt?: string;
   resolvedAt?: string;
   resolutionNote?: string;
@@ -825,6 +834,8 @@ export interface PositionOption {
 }
 
 export interface RetentionData {
+  /** 'all': vê os alertas de toda a organização · 'team': só os da própria equipe. */
+  alertScope: 'all' | 'team';
   turnoverAlerts: TurnoverRiskAlert[];
   campaigns: ClimateCampaignSummary[];
   /** Templates da organização (a biblioteca do sistema vem no código: src/surveyTemplates.ts). */

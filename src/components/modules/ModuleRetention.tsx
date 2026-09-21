@@ -114,6 +114,7 @@ export const ModuleRetention: React.FC<Props> = ({ onOpenDevelopment }) => {
       ) : activeTab === 'alerts' ? (
         <AlertsPanel
           alerts={data.turnoverAlerts}
+          scope={data.alertScope}
           lookups={data.lookups}
           developmentLinks={data.developmentLinks}
           canEdit={canEdit}

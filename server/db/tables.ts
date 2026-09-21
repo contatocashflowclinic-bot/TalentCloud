@@ -99,7 +99,7 @@ export const TABLES = {
     table: 'collaborator_development',
     json: ['goals', 'oneOnOnes'],
     columns: [
-      'id', 'collaboratorId', 'collaboratorName', 'jobTitle', 'departmentId', 'managerId', 'hireDate', 'goals',
+      'id', 'collaboratorId', 'collaboratorName', 'jobTitle', 'positionId', 'departmentId', 'managerId', 'hireDate', 'goals',
       'oneOnOnes', 'lastReviewDate', 'nextReviewDate'
     ]
   },
@@ -129,7 +129,7 @@ export const TABLES = {
     json: ['history'],
     columns: [
       'id', 'collaboratorId', 'collaboratorName', 'department', 'departmentId', 'riskLevel', 'earlyWarningSignals',
-      'suggestedActions', 'lastActionTaken', 'status', 'ownerId', 'history', 'createdAt', 'createdBy', 'updatedAt', 'resolvedAt',
+      'suggestedActions', 'lastActionTaken', 'status', 'ownerId', 'history', 'createdAt', 'createdBy', 'createdById', 'updatedAt', 'resolvedAt',
       'resolutionNote'
     ]
   },

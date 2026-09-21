@@ -41,6 +41,7 @@ export const ROUTINES: Routine[] = [
   { key: 'onboarding', label: 'Onboarding', description: 'Checklists de integração.', moduleId: 12, actions: ['view', 'edit'] },
   { key: 'development', label: 'Desenvolvimento', description: 'PDI e metas.', moduleId: 13, actions: ['view', 'edit'] },
   { key: 'retention', label: 'Retenção', description: 'Alertas de turnover e gestão das pesquisas de clima.', moduleId: 14, actions: ['view', 'edit'] },
+  { key: 'retention_all', label: 'Alertas de toda a organização', description: 'Ver todos os alertas de risco de turnover. Sem esta permissão, a pessoa vê só os alertas da própria equipe (que ela gerencia, dos quais é responsável ou que ela abriu).', moduleId: 14, actions: ['view'] },
   { key: 'climate', label: 'Pesquisa de Clima', description: 'Responder às pesquisas de clima abertas para você (respostas anônimas).', moduleId: 14, actions: ['view'] },
   { key: 'indicators', label: 'Indicadores', description: 'People analytics.', moduleId: 15, actions: ['view'] }
 ];
@@ -158,7 +159,7 @@ export const DEFAULT_PROFILES: DefaultProfile[] = [
     permissions: normalizePermissions([
       ...BASE_VIEW, 'users:view', 'openings:create', 'openings:edit', 'candidates:create', 'candidates:edit', 'selection:create', 'selection:edit',
       'ai_evaluation:create', 'ai_evaluation:edit', 'interviews:create', 'interviews:edit', 'offers:create',
-      'offers:edit', 'onboarding:edit', 'development:edit', 'retention:edit', 'indicators:view'
+      'offers:edit', 'onboarding:edit', 'development:edit', 'retention:edit', 'retention_all:view', 'indicators:view'
     ]).permissions
   },
   {

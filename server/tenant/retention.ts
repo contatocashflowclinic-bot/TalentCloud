@@ -85,7 +85,7 @@ export function parseAlertFields(body: Body, partial: boolean, refs: AlertRefs):
 }
 
 /** A brand-new alert: open, with the "created" entry as the first line of its history. */
-export function buildAlert(collaboratorId: string, fields: AlertPatch, by: string): AlertPatch {
+export function buildAlert(collaboratorId: string, fields: AlertPatch, by: string, byId?: string): AlertPatch {
   const at = new Date().toISOString();
   const risk = (fields.riskLevel as string | undefined) ?? 'Médio';
   return {
@@ -100,6 +100,7 @@ export function buildAlert(collaboratorId: string, fields: AlertPatch, by: strin
     history: [entry(at, by, 'created', `Alerta aberto com risco ${risk}.`)],
     createdAt: at,
     createdBy: by,
+    ...(byId ? { createdById: byId } : {}),
     updatedAt: at
   };
 }
@@ -184,3 +185,46 @@ export function assertAlertRemovable(alert: TurnoverRiskAlert): void {
 }
 
 export const normName = (name: string) => name.trim().toLowerCase();
+
+// ---- Who sees which alert (team scope) ------------------------------------------------------------
+/**
+ * Who reports to whom, as far as the alerts are concerned. A person "belongs to the team" of a viewer when the viewer is
+ * the manager of that person's PDI or the head of the department the person works in.
+ */
+export interface AlertScopeData {
+  /** person (collaboratorId of the PDI) -> manager of the PDI */
+  pdiManagers: ReadonlyMap<string, string>;
+  /** department id -> head of the department */
+  departmentManagers: ReadonlyMap<string, string>;
+  /** member id -> department of the member */
+  memberDepartments: ReadonlyMap<string, string>;
+}
+
+export function buildScopeData(
+  records: readonly { collaboratorId: string; managerId?: string }[],
+  departments: readonly { id: string; managerId?: string | null }[],
+  users: readonly { id: string; departmentId?: string }[]
+): AlertScopeData {
+  return {
+    pdiManagers: new Map(records.filter(r => r.managerId).map(r => [r.collaboratorId, r.managerId!])),
+    departmentManagers: new Map(departments.filter(d => d.managerId).map(d => [d.id, d.managerId!])),
+    memberDepartments: new Map(users.filter(u => u.departmentId).map(u => [u.id, u.departmentId!]))
+  };
+}
+
+/** A person of the viewer's team: the viewer manages their PDI or heads their department. */
+export function personInTeam(person: { id: string; departmentId?: string }, viewerId: string, data: AlertScopeData): boolean {
+  if (data.pdiManagers.get(person.id) === viewerId) return true;
+  const department = person.departmentId ?? data.memberDepartments.get(person.id);
+  return !!department && data.departmentManagers.get(department) === viewerId;
+}
+
+/** What someone WITHOUT the "all alerts" permission may see: alerts they opened or own, and those of their team. */
+export function alertInScope(
+  alert: Pick<TurnoverRiskAlert, 'collaboratorId' | 'departmentId' | 'ownerId' | 'createdById'>,
+  viewerId: string,
+  data: AlertScopeData
+): boolean {
+  if (alert.ownerId === viewerId || alert.createdById === viewerId) return true;
+  return personInTeam({ id: alert.collaboratorId, departmentId: alert.departmentId }, viewerId, data);
+}

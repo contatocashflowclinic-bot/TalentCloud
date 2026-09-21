@@ -38,6 +38,10 @@ export const blocksFromTemplate = (blocks: SurveyBlock[], positions: PositionOpt
     questions: b.questions.map(q => ({ ...q, id: localId('q') }))
   }));
 
+/** A copy of a survey's blocks (new ids), keeping the registered cargos they point to. */
+export const duplicateBlocks = (blocks: SurveyBlock[]): SurveyBlock[] =>
+  blocks.map(b => ({ ...b, id: localId('b'), questions: b.questions.map(q => ({ ...q, id: localId('q') })) }));
+
 const newQuestion = (): SurveyQuestion => ({ id: localId('q'), text: '', type: 'scale', required: true });
 export const newBlock = (): SurveyBlock => ({
   id: localId('b'), title: '', audience: 'all', positionIds: [], targetHints: noHints(), questions: [newQuestion()]

@@ -40,13 +40,25 @@
 | 18 | Entre como uma pessoa **vinculada a um cargo marcado** e responda. Depois, como uma **sem cargo** ou de outro cargo. | Quem tem o cargo marcado vê o bloco de tecnologia; quem não tem **não vê**. As perguntas para todos aparecem para todos. |
 | 19 | Volte à aba **Templates** → **Copiar e editar** num template da biblioteca, mude o nome e salve. | A cópia aparece em **Da sua organização** e pode ser editada ou excluída. A biblioteca do sistema não muda. |
 
+### Parte 4 — Sigilo dos alertas, cargos em lote, exportação
+
+| # | Faça isto | Deve acontecer |
+|---|---|---|
+| 20 | Como **Administrador**, abra **Retenção → Alertas de risco**. | Vê todos os alertas. O topo diz "Sigiloso para RH e Administração". |
+| 21 | Entre como **Gestor da Vaga** (ou outro perfil sem "Alertas de toda a organização") e abra **Retenção → Alertas de risco**. | Aparece o aviso "Você vê só os alertas da sua equipe". Só listam os alertas de pessoas que ele gerencia (no PDI ou chefiando o departamento), que ele abriu ou de que é responsável. Os números da Visão geral contam só esses. |
+| 22 | Em **Usuários e Permissões**, clique **Vincular cargos em lote**. | Abre a lista de pessoas ativas sem cargo cadastrado, cada uma com uma **lista de cargos cadastrados** (nada de texto livre). Se o rótulo antigo for igual a um cargo cadastrado, ele já vem escolhido. Escolha e clique **Vincular N pessoas**. |
+| 23 | Abra **Desenvolvimento → Novo PDI → Cadastrar quem não está na lista**. | O **Cargo** é uma lista de cargos cadastrados (sem campo de texto). |
+| 24 | Em **Pesquisas**, clique **Duplicar** numa pesquisa. | Abre "Duplicar pesquisa" com o nome "… (cópia)", o mesmo público e as mesmas perguntas estratégicas. |
+| 25 | Em **Pesquisas → Ver resultado**, clique **Exportar resultado**. | Escolha **Planilha CSV** ou **Relatório PDF**: baixa o resultado como está na tela (nada abaixo de 5 respostas, sem autor, sem o que o RH ocultou). |
+| 26 | Entre como uma pessoa com pesquisa aberta para responder. | No menu, o item **Retenção** mostra um selo amarelo "1 pesquisa". Depois de responder, o selo some. |
+
 **Se algo não bater:** atualize a página com Ctrl+F5. Se o colaborador não vê a pesquisa, confira se o perfil dele tem **Pesquisa de Clima → Visualizar** (perfis personalizados antigos precisam dessa marcação).
 
 ---
 
 ## Guia detalhado
 
-**Preparação:** aplique as migrations novas (`20260921000020_retention.sql`, `20260921000021_survey_templates.sql` e `20260921000022_member_position.sql`, com `npm run db -- migrate`) e rode `npm run dev`. Entre em uma organização dos planos **Scale** ou **Enterprise** (a Retenção não existe no Starter) com um usuário **Administrador**. Para as partes de pesquisa você precisa de **pelo menos 5 pessoas ativas** na organização (crie usuários em **Usuários e Permissões** se preciso; o perfil **Colaborador** basta). Repita a parte D no celular.
+**Preparação:** aplique as migrations novas (`20260921000020_retention.sql`, `20260921000021_survey_templates.sql` e `20260921000022_member_position.sql` e `20260921000023_alert_scope_pdi_position.sql`, com `npm run db -- migrate`) e rode `npm run dev`. Entre em uma organização dos planos **Scale** ou **Enterprise** (a Retenção não existe no Starter) com um usuário **Administrador**. Para as partes de pesquisa você precisa de **pelo menos 5 pessoas ativas** na organização (crie usuários em **Usuários e Permissões** se preciso; o perfil **Colaborador** basta). Repita a parte D no celular.
 
 O módulo tem cinco abas: **Visão geral**, **Alertas de risco**, **Pesquisas**, **Templates** e **Responder pesquisa**. Quem gerencia vê as quatro primeiras; qualquer colaborador vê só a última.
 
@@ -169,6 +181,45 @@ O módulo tem cinco abas: **Visão geral**, **Alertas de risco**, **Pesquisas**,
 | J6 | Na **Conta Mãe**, abra os usuários de uma organização. | O campo de cargo mostra "O cargo é escolhido pela própria organização, no cadastro de Cargos." A Conta Mãe não digita cargo. |
 
 > Nas pessoas que já existiam, o sistema vincula o cargo **automaticamente** quando o texto antigo é igual ao título de **um único** cargo ativo da organização. As demais ficam para o RH escolher.
+
+## K. Sigilo dos alertas por equipe
+
+| # | O que fazer | O que deve acontecer |
+|---|---|---|
+| K1 | Em **Usuários e Permissões → Perfis**, procure **Alertas de toda a organização** ("Ver todos os alertas de risco de turnover…"). | É uma rotina própria, com a ação **Visualizar**. O **Administrador** e o perfil **Recrutador / RH** já a têm. O **Gestor da Vaga** não. Perfis personalizados só a têm se você marcar. |
+| K2 | Com um perfil **sem** essa permissão, abra **Retenção → Alertas de risco**. | Aviso "Você vê só os alertas da sua equipe". A equipe de uma pessoa é: quem ela **gerencia no PDI**, os membros do departamento que ela **chefia** (Estrutura Organizacional → gestor do departamento), os alertas de que ela é **responsável** e os que ela **abriu**. |
+| K3 | Como Administrador, abra um alerta de alguém fora da equipe do gestor e, com o gestor, tente mexer nele (por exemplo, por um link antigo). | O sistema responde como se o alerta **não existisse**: o gestor não consegue ver, editar, registrar ação, encerrar nem excluir. |
+| K4 | Como gestor, clique **Registrar Sinal de Risco**. | A lista de pessoas traz **só a equipe dele**. Ele consegue abrir alerta para essas pessoas, e para um nome digitado (que fica visível para ele). Para uma pessoa de fora da equipe, o sistema recusa. |
+| K5 | Compare a **Visão geral** do administrador e a do gestor. | O número de alertas ativos e a divisão por risco do gestor contam **só** os alertas que ele enxerga. eNPS e pesquisas continuam os da organização. |
+
+## L. Vincular cargos em lote
+
+| # | O que fazer | O que deve acontecer |
+|---|---|---|
+| L1 | Em **Usuários e Permissões**, clique **Vincular cargos em lote** (aparece para quem pode alterar usuários). | Lista as pessoas **ativas sem cargo cadastrado**, com o rótulo antigo e uma lista de cargos ativos do módulo Cargos. |
+| L2 | Escolha o cargo de cada pessoa (ou deixe "manter sem cargo") e clique **Vincular N pessoas**. | Aviso "N pessoas vinculadas a cargos do cadastro" e a lista de usuários mostra os cargos. Tudo ou nada: se uma escolha for inválida, nenhuma é aplicada. |
+| L3 | Não há cargos ativos cadastrados. | O modal avisa para cadastrar os cargos no módulo **Cargos** primeiro. |
+| L4 | Em **Conta Mãe → Usuários da organização**. | O botão não existe: só a própria organização vincula cargos. |
+
+## M. Cargo do PDI
+
+| # | O que fazer | O que deve acontecer |
+|---|---|---|
+| M1 | **Desenvolvimento → Novo PDI** e escolha alguém da lista (ou "Cadastrar quem não está na lista"). | O campo **Cargo** é uma lista de cargos cadastrados. Para quem já tem cargo cadastrado, ele vem escolhido. Não existe campo de texto. |
+| M2 | Crie um PDI sem escolher cargo. | O PDI é criado e mostra "Sem cargo cadastrado". O cargo deixou de ser obrigatório: o que não pode é ser digitado. |
+| M3 | Edite um PDI e troque o cargo. | O cartão passa a mostrar o título do novo cargo. Limpar o cargo mantém o último título só como rótulo. |
+| M4 | Aceite uma proposta (**Propostas**) e abra o PDI da contratação. | O PDI já vem com o **cargo cadastrado da vaga**. |
+
+## N. Exportar, duplicar e selo no menu
+
+| # | O que fazer | O que deve acontecer |
+|---|---|---|
+| N1 | **Pesquisas → Ver resultado → Exportar resultado → Planilha CSV**. | Baixa um CSV (abre no Excel) com resumo, participação, eNPS, notas, departamentos, perguntas estratégicas e respostas em texto. |
+| N2 | Mesma tela → **Relatório PDF**. | Baixa o PDF com as mesmas seções. |
+| N3 | Exporte uma pesquisa com **menos de 5 respostas**. | O arquivo traz só o resumo e a participação, com a nota de que o resultado é liberado a partir de 5. |
+| N4 | Oculte um comentário e exporte de novo. | O comentário oculto **não** vai para o arquivo. |
+| N5 | **Duplicar** uma pesquisa (rascunho, aberta ou encerrada). | Cria um novo rascunho com o mesmo público e as mesmas perguntas (e os mesmos cargos). O período vem no trimestre atual e sem data de encerramento. Nada da pesquisa original muda. |
+| N6 | Com uma pesquisa aberta e uma pessoa que ainda não respondeu, olhe o menu lateral. | **Retenção** mostra o selo "1 pesquisa" (no menu recolhido, um ponto amarelo). Some assim que a pessoa responde. |
 
 ## Se algo falhar
 

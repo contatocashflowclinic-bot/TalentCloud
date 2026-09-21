@@ -6,6 +6,7 @@ import type { PositionRef } from '../../services/api.js';
 import { formatDateTimeSP } from '../../utils/dateUtils.js';
 import { PermissionMatrix } from './PermissionMatrix.js';
 import { ProfileCaps, ProfilesPanel } from './ProfilesPanel.js';
+import { LinkPositionsModal } from './LinkPositionsModal.js';
 
 interface UserDraft {
   id?: string;
@@ -62,6 +63,7 @@ export const MembersManager: React.FC<{
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [linkOpen, setLinkOpen] = useState(false);
   const [credentials, setCredentials] = useState<{ name: string; email: string; tempPassword: string; reset: boolean } | null>(null);
   const [copied, setCopied] = useState(false);
   const seq = useRef(0);
@@ -214,6 +216,15 @@ export const MembersManager: React.FC<{
           </div>
         ) : <span />}
 
+        {tab === 'users' && caps.edit && api.linkPositions && (
+          <button
+            onClick={() => setLinkOpen(true)}
+            className="px-4 py-2.5 rounded-xl border border-indigo-200 bg-white hover:bg-indigo-50 text-indigo-700 font-semibold text-xs transition-colors"
+          >
+            Vincular cargos em lote
+          </button>
+        )}
+
         {tab === 'users' && caps.create && (
           <button
             onClick={openCreate}
@@ -225,6 +236,14 @@ export const MembersManager: React.FC<{
           </button>
         )}
       </div>
+
+      {linkOpen && api.linkPositions && (
+        <LinkPositionsModal
+          api={api}
+          onClose={() => setLinkOpen(false)}
+          onLinked={(count) => { setLinkOpen(false); setNotice(`${count} ${count === 1 ? 'pessoa vinculada' : 'pessoas vinculadas'} a cargos do cadastro.`); void load(); }}
+        />
+      )}
 
       {notice && (
         <div role="status" className="flex items-start justify-between gap-3 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs">

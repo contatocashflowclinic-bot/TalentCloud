@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Plus, Pencil, Send, Lock, Trash2, BarChart3, Users, CalendarClock, ClipboardList, Layers } from 'lucide-react';
+import { Plus, Pencil, Send, Lock, Trash2, BarChart3, Users, CalendarClock, ClipboardList, Layers, Copy } from 'lucide-react';
 import type { ClimateCampaignSummary, PositionOption, SurveyTemplate } from '../../types.js';
 import { templateQuestionCount } from '../../surveyTemplates.js';
 import { TenantApi } from '../../services/api.js';
@@ -25,7 +25,7 @@ interface Props {
 }
 
 type Modal =
-  | { kind: 'form'; campaign?: ClimateCampaignSummary; template?: SurveyTemplate }
+  | { kind: 'form'; campaign?: ClimateCampaignSummary; template?: SurveyTemplate; duplicateOf?: ClimateCampaignSummary }
   | { kind: 'results'; campaignId: string };
 
 interface Pending {
@@ -188,6 +188,11 @@ export const CampaignsPanel: React.FC<Props> = ({ campaigns, departments, templa
                       <Pencil className="w-3 h-3" /> {c.status === 'closed' ? 'Plano de ação' : 'Editar'}
                     </button>
                   )}
+                  {canEdit && (
+                    <button onClick={() => setModal({ kind: 'form', duplicateOf: c })} className="px-2.5 py-1.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold flex items-center gap-1">
+                      <Copy className="w-3 h-3" /> Duplicar
+                    </button>
+                  )}
                   {canEdit && c.status === 'draft' && (
                     <button
                       onClick={() => ask('Excluir rascunho?', <>O rascunho <strong>{c.name}</strong> será excluído.</>, 'Excluir', () => TenantApi.deleteCampaign(c.id), 'danger')}
@@ -205,7 +210,7 @@ export const CampaignsPanel: React.FC<Props> = ({ campaigns, departments, templa
       )}
 
       {modal?.kind === 'form' && (
-        <CampaignFormModal campaign={modal.campaign} departments={departments} templates={templates} positions={positions} unlinkedMembers={unlinkedMembers} initialTemplate={modal.template} today={today} onSaved={saved} onClose={() => setModal(null)} />
+        <CampaignFormModal campaign={modal.campaign} departments={departments} templates={templates} positions={positions} unlinkedMembers={unlinkedMembers} initialTemplate={modal.template} duplicateOf={modal.duplicateOf} today={today} onSaved={saved} onClose={() => setModal(null)} />
       )}
       {modal?.kind === 'results' && (
         <CampaignResultsModal campaignId={modal.campaignId} canEdit={canEdit} onClose={() => setModal(null)} />

@@ -108,7 +108,7 @@ async function seedFidelity() {
     check(`[${slug}] applications`, sameData(await repo.applications.list(), seed.applications));
     check(`[${slug}] aiEvaluations`, sameData(await repo.aiEvaluations.list(), [...(seed.aiEvaluations ?? [])].reverse()));
     check(`[${slug}] interviews`, sameData(await repo.interviews.list(), seed.interviews ?? []));
-    check(`[${slug}] offers`, sameData(await repo.offers.list(), seed.offers ?? []));
+    check(`[${slug}] offers`, sameData(await repo.offers.list(), (seed.offers ?? []).map((o: any) => ({ documents: [], ...o })))); // documents: the column default (migration 16) is [] and the seed does not carry the field
     check(`[${slug}] onboardings`, sameData(await repo.onboardings.list(), (seed.onboardings ?? []).map((o: any) => ({ admission: [], ...o }))));
     check(`[${slug}] development`, sameData(await repo.development.list(), seed.developmentRecords ?? []));
     check(`[${slug}] climateSurveys`, sameData(await repo.climateSurveys.list(), (seed.climateSurveys ?? []).map((s: any) => ({ commentHidden: false, blockAnswers: {}, hiddenTexts: [], ...s }))));
@@ -978,6 +978,53 @@ async function main() {
     check('anonymity holds for strategic answers: stored with no member id and no cargo (only the question ids)', bRows.rows.length === 9 && !memberIds2.some(id => JSON.stringify(bRows.rows).includes(id)) && !bRows.rows.some((r: any) => JSON.stringify(r).includes(analystPos.id) || JSON.stringify(r).includes(managerPos.id)) && bRows.rows.some((r: any) => Object.keys(r.block_answers).length >= 3), bRows.rows.length);
     check('the results of a survey without blocks carry an empty block list (older surveys)', (await A('GET', `${campPath}/${cid}/results`)).json.results.blocks.length === 0);
 
+    // ---- Retenção: sigilo dos alertas por equipe --------------------------------------------------
+    const HM = (method: string, path: string, body?: unknown) => R('HIRING_MANAGER', method, path, body);
+    const mkAlert = (id: string, name: string, extra: any = {}) => A('POST', `${rt}/alert`, { collaboratorId: id, collaboratorName: name, ...extra });
+    const teamDept = (await A('POST', '/api/v1/departments', { name: 'Chefiado pelo Gestor', headcountTarget: 3, managerId: hmMember.id })).json.department;
+    const aOut = await mkAlert('colab-scope-out', 'Pessoa Fora da Equipe', { riskLevel: 'Alto' });
+    const aPdi = await mkAlert('colab-scope-pdi', 'Pessoa da Equipe (PDI)');
+    await mkAlert('colab-scope-own', 'Pessoa Sob Responsabilidade', { ownerId: hmMember.id });
+    await mkAlert('colab-scope-dep', 'Pessoa do Departamento', { departmentId: teamDept.id });
+    await A('POST', '/api/v1/development', { collaboratorId: 'colab-scope-pdi', collaboratorName: 'Pessoa da Equipe (PDI)', hireDate: '2026-01-05', managerId: hmMember.id });
+    const adminView = (await A('GET', rt)).json;
+    const hmView = (await HM('GET', rt)).json;
+    const hmNames = (hmView.turnoverAlerts as any[]).map(a => a.collaboratorName);
+    check('scope: Admin sees every alert; the manager sees only the alerts of their team (owner, PDI manager, department head)', adminView.alertScope === 'all' && ['Pessoa Fora da Equipe', 'Fulano'].every(n => adminView.turnoverAlerts.some((a: any) => a.collaboratorName === n)) && hmView.alertScope === 'team' && ['Pessoa da Equipe (PDI)', 'Pessoa Sob Responsabilidade', 'Pessoa do Departamento'].every(n => hmNames.includes(n)) && !hmNames.includes('Pessoa Fora da Equipe') && !hmNames.includes('Fulano'), hmNames);
+    check('scope: the overview numbers count only what the viewer can see; PDI shortcuts only for visible alerts', hmView.metrics.activeAlerts === (hmView.turnoverAlerts as any[]).filter(a => a.status === 'open' || a.status === 'monitoring').length && hmView.metrics.activeAlerts < adminView.metrics.activeAlerts && !('colab-scope-out' in hmView.developmentLinks) && 'colab-scope-pdi' in hmView.developmentLinks, [hmView.metrics, hmView.developmentLinks]);
+    const outId = aOut.json.alert.id as string, inId = aPdi.json.alert.id as string;
+    check('scope: an alert outside the team cannot be edited, worked on, closed or deleted (404, as if it did not exist)', (await HM('PATCH', `${rt}/alert/${outId}`, { riskLevel: 'Baixo' })).status === 404 && (await HM('POST', `${rt}/alert/${outId}/actions`, { action: 'x' })).status === 404 && (await HM('POST', `${rt}/alert/${outId}/status`, { status: 'dismissed', note: 'x' })).status === 404 && (await HM('DELETE', `${rt}/alert/${outId}`)).status === 404 && ((await A('GET', rt)).json.turnoverAlerts as any[]).some(a => a.id === outId));
+    check('scope: an alert of the team can be worked on', (await HM('POST', `${rt}/alert/${inId}/actions`, { action: 'Conversa com o gestor' })).status === 201);
+    await A('POST', '/api/v1/development', { collaboratorId: 'colab-scope-pdi2', collaboratorName: 'Outra Pessoa da Equipe', hireDate: '2026-01-05', managerId: hmMember.id });
+    const chief = await A('POST', '/api/v1/users', { name: 'Membro da Chefia', email: `chefia-${suffix}@smoke.test`, profileId: 'collaborator', departmentId: teamDept.id });
+    const hmPeople = (await HM('GET', `${rt}/people`)).json.people as any[];
+    const allPeople = (await A('GET', `${rt}/people`)).json.people as any[];
+    check('scope: the manager people list is only their team (PDIs they manage, members of the department they head)', hmPeople.some(x => x.id === 'colab-scope-pdi2') && hmPeople.some(x => x.id === chief.json.user.id) && !hmPeople.some(x => x.id === s1Member.id) && hmPeople.length < allPeople.length, [hmPeople.length, allPeople.length]);
+    const typedByHm = await HM('POST', `${rt}/alert`, { collaboratorName: 'Nome Digitado pelo Gestor' });
+    check('scope: the manager can open alerts for their team (a free name stays visible to its author); not for people outside it -> 403', (await HM('POST', `${rt}/alert`, { collaboratorId: 'colab-scope-pdi2', collaboratorName: 'Outra Pessoa da Equipe' })).status === 201 && (await HM('POST', `${rt}/alert`, { collaboratorId: s1Member.id, collaboratorName: 'Survey 1' })).status === 403 && typedByHm.status === 201 && typedByHm.json.alert.createdById === hmMember.id && ((await HM('GET', rt)).json.turnoverAlerts as any[]).some(a => a.id === typedByHm.json.alert.id), typedByHm.json);
+    const rhMail = `rh-escopo-${suffix}@smoke.test`;
+    const rhMade = await A('POST', '/api/v1/users', { name: 'RH Escopo', email: rhMail, profileId: 'recruiter' });
+    const rhToken = (await activateUser(slugA, rhMail, rhMade.json.tempPassword, 'Senha#RhEscopo9')).token;
+    const rhView = (await api('GET', rt, { token: rhToken })).json;
+    const permsOf = async (token: string) => (await api('GET', '/api/auth/me', { token })).json.user.permissions as string[];
+    check('scope: RH (Recrutador) has "all alerts" by default and sees what is outside the manager team; the Gestor does not have the permission', rhView.alertScope === 'all' && (rhView.turnoverAlerts as any[]).some(a => a.collaboratorName === 'Pessoa Fora da Equipe') && (await permsOf(rhToken)).includes('retention_all:view') && !(await permsOf(tokens.HIRING_MANAGER)).includes('retention_all:view'));
+    check('scope: another organization sees none of these alerts', !((await B('GET', rt)).json.turnoverAlerts ?? []).some((a: any) => a.id === outId || a.id === inId));
+
+    // ---- Cargos: vínculo em lote ----------------------------------------------------------------
+    const bulk = '/api/v1/users/positions';
+    const unlinkedList = await A('GET', '/api/v1/users/unlinked');
+    const typedUser = (unlinkedList.json.members as any[]).find(m => m.id === typed.json.user.id);
+    check('bulk link: lists the active people with no registered cargo, with the cargo their old title matches exactly', unlinkedList.status === 200 && typedUser?.suggestedPositionId === analystPos.id && !(unlinkedList.json.members as any[]).some(m => m.id === s1Member.id) && unlinkedList.json.positions.some((c: any) => c.id === analystPos.id) && !unlinkedList.json.positions.some((c: any) => c.id === archivedPos.id), unlinkedList.json);
+    check('bulk link: only who edits users (no edit -> 403); needs at least one link; unknown / archived cargo or unknown person refused', (await R('HIRING_MANAGER', 'GET', '/api/v1/users/unlinked')).status === 403 && (await R('INTERVIEWER', 'POST', bulk, { links: [{ memberId: typed.json.user.id, positionId: analystPos.id }] })).status === 403 && (await A('POST', bulk, {})).status === 400 && (await A('POST', bulk, { links: [{ memberId: typed.json.user.id, positionId: 'pos-nope' }] })).status === 400 && (await A('POST', bulk, { links: [{ memberId: typed.json.user.id, positionId: archivedPos.id }] })).status === 400 && (await A('POST', bulk, { links: [{ memberId: 'usr-nope', positionId: analystPos.id }] })).status === 404);
+    const halfDone = await A('POST', bulk, { links: [{ memberId: typed.json.user.id, positionId: analystPos.id }, { memberId: 'usr-nope', positionId: analystPos.id }] });
+    const dup = await A('POST', bulk, { links: [{ memberId: typed.json.user.id, positionId: analystPos.id }, { memberId: typed.json.user.id, positionId: managerPos.id }] });
+    const untouchedUser = ((await A('GET', '/api/v1/users')).json.users as any[]).find(u => u.id === typed.json.user.id);
+    check('bulk link is all-or-nothing: a failure in any link applies none (a repeated person is refused too)', halfDone.status === 404 && dup.status === 400 && untouchedUser.positionId === undefined, [halfDone.status, dup.status, untouchedUser]);
+    const bulkDone = await A('POST', bulk, { links: [{ memberId: typed.json.user.id, positionId: analystPos.id }, { memberId: chief.json.user.id, positionId: managerPos.id }] });
+    const afterBulk = (await A('GET', '/api/v1/users')).json.users as any[];
+    check('bulk link: links the chosen people at once (cargo id and title), and they leave the "no cargo" list', bulkDone.status === 200 && bulkDone.json.linked === 2 && afterBulk.find(u => u.id === typed.json.user.id).positionId === analystPos.id && afterBulk.find(u => u.id === chief.json.user.id).jobTitle === 'Gestor da Vaga' && !((await A('GET', '/api/v1/users/unlinked')).json.members as any[]).some(m => m.id === typed.json.user.id || m.id === chief.json.user.id), bulkDone.json);
+    check('bulk link: another organization can neither link A people nor use A cargos', (await B('POST', bulk, { links: [{ memberId: typed.json.user.id, positionId: posB.id }] })).status === 404 && (await A('POST', bulk, { links: [{ memberId: typed.json.user.id, positionId: posB.id }] })).status === 400 && !((await B('GET', '/api/v1/users/unlinked')).json.members as any[]).some(m => m.id === typed.json.user.id));
+
     // ---- Desenvolvimento (PDI): PDI da contratação, metas, andamento e 1:1s ------------------
     const devList = await A('GET', '/api/v1/development');
     const hirePdi = (devList.json.developmentRecords ?? []).find((r: any) => r.collaboratorId === candId);
@@ -990,18 +1037,29 @@ async function main() {
     check('RBAC: INTERVIEWER cannot read PDIs nor the people list', (await R('INTERVIEWER', 'GET', '/api/v1/development')).status === 403 && (await R('INTERVIEWER', 'GET', '/api/v1/development/people')).status === 403);
 
     // PDI record: create / edit / delete
-    const newRec = await A('POST', '/api/v1/development', { collaboratorName: ' Ana PDI ', jobTitle: 'Analista', hireDate: '2026-01-05', departmentId: deptId, managerId: recruiterUser.id });
+    const newRec = await A('POST', '/api/v1/development', { collaboratorName: ' Ana PDI ', positionId: analystPos.id, hireDate: '2026-01-05', departmentId: deptId, managerId: recruiterUser.id });
     const ana = newRec.json.developmentRecord;
     check('create a PDI by hand', newRec.status === 201 && ana.collaboratorName === 'Ana PDI' && ana.collaboratorId.startsWith('colab-') && ana.managerId === recruiterUser.id && ana.goals.length === 0, newRec.json);
-    check('create PDI: name, cargo and admission date are required -> 400', (await A('POST', '/api/v1/development', { jobTitle: 'x', hireDate: '2026-01-05' })).status === 400 && (await A('POST', '/api/v1/development', { collaboratorName: 'x', hireDate: '2026-01-05' })).status === 400 && (await A('POST', '/api/v1/development', { collaboratorName: 'x', jobTitle: 'y' })).status === 400);
+    check('create PDI: name and admission date are required (the cargo is optional) -> 400', (await A('POST', '/api/v1/development', { positionId: analystPos.id, hireDate: '2026-01-05' })).status === 400 && (await A('POST', '/api/v1/development', { collaboratorName: 'x', hireDate: '2026-01-05' })).status === 201 && (await A('POST', '/api/v1/development', { collaboratorName: 'x', positionId: analystPos.id })).status === 400);
     check('create PDI: impossible date -> 400', (await A('POST', '/api/v1/development', { collaboratorName: 'x', jobTitle: 'y', hireDate: '2026-02-30' })).status === 400);
     check('create PDI: unknown department / manager -> 400', (await A('POST', '/api/v1/development', { collaboratorName: 'x', jobTitle: 'y', hireDate: '2026-01-05', departmentId: 'dep-nope' })).status === 400 && (await A('POST', '/api/v1/development', { collaboratorName: 'x', jobTitle: 'y', hireDate: '2026-01-05', managerId: 'usr-nope' })).status === 400);
     check('create PDI for someone who already has one -> 409', (await A('POST', '/api/v1/development', { collaboratorId: candId, collaboratorName: 'x', jobTitle: 'y', hireDate: '2026-01-05' })).status === 409);
     const race = await Promise.all([1, 2].map(() => A('POST', '/api/v1/development', { collaboratorId: 'colab-race', collaboratorName: 'Corrida', jobTitle: 'y', hireDate: '2026-01-05' })));
     check('simultaneous PDI creation for the same person keeps a single record', race.map(r => r.status).sort().join() === '201,409', race.map(r => r.status));
     check('RBAC: INTERVIEWER cannot create PDIs', (await R('INTERVIEWER', 'POST', '/api/v1/development', { collaboratorName: 'x', jobTitle: 'y', hireDate: '2026-01-05' })).status === 403);
-    const editRec = await A('PATCH', `/api/v1/development/${ana.id}`, { jobTitle: 'Analista Sr', managerId: null, nextReviewDate: '2099-02-01' });
-    check('edit PDI data (clear manager, schedule next 1:1)', editRec.json.developmentRecord?.jobTitle === 'Analista Sr' && editRec.json.developmentRecord.managerId === undefined && editRec.json.developmentRecord.nextReviewDate === '2099-02-01' && editRec.json.developmentRecord.collaboratorName === 'Ana PDI', editRec.json);
+    const editRec = await A('PATCH', `/api/v1/development/${ana.id}`, { positionId: managerPos.id, managerId: null, nextReviewDate: '2099-02-01' });
+    check('edit PDI data (change the registered cargo, clear manager, schedule next 1:1)', editRec.json.developmentRecord?.positionId === managerPos.id && editRec.json.developmentRecord.jobTitle === 'Gestor da Vaga' && editRec.json.developmentRecord.managerId === undefined && editRec.json.developmentRecord.nextReviewDate === '2099-02-01' && editRec.json.developmentRecord.collaboratorName === 'Ana PDI', editRec.json);
+    const pdiPos = await A('POST', '/api/v1/development', { collaboratorName: 'Com Cargo Cadastrado', positionId: analystPos.id, hireDate: '2026-01-05' });
+    check('PDI: the cargo is a registered Cargo and its title follows it', pdiPos.status === 201 && pdiPos.json.developmentRecord.positionId === analystPos.id && pdiPos.json.developmentRecord.jobTitle === 'Analista', pdiPos.json);
+    const pdiTyped = await A('POST', '/api/v1/development', { collaboratorName: 'Cargo Digitado', jobTitle: 'Astronauta', hireDate: '2026-01-05' });
+    check('PDI: a typed jobTitle is ignored (no cargo linked, default label)', pdiTyped.status === 201 && pdiTyped.json.developmentRecord.jobTitle === 'Sem cargo cadastrado' && pdiTyped.json.developmentRecord.positionId === undefined, pdiTyped.json);
+    const pdiBody = (positionId: string) => ({ collaboratorName: 'Cargo Inválido', positionId, hireDate: '2026-01-05' });
+    check('PDI: unknown, archived or other-organization cargo -> 400', (await A('POST', '/api/v1/development', pdiBody('pos-nope'))).status === 400 && (await A('POST', '/api/v1/development', pdiBody(archivedPos.id))).status === 400 && (await A('POST', '/api/v1/development', pdiBody(posB.id))).status === 400);
+    const pdiUnlink = await A('PATCH', `/api/v1/development/${pdiPos.json.developmentRecord.id}`, { positionId: null });
+    check('PDI: clearing the cargo unlinks it and keeps the last title as a label', pdiUnlink.status === 200 && pdiUnlink.json.developmentRecord.positionId === undefined && pdiUnlink.json.developmentRecord.jobTitle === 'Analista', pdiUnlink.json);
+    const pdiLookups = (await A('GET', '/api/v1/development')).json.lookups;
+    const allPositions = (await A('GET', '/api/v1/positions')).json.positions as any[];
+    check('PDI lookups offer the active registered cargos only; the hire PDI carries the registered cargo of the opening', pdiLookups.positions.some((c: any) => c.id === analystPos.id) && !pdiLookups.positions.some((c: any) => c.id === archivedPos.id) && !!hirePdi.positionId && allPositions.find(c => c.id === hirePdi.positionId)?.title === hirePdi.jobTitle, [pdiLookups.positions, hirePdi.positionId, hirePdi.jobTitle]);
     check('edit PDI: invalid next date / empty name -> 400', (await A('PATCH', `/api/v1/development/${ana.id}`, { nextReviewDate: 'amanhã' })).status === 400 && (await A('PATCH', `/api/v1/development/${ana.id}`, { collaboratorName: '  ' })).status === 400);
     check('edit PDI: unknown id -> 404', (await A('PATCH', '/api/v1/development/dev-nope', { jobTitle: 'x' })).status === 404);
     check('an empty PDI can be deleted', (await A('DELETE', `/api/v1/development/${ana.id}`)).status === 200 && !((await A('GET', '/api/v1/development')).json.developmentRecords ?? []).some((r: any) => r.id === ana.id));
@@ -1269,7 +1327,7 @@ async function main() {
     const tA = provA.json.tenant.id, tB = provB.json.tenant.id;
     check('new Scale orgs start with every module enabled', provA.json.tenant.enabledRoutines?.length === PLAN_ROUTINES.Scale.length && provB.json.tenant.enabledRoutines?.length === PLAN_ROUTINES.Scale.length && provA.json.tenant.enabledRoutines.includes('climate'), [provA.json.tenant.enabledRoutines?.length, provB.json.tenant.enabledRoutines?.length]);
     const toStarter = await T('PATCH', `/api/master/tenants/${tB}`, { plan: 'Starter', enabledRoutines: PLAN_ROUTINES.Starter });
-    check('plan preset: Starter has 11 modules and no AI / development / retention / indicators', toStarter.status === 200 && toStarter.json.tenant.enabledRoutines.length === 11 && !toStarter.json.tenant.enabledRoutines.some((k: string) => ['ai_evaluation', 'development', 'retention', 'climate', 'indicators'].includes(k)), toStarter.json);
+    check('plan preset: Starter has 11 modules and no AI / development / retention / indicators', toStarter.status === 200 && toStarter.json.tenant.enabledRoutines.length === 11 && !toStarter.json.tenant.enabledRoutines.some((k: string) => ['ai_evaluation', 'development', 'retention', 'retention_all', 'climate', 'indicators'].includes(k)), toStarter.json);
     const provStarter = await api('POST', '/api/master/tenants/provision', { token: adminToken, body: { name: `Smoke C ${suffix}`, slug: `smoke-c-${suffix}`, contactEmail: `admin-c-${suffix}@smoke.test`, adminUserName: 'Admin C', plan: 'Starter' } });
     createdTenantIds.push(provStarter.json.tenant?.id);
     check('provisioning a Starter org applies the Starter preset by default', provStarter.status === 201 && provStarter.json.tenant.enabledRoutines.length === 11, provStarter.json);
@@ -1293,7 +1351,7 @@ async function main() {
     check('/me reflects only the enabled modules', meA.permissions.every((p: string) => ['users', 'profiles', 'dna', 'openings'].includes(p.split(':')[0])), meA.permissions);
     check('org admin cannot hand out a blocked module (grant limit)', (await A('POST', '/api/v1/profiles', { name: 'Bloqueado', permissions: ['offers:view'] })).status === 403);
     check('storage quota follows the new plan (Starter)', (await T('GET', `/api/master/tenants/${tA}`)).json.tenant.dbConfig.maxStorageMb === 1024);
-    const restored = await T('PATCH', `/api/master/tenants/${tA}`, { plan: 'Scale', enabledRoutines: ['users', 'profiles', 'dna', 'structure', 'positions', 'openings', 'candidates', 'selection', 'ai_evaluation', 'interviews', 'offers', 'onboarding', 'development', 'retention', 'climate', 'indicators'] });
+    const restored = await T('PATCH', `/api/master/tenants/${tA}`, { plan: 'Scale', enabledRoutines: ['users', 'profiles', 'dna', 'structure', 'positions', 'openings', 'candidates', 'selection', 'ai_evaluation', 'interviews', 'offers', 'onboarding', 'development', 'retention', 'retention_all', 'climate', 'indicators'] });
     check('modules re-enabled: access returns immediately', restored.status === 200 && (await A('GET', '/api/v1/candidates')).status === 200 && (await A('GET', '/api/v1/offers')).status === 200);
     check('audit trail records the module change with a diff', (await T('GET', '/api/master/audit-logs?q=' + encodeURIComponent('módulos bloqueados') + '&category=ACCESS_CONTROL')).json.logs.some((l: any) => l.action === 'TENANT_UPDATED' && l.tenantId === tA));
 
@@ -1399,6 +1457,7 @@ async function main() {
     check('audit: LOGIN_SUCCEEDED + LOGIN_FAILED recorded', has('LOGIN_SUCCEEDED') && has('LOGIN_FAILED'));
     check('audit: PUBLIC_APPLICATION_RECEIVED recorded', has('PUBLIC_APPLICATION_RECEIVED', l => l.tenantId === provA.json.tenant.id));
     check('audit: alerts and surveys leave a PEOPLE_DATA trail, without the content of answers', has('TURNOVER_ALERT_OPENED', l => l.tenantId === provA.json.tenant.id && l.category === 'PEOPLE_DATA') && has('TURNOVER_ALERT_STATUS', l => l.tenantId === provA.json.tenant.id) && has('CLIMATE_SURVEY_PUBLISHED', l => l.tenantId === provA.json.tenant.id) && has('CLIMATE_SURVEY_CLOSED', l => l.tenantId === provA.json.tenant.id) && has('CLIMATE_COMMENT_HIDDEN', l => l.tenantId === provA.json.tenant.id) && !logs.some(l => /Cite Fulano de Tal|Bom time/.test(l.details)));
+    check('audit: the bulk link of cargos is recorded', has('USER_POSITIONS_LINKED', l => l.tenantId === provA.json.tenant.id));
     check('audit: no secret material in details', !logs.some(l => /Nova#Senha42|Admin@123|scrypt\$/.test(l.details)));
     check('audit: newest first', logs.every((l, i) => i === 0 || new Date(logs[i - 1].timestamp) >= new Date(l.timestamp)));
     const tel = (await api('GET', '/api/master/telemetry', { token: adminToken })).json.telemetry;

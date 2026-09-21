@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import { useTenant } from '../context/TenantContext.js';
 import { canAccessModule } from '../access.js';
 import { MODULE_SECTIONS } from '../moduleRegistry.js';
+import { usePendingSurveyCount } from '../hooks/usePendingSurveys.js';
 
 export interface SidebarProps {
   activeModule: number; // 1 to 15
@@ -22,6 +23,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseMobile
 }) => {
   const { activeTenant, permissions } = useTenant();
+  // Retenção: a badge shows how many climate surveys wait for the signed-in person's answer
+  const pendingSurveys = usePendingSurveyCount(activeTenant?.id, permissions.includes('climate:view'));
+  const badgeOf = (mod: { id: number; badge?: string }): string | undefined =>
+    mod.id === 14 && pendingSurveys > 0 ? `${pendingSurveys} ${pendingSurveys === 1 ? 'pesquisa' : 'pesquisas'}` : mod.badge;
 
   const visibleSections = MODULE_SECTIONS
     .map(sec => ({ ...sec, modules: sec.modules.filter(m => m.id === 16 || canAccessModule(permissions, m.id)) }))
@@ -59,9 +64,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 >
                   <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-500'}`} />
                   <span className="truncate flex-1">{mod.name}</span>
-                  {mod.badge && (
-                    <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${isActive ? 'bg-indigo-700 text-white' : 'bg-purple-100 text-purple-700'}`}>
-                      {mod.badge}
+                  {badgeOf(mod) && (
+                    <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded ${isActive ? 'bg-indigo-700 text-white' : mod.id === 14 ? 'bg-amber-100 text-amber-800' : 'bg-purple-100 text-purple-700'}`}>
+                      {badgeOf(mod)}
                     </span>
                   )}
                 </button>
@@ -102,7 +107,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   title={`${mod.name} - ${mod.desc}`}
                 >
                   <Icon className="w-5 h-5" />
-                  {mod.badge && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-purple-500 border-2 border-white"></span>}
+                  {badgeOf(mod) && <span className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border-2 border-white ${mod.id === 14 ? 'bg-amber-500' : 'bg-purple-500'}`}></span>}
                 </button>
               );
             })}

@@ -3,6 +3,9 @@ import { X, Eye, EyeOff, ShieldCheck, TrendingUp, TrendingDown, Users, Lock } fr
 import { CLIMATE_CATEGORIES, type BlockResult, type CampaignResults, type QuestionResult } from '../../types.js';
 import { CATEGORY_LABEL, ZONE_LABEL } from '../../retention.js';
 import { useBackdropClose } from '../../hooks/useBackdropClose.js';
+import { useTenant } from '../../context/TenantContext.js';
+import { ExportButton } from '../ExportButton.js';
+import { exportClimateResultsToCSV, exportClimateResultsToPDF } from '../../utils/climateExport.js';
 import { TenantApi } from '../../services/api.js';
 import { formatDateSP } from '../../utils/dateUtils.js';
 import { CAMPAIGN_STATUS_LABEL, CAMPAIGN_STATUS_STYLE, ZONE_STYLE_LIGHT, formatEnps } from '../../utils/retentionUtils.js';
@@ -107,6 +110,7 @@ const BlockResultCard: React.FC<{ block: BlockResult; minGroup: number; canEdit:
 export const CampaignResultsModal: React.FC<Props> = ({ campaignId, canEdit, onClose }) => {
   const [results, setResults] = useState<CampaignResults | null>(null);
   const [error, setError] = useState('');
+  const { activeTenant } = useTenant();
   const backdrop = useBackdropClose(onClose);
 
   const load = async () => {
@@ -275,7 +279,14 @@ export const CampaignResultsModal: React.FC<Props> = ({ campaignId, canEdit, onC
           )}
         </div>
 
-        <div className="p-4 border-t border-slate-100 flex justify-end">
+        <div className="p-4 border-t border-slate-100 flex items-center justify-between gap-2">
+          {results ? (
+            <ExportButton
+              label="Exportar resultado"
+              onExportCSV={() => exportClimateResultsToCSV(results, activeTenant?.name ?? 'Organização')}
+              onExportPDF={() => { void exportClimateResultsToPDF(results, activeTenant?.name ?? 'Organização'); }}
+            />
+          ) : <span />}
           <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-medium text-xs">Fechar</button>
         </div>
       </div>

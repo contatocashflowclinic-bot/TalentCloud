@@ -22,7 +22,7 @@ import {
   addGoal, addMeeting, buildGoal, cleanText, editMeeting, isMeetingEventId, parseRecordFields, parseTime, removeGoal, removeMeeting,
   todaySP, updateGoal, type RecordRefs
 } from './tenant/development.js';
-import { changeAlertStatus, editAlert, parseAlertFields, registerAction } from './tenant/retention.js';
+import { alertInScope, changeAlertStatus, editAlert, parseAlertFields, personInTeam, registerAction } from './tenant/retention.js';
 import {
   buildCampaign, buildCampaignResults, buildClimateOverview, closeCampaign, editCampaign, isEligible, parseAnswer, publishCampaign,
   type CampaignRefs
@@ -39,7 +39,8 @@ import {
   type OfferDocumentCategory,
   type OneOnOneMeeting,
   type OnboardingChecklistItem,
-  type RiskLevel
+  type RiskLevel,
+  type TurnoverRiskAlert
 } from '../src/types.js';
 
 // Augment Express Request interface with tenantContext
@@ -66,6 +67,8 @@ const csv = (value: unknown): string[] =>
 
 const csvLines = (value: unknown): string[] =>
   Array.isArray(value) ? value.map(v => String(v).trim()).filter(Boolean) : String(value ?? '').split('\n').map(s => s.trim()).filter(Boolean);
+
+const isBlankId = (value: unknown) => value === undefined || value === null || value === '';
 
 const required = (value: unknown, label: string): string => {
   if (typeof value !== 'string' || !value.trim()) throw new ValidationError(`Campo obrigatório: ${label}`);
@@ -563,6 +566,21 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   app.get('/api/v1/users/position-options', can('users:view'), h(async (req, res) => {
     const positions = (await ctx(req).db.positions.list()).filter(p => p.status === 'active');
     res.json({ success: true, positions: positions.map(p => ({ id: p.id, title: p.title, departmentId: p.departmentId })) });
+  }));
+
+  // People with no registered Cargo (and the Cargo their old title matches exactly), to link many at once.
+  app.get('/api/v1/users/unlinked', can('users:edit'), h(async (req, res) => {
+    res.json({ success: true, ...(await AccessService.unlinkedMembers(getPool(), ctx(req).tenant.id)) });
+  }));
+
+  app.post('/api/v1/users/positions', can('users:edit'), h(async (req, res) => {
+    const { tenant } = ctx(req);
+    const linked = await accessTx(async tx => {
+      const count = await AccessService.linkPositions(tx, tenant.id, req.body?.links);
+      await audit(req, 'USER_POSITIONS_LINKED', `Cargos cadastrados vinculados em lote a ${count} pessoa(s)`, tx);
+      return count;
+    });
+    res.json({ success: true, linked });
   }));
 
   app.get('/api/v1/users', can('users:view'), h(async (req, res) => {
@@ -1625,8 +1643,12 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // na Agenda (`nextMeeting`, ou null). As regras estão em tenant/development.ts; a ligação com a Agenda, no repositório.
   // ---------------------------------------------------------
   const developmentRefs = async (db: TenantConnectionContext['db']): Promise<RecordRefs> => {
-    const [departments, users] = await Promise.all([db.departments.list(), db.users.list()]);
-    return { departmentIds: new Set(departments.map(d => d.id)), memberIds: new Set(users.map(u => u.id)) };
+    const [departments, users, positions] = await Promise.all([db.departments.list(), db.users.list(), db.positions.list()]);
+    return {
+      departmentIds: new Set(departments.map(d => d.id)),
+      memberIds: new Set(users.map(u => u.id)),
+      positionTitles: new Map(positions.filter(p => p.status === 'active').map(p => [p.id, p.title] as const))
+    };
   };
 
   /**
@@ -1743,6 +1765,27 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
       databaseAffected
     });
 
+  /**
+   * Alerts are sensitive. Without `retention_all:view` (Admin and RH have it) a person sees only the alerts of their team:
+   * the ones they opened or own, and those of people whose PDI they manage or whose department they head.
+   */
+  const alertAccess = async (req: Request) => {
+    if (req.auth!.permissions.includes('retention_all:view')) {
+      return { all: true, visible: (_alert: TurnoverRiskAlert) => true, inTeam: (_person: { id: string; departmentId?: string }) => true };
+    }
+    const data = await ctx(req).db.alertScopeData();
+    const viewer = req.auth!.id;
+    return {
+      all: false,
+      visible: (alert: TurnoverRiskAlert) => alertInScope(alert, viewer, data),
+      inTeam: (person: { id: string; departmentId?: string }) => personInTeam(person, viewer, data)
+    };
+  };
+  /** An alert outside the viewer's team does not exist for them. */
+  const guardAlert = (visible: (alert: TurnoverRiskAlert) => boolean) => (alert: TurnoverRiskAlert) => {
+    if (!visible(alert)) throw new NotFoundError('Alerta não encontrado');
+  };
+
   app.get('/api/v1/retention', can('retention:view'), h(async (req, res) => {
     const { db } = ctx(req);
     const [turnoverAlerts, campaigns, responses, lookups, indicators, records, surveyTemplates, positions, unlinkedMembers] = await Promise.all([
@@ -1757,7 +1800,9 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
       db.unlinkedMembersCount()
     ]);
 
-    const active = turnoverAlerts.filter(a => isActiveAlert(a.status));
+    const access = await alertAccess(req);
+    const myAlerts = turnoverAlerts.filter(access.visible);
+    const active = myAlerts.filter(a => isActiveAlert(a.status));
     const alertsByRisk: Record<RiskLevel, number> = { Baixo: 0, Médio: 0, Alto: 0 };
     for (const a of active) alertsByRisk[a.riskLevel]++;
     // Retention at 90 days is the complement of the early turnover of the Indicadores module (same source, same number).
@@ -1771,22 +1816,26 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
       activeAlerts: active.length,
       retention90Rate: hasBase ? Math.round((100 - indicators!.earlyTurnover90DaysRate) * 10) / 10 : null
     };
+    const alertPeople = new Set(myAlerts.map(a => a.collaboratorId));
     res.json({
       success: true,
-      turnoverAlerts,
+      alertScope: access.all ? 'all' : 'team',
+      turnoverAlerts: myAlerts,
       campaigns,
       surveyTemplates,
       positions,
       unlinkedMembers,
       metrics,
       lookups,
-      developmentLinks: Object.fromEntries(records.map(r => [r.collaboratorId, r.id]))
+      developmentLinks: Object.fromEntries(records.filter(r => alertPeople.has(r.collaboratorId)).map(r => [r.collaboratorId, r.id]))
     });
   }));
 
   // Quem ainda pode ganhar um alerta (PDIs, contratações em onboarding e membros sem alerta ativo)
   app.get('/api/v1/retention/people', can('retention:edit'), h(async (req, res) => {
-    res.json({ success: true, people: await ctx(req).db.retentionPeople() });
+    const access = await alertAccess(req);
+    const people = await ctx(req).db.retentionPeople();
+    res.json({ success: true, people: access.all ? people : people.filter(p => access.inTeam(p)) });
   }));
 
   app.post('/api/v1/retention/alert', can('retention:edit'), h(async (req, res) => {
@@ -1796,31 +1845,38 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     const collaboratorId = b.collaboratorId === undefined || b.collaboratorId === null || b.collaboratorId === ''
       ? newId('colab')
       : cleanText(b.collaboratorId, 'Colaborador', 80);
-    const alert = await db.createAlert(collaboratorId, fields, req.auth!.name);
+    const access = await alertAccess(req);
+    if (!access.all && !isBlankId(b.collaboratorId) && !access.inTeam({ id: collaboratorId, departmentId: fields.departmentId as string | undefined })) {
+      throw new ForbiddenError('Você só pode abrir alertas para pessoas da sua equipe.');
+    }
+    const alert = await db.createAlert(collaboratorId, fields, req.auth!.name, req.auth!.id);
     await peopleAudit(req, 'TURNOVER_ALERT_OPENED', `Alerta de turnover aberto para ${alert.collaboratorName} (risco ${alert.riskLevel})`, 'turnover_alerts');
     res.status(201).json({ success: true, alert });
   }));
 
   app.patch('/api/v1/retention/alert/:id', can('retention:edit'), h(async (req, res) => {
     const { db } = ctx(req);
-    const refs = await db.developmentLookups();
-    const alert = await db.changeAlert(req.params.id, current => editAlert(current, req.body ?? {}, refs, req.auth!.name));
+    const [refs, access] = await Promise.all([db.developmentLookups(), alertAccess(req)]);
+    const guard = guardAlert(access.visible);
+    const alert = await db.changeAlert(req.params.id, current => { guard(current); return editAlert(current, req.body ?? {}, refs, req.auth!.name); });
     res.json({ success: true, alert });
   }));
 
   app.post('/api/v1/retention/alert/:id/actions', can('retention:edit'), h(async (req, res) => {
-    const alert = await ctx(req).db.changeAlert(req.params.id, current => registerAction(current, req.body ?? {}, req.auth!.name));
+    const guard = guardAlert((await alertAccess(req)).visible);
+    const alert = await ctx(req).db.changeAlert(req.params.id, current => { guard(current); return registerAction(current, req.body ?? {}, req.auth!.name); });
     res.status(201).json({ success: true, alert });
   }));
 
   app.post('/api/v1/retention/alert/:id/status', can('retention:edit'), h(async (req, res) => {
-    const alert = await ctx(req).db.changeAlert(req.params.id, current => changeAlertStatus(current, req.body ?? {}, req.auth!.name));
+    const guard = guardAlert((await alertAccess(req)).visible);
+    const alert = await ctx(req).db.changeAlert(req.params.id, current => { guard(current); return changeAlertStatus(current, req.body ?? {}, req.auth!.name); });
     await peopleAudit(req, 'TURNOVER_ALERT_STATUS', `Alerta de ${alert.collaboratorName}: situação alterada para "${ALERT_STATUS_LABEL[alert.status]}"`, 'turnover_alerts');
     res.json({ success: true, alert });
   }));
 
   app.delete('/api/v1/retention/alert/:id', can('retention:edit'), h(async (req, res) => {
-    await ctx(req).db.deleteAlert(req.params.id);
+    await ctx(req).db.deleteAlert(req.params.id, guardAlert((await alertAccess(req)).visible));
     await peopleAudit(req, 'TURNOVER_ALERT_DELETED', `Alerta de turnover ${req.params.id} excluído`, 'turnover_alerts');
     res.json({ success: true });
   }));

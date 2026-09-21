@@ -37,7 +37,7 @@ interface Pending {
   run: () => Promise<void>;
 }
 
-const NO_LOOKUPS: DevelopmentLookups = { departments: [], members: [] };
+const NO_LOOKUPS: DevelopmentLookups = { departments: [], members: [], positions: [] };
 
 interface ModuleDevelopmentProps {
   /** PDI to open first (e.g. coming from a turnover alert in the Retention module). */
@@ -161,7 +161,11 @@ export const ModuleDevelopment: React.FC<ModuleDevelopmentProps> = ({ initialRec
   // ---- Form definitions -------------------------------------------------------------------
   const recordFields = (time?: string): FieldDef[] => [
     { key: 'collaboratorName', label: 'Nome do colaborador', type: 'text', required: true },
-    { key: 'jobTitle', label: 'Cargo', type: 'text', required: true, half: true },
+    {
+      key: 'positionId', label: 'Cargo', type: 'select', nullable: true, half: true,
+      options: lookups.positions.map(p => ({ value: p.id, label: p.title })),
+      help: 'Só cargos do módulo Cargos. Para incluir um novo, cadastre-o lá.'
+    },
     {
       key: 'departmentId', label: 'Departamento', type: 'select', nullable: true, half: true,
       options: lookups.departments.map(d => ({ value: d.id, label: d.name }))
@@ -203,7 +207,7 @@ export const ModuleDevelopment: React.FC<ModuleDevelopmentProps> = ({ initialRec
       case 'record-new': {
         const { person } = modal;
         const initial: Record<string, unknown> = person
-          ? { collaboratorName: person.name, jobTitle: person.jobTitle, departmentId: person.departmentId, hireDate: person.hireDate ?? '', nextReviewTime: DEFAULT_MEETING_TIME }
+          ? { collaboratorName: person.name, positionId: person.positionId, departmentId: person.departmentId, hireDate: person.hireDate ?? '', nextReviewTime: DEFAULT_MEETING_TIME }
           : { nextReviewTime: DEFAULT_MEETING_TIME };
         return (
           <EditFormModal

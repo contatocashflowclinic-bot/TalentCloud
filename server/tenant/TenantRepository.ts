@@ -44,7 +44,7 @@ import {
 } from './development.js';
 import { assertCampaignRemovable, isEligible, withEffectiveStatus, type ParsedAnswer } from './climate.js';
 import { parseBlockAnswers, toPendingBlocks, visibleBlocks } from './surveyBlocks.js';
-import { assertAlertRemovable, buildAlert, normName, type AlertPatch } from './retention.js';
+import { assertAlertRemovable, buildAlert, buildScopeData, normName, type AlertPatch, type AlertScopeData } from './retention.js';
 import { isActiveAlert, sentimentOf } from '../../src/retention.js';
 import { buildChecklistItems, DEFAULT_INTEGRATION_TEMPLATES } from './integration.js';
 import { newId } from '../ids.js';
@@ -369,11 +369,13 @@ export class TenantRepository {
 
     // Development: the hire gets an empty PDI, so goals and 1:1s can start as soon as the person joins.
     if (!(await this.development.list(tx)).some(r => r.collaboratorId === offer.candidateId)) {
+      const position = job?.positionId ? await this.positions.get(job.positionId, tx) : undefined;
       await this.development.insert({
         id: `dev-${offer.id}`,
         collaboratorId: offer.candidateId,
         collaboratorName: candidate?.name ?? 'Candidato',
-        jobTitle: job?.title ?? 'Cargo a definir',
+        jobTitle: position?.title ?? job?.title ?? 'Cargo a definir',
+        positionId: position?.id,
         departmentId: job?.departmentId,
         managerId: job?.hiringManagerId,
         hireDate: offer.startDate,
@@ -701,10 +703,11 @@ export class TenantRepository {
   }
 
   async developmentLookups(): Promise<DevelopmentLookups> {
-    const [users, departments] = await Promise.all([this.users.list(), this.departments.list()]);
+    const [users, departments, positions] = await Promise.all([this.users.list(), this.departments.list(), this.positions.list()]);
     return {
       departments: departments.map(d => ({ id: d.id, name: d.name })),
-      members: users.filter(u => u.active).map(u => ({ id: u.id, name: u.name, jobTitle: u.jobTitle }))
+      members: users.filter(u => u.active).map(u => ({ id: u.id, name: u.name, jobTitle: u.jobTitle })),
+      positions: positions.filter(p => p.status === 'active').map(p => ({ id: p.id, title: p.title, departmentId: p.departmentId }))
     };
   }
 
@@ -724,7 +727,7 @@ export class TenantRepository {
       offer({ id: j.candidateId, name: j.candidateName, jobTitle: j.jobTitle, departmentId: j.departmentId, hireDate: j.hireDate, origin: 'hire' });
     }
     for (const u of users.filter(u => u.active)) {
-      offer({ id: u.id, name: u.name, jobTitle: u.jobTitle, departmentId: u.departmentId, origin: 'member' });
+      offer({ id: u.id, name: u.name, jobTitle: u.jobTitle, departmentId: u.departmentId, positionId: u.positionId, origin: 'member' });
     }
     return people;
   }
@@ -738,11 +741,11 @@ export class TenantRepository {
     if (clash) throw new ConflictError(`Já existe um alerta ativo para ${clash.collaboratorName}. Acompanhe ou encerre o alerta existente.`);
   }
 
-  async createAlert(collaboratorId: string, fields: AlertPatch, by: string): Promise<TurnoverRiskAlert> {
+  async createAlert(collaboratorId: string, fields: AlertPatch, by: string, byId?: string): Promise<TurnoverRiskAlert> {
     return withTransaction(async tx => {
       await tx.query('select pg_advisory_xact_lock(hashtext($1))', [`alert:${this.tenantId}:${collaboratorId}`]);
       this.assertNoActiveAlert(await this.turnoverAlerts.list(tx), collaboratorId, String(fields.collaboratorName));
-      return this.turnoverAlerts.insert(buildAlert(collaboratorId, fields, by), tx);
+      return this.turnoverAlerts.insert(buildAlert(collaboratorId, fields, by, byId), tx);
     });
   }
 
@@ -761,13 +764,21 @@ export class TenantRepository {
     });
   }
 
-  async deleteAlert(alertId: string): Promise<void> {
+  /** `guard` may refuse (e.g. the alert is outside the viewer's team) before anything is deleted. */
+  async deleteAlert(alertId: string, guard?: (alert: TurnoverRiskAlert) => void): Promise<void> {
     await withTransaction(async tx => {
       const alert = await getRow<TurnoverRiskAlert>(TABLES.turnoverAlerts, this.tenantId, alertId, tx, true);
       if (!alert) throw new NotFoundError('Alerta não encontrado');
+      guard?.(alert);
       assertAlertRemovable(alert);
       await this.turnoverAlerts.delete(alertId, tx);
     });
+  }
+
+  /** Who reports to whom (PDI managers, department heads, members' departments): the base of the alert team scope. */
+  async alertScopeData(): Promise<AlertScopeData> {
+    const [records, departments, users] = await Promise.all([this.development.list(), this.departments.list(), this.users.list()]);
+    return buildScopeData(records, departments, users);
   }
 
   /** Who an alert can still be opened for: PDI collaborators, hires in onboarding and active members (nobody with an active alert). */

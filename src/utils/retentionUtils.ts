@@ -1,6 +1,9 @@
 import type { AlertStatus, CampaignStatus, EnpsZone, RiskLevel, TurnoverRiskAlert } from '../types.js';
 import { isActiveAlert } from '../retention.js';
 
+/** Fired after a survey answer is sent, so the banner and the menu badge can refresh. */
+export const CLIMATE_ANSWERED_EVENT = 'talentcloud:climate-answered';
+
 export const RISK_STYLE: Record<RiskLevel, string> = {
   Alto: 'bg-rose-100 text-rose-800',
   Médio: 'bg-amber-100 text-amber-800',

@@ -15,9 +15,9 @@
 | # | O que fazer | O que deve acontecer |
 |---|---|---|
 | B1 | Clique em **Novo PDI**. | Abre "Para quem é o plano de desenvolvimento?" com uma lista de pessoas: contratações em onboarding (selo **Contratação**) e usuários da organização (selo **Usuário da organização**). **Quem já tem PDI não aparece.** Há busca por nome/cargo. |
-| B2 | Escolha alguém da lista. | Abre o formulário **já preenchido** (nome, cargo, departamento e, para contratações, a data de admissão). |
+| B2 | Escolha alguém da lista. | Abre o formulário **já preenchido** (nome, cargo cadastrado, departamento e, para contratações, a data de admissão). |
 | B3 | Complete o que faltar (para usuários da organização, a **Data de admissão**; se quiser, **Gestor** e **Próximo 1:1**) e clique **Criar PDI**. | O PDI é criado e já fica selecionado, vazio: "Nenhuma meta neste PDI ainda", "Nenhum 1:1 registrado", **Progresso: Sem metas**, **Último 1:1: Nenhum ainda**, **Próximo 1:1: Não agendado**. |
-| B4 | **Novo PDI → Cadastrar quem não está na lista.** Preencha nome, cargo e admissão. | Cria o PDI de alguém que não está no sistema (ex.: colaborador antigo). |
+| B4 | **Novo PDI → Cadastrar quem não está na lista.** Preencha o nome e a admissão e escolha o **Cargo na lista** (só cargos do módulo **Cargos**; não existe campo para digitar o cargo, e ele pode ficar "sem cargo cadastrado"). | Cria o PDI de alguém que não está no sistema (ex.: colaborador antigo). |
 | B5 | Clique em **Criar PDI** com o nome ou a data de admissão em branco. | O navegador pede o campo obrigatório; nada é criado. |
 | B6 | **Contratação automática:** em **Proposta**, marque uma proposta como **Aceita** (ou use uma já aceita). Volte para **Desenvolvimento**. | O candidato contratado já tem um **PDI vazio**, com cargo, departamento, gestor da vaga e a data de início como admissão. Aceitar de novo **não** cria um segundo PDI. |
 
@@ -49,7 +49,7 @@
 
 | # | O que fazer | O que deve acontecer |
 |---|---|---|
-| E1 | Clique **Editar dados**, mude o cargo, o gestor e o **Próximo 1:1** (data e horário) e salve. | O cartão mostra os novos dados. Esvaziar a data do **Próximo 1:1** volta a "Não agendado". |
+| E1 | Clique **Editar dados**, mude o **Cargo** (escolhido na lista de cargos cadastrados), o gestor e o **Próximo 1:1** (data e horário) e salve. | O cartão mostra os novos dados. Esvaziar a data do **Próximo 1:1** volta a "Não agendado". |
 | E2 | Num PDI **sem nenhuma meta e sem nenhum 1:1**, clique **Excluir PDI** e confirme. | O PDI é excluído. (Se já tem meta ou 1:1, o botão **não aparece**.) |
 
 ## F. Permissões e organizações

@@ -467,6 +467,52 @@ export const AccessService = {
     return (await AccessService.getMember(db, tenantId, id))!;
   },
 
+  /**
+   * Active members with no registered Cargo, each with the Cargo its old title matches EXACTLY (when only one does), so
+   * the RH can link many people at once. The cargo is never typed: it is always one of the registered ones.
+   */
+  async unlinkedMembers(db: Queryable, tenantId: string) {
+    const [members, positions] = await Promise.all([
+      db.query('select id, name, email, job_title, department_id from public.tenant_users where tenant_id = $1 and active and position_id is null order by lower(name) limit 500', [tenantId]),
+      db.query("select id, title, department_id from public.job_positions where tenant_id = $1 and status = 'active' order by lower(title)", [tenantId])
+    ]);
+    const idsByTitle = new Map<string, string[]>();
+    for (const p of positions.rows) {
+      const key = String(p.title).trim().toLowerCase();
+      idsByTitle.set(key, [...(idsByTitle.get(key) ?? []), p.id as string]);
+    }
+    return {
+      members: members.rows.map(m => {
+        const match = idsByTitle.get(String(m.job_title).trim().toLowerCase());
+        return {
+          id: m.id as string, name: m.name as string, email: m.email as string, jobTitle: m.job_title as string,
+          ...(m.department_id ? { departmentId: m.department_id as string } : {}),
+          ...(match && match.length === 1 ? { suggestedPositionId: match[0] } : {})
+        };
+      }),
+      positions: positions.rows.map(p => ({ id: p.id as string, title: p.title as string, departmentId: p.department_id as string }))
+    };
+  },
+
+  /** Links several members to registered Cargos in one go (all or nothing). Returns how many were linked. */
+  async linkPositions(db: Queryable, tenantId: string, links: unknown): Promise<number> {
+    if (!Array.isArray(links) || links.length === 0) throw new ValidationError('Escolha ao menos um cargo para vincular.');
+    if (links.length > 200) throw new ValidationError('Vincule no máximo 200 pessoas por vez.');
+    const { rows } = await db.query("select id, title from public.job_positions where tenant_id = $1 and status = 'active'", [tenantId]);
+    const titles = new Map<string, string>(rows.map(r => [r.id as string, r.title as string]));
+    const seen = new Set<string>();
+    for (const link of links) {
+      const memberId = typeof link?.memberId === 'string' ? link.memberId : '';
+      const title = typeof link?.positionId === 'string' ? titles.get(link.positionId) : undefined;
+      if (!memberId || seen.has(memberId)) throw new ValidationError('Pessoa inválida ou repetida na lista.');
+      if (!title) throw new ValidationError('Cargo não encontrado no cadastro de Cargos desta organização (ou arquivado).');
+      seen.add(memberId);
+      const { rowCount } = await db.query('update public.tenant_users set position_id = $3, job_title = $4 where tenant_id = $1 and id = $2', [tenantId, memberId, link.positionId, title]);
+      if (!rowCount) throw new NotFoundError('Usuário não encontrado nesta organização.');
+    }
+    return links.length;
+  },
+
   /** The organization must always keep at least one other active administrator. */
   async assertAnotherAdmin(db: Queryable, tenantId: string, exceptMemberId: string): Promise<void> {
     const { rows } = await db.query(

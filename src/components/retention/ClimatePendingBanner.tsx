@@ -1,7 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { ClipboardList, ArrowRight } from 'lucide-react';
-import { TenantApi } from '../../services/api.js';
-import { CLIMATE_ANSWERED_EVENT } from './SurveyAnswerPanel.js';
+import { usePendingSurveyCount } from '../../hooks/usePendingSurveys.js';
 
 interface Props {
   tenantId?: string;
@@ -10,23 +9,7 @@ interface Props {
 
 /** "Você tem uma pesquisa aberta": aviso em destaque para quem ainda não respondeu. Some sozinho depois da resposta. */
 export const ClimatePendingBanner: React.FC<Props> = ({ tenantId, onOpen }) => {
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    let alive = true;
-    const load = () => {
-      TenantApi.getPendingSurveys()
-        .then(list => { if (alive) setCount(list.filter(s => !s.answered).length); })
-        .catch(() => { if (alive) setCount(0); });
-    };
-    load();
-    window.addEventListener(CLIMATE_ANSWERED_EVENT, load);
-    return () => {
-      alive = false;
-      window.removeEventListener(CLIMATE_ANSWERED_EVENT, load);
-    };
-  }, [tenantId]);
-
+  const count = usePendingSurveyCount(tenantId, true);
   if (count === 0) return null;
 
   return (

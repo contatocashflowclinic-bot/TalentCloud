@@ -5,8 +5,7 @@ import { CATEGORY_LABEL } from '../../retention.js';
 import { TenantApi } from '../../services/api.js';
 import { formatDateSP } from '../../utils/dateUtils.js';
 
-/** Fired after an answer is sent, so the "you have a survey" notice can disappear. */
-export const CLIMATE_ANSWERED_EVENT = 'talentcloud:climate-answered';
+import { CLIMATE_ANSWERED_EVENT } from '../../utils/retentionUtils.js';
 
 const SCALE = Array.from({ length: 11 }, (_, i) => i);
 
