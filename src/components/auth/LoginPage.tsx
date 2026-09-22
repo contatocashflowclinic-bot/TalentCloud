@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lock, Mail, Loader2, AlertCircle } from 'lucide-react';
+import { Lock, Mail, Loader2, AlertCircle, ArrowLeft } from 'lucide-react';
 import { BrandLogo } from '../BrandLogo.js';
 import { useAuth } from '../../context/AuthContext.js';
 
@@ -92,6 +92,14 @@ export const LoginPage: React.FC = () => {
             {loading && <Loader2 className="w-4 h-4 animate-spin" />}
             {loading ? 'Entrando...' : 'Entrar'}
           </button>
+
+          <a
+            href='/'
+            className='flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 transition-colors hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700'
+          >
+            <ArrowLeft className='h-4 w-4' />
+            Ir para o site
+          </a>
         </form>
 
         <p className="text-center text-[11px] text-indigo-300/80 mt-5">
