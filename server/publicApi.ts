@@ -16,6 +16,8 @@ import { TenantRepository } from './tenant/TenantRepository.js';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const APPLY_WINDOW_SECONDS = 60 * 60;
+const DEMO_PAIN = new Set(['hiring', 'consistency', 'development', 'retention', 'scattered_data', 'indicators', 'other']);
+const EMPLOYEE_RANGE = new Set(['1-20', '21-50', '51-100', '101-250', '251-500', '500+']);
 
 /** Writes per IP per hour (PUBLIC_APPLY_LIMIT, default 10). The counter lives in the database, shared by every instance. */
 const assertApplyRate = (ip: string, tx: PoolClient) =>
@@ -26,6 +28,11 @@ const assertApplyRate = (ip: string, tx: PoolClient) =>
     'Muitas candidaturas deste endereço. Tente novamente mais tarde.',
     tx
   );
+
+const assertDemoRate = async (requestIp: string, email: string, tx: PoolClient) => {
+  await consumeQuota('public-demo-ip', [requestIp], { limit: 8, windowSeconds: 86_400 }, 'Muitas solicitacoes deste endereco. Tente novamente amanha.', tx);
+  await consumeQuota('public-demo-email', [email], { limit: 3, windowSeconds: 604_800 }, 'Ja recebemos suas solicitacoes. Nossa equipe entrara em contato.', tx);
+};
 
 const text = (v: unknown, label: string, max: number, requiredField = false): string => {
   const s = typeof v === 'string' ? v.trim() : '';
@@ -44,6 +51,37 @@ const list = (v: unknown, label: string, maxItems: number, maxLen: number): stri
 const ip = (req: Request) => req.ip || '127.0.0.1';
 
 export function registerPublicApi(app: Express, router: TenantConnectionRouter) {
+  app.post('/api/public/demo-requests', async (req, res, next) => {
+    try {
+      const b = req.body ?? {};
+      if (text(b.website, 'Website', 200)) return res.status(201).json({ success: true });
+      const email = text(b.email, 'E-mail', 254, true).toLowerCase();
+      if (!EMAIL_RE.test(email)) throw new ValidationError('E-mail invalido.');
+      const phone = text(b.phone, 'Telefone', 30, true);
+      if (phone.replace(/\D/g, '').length < 8) throw new ValidationError('Telefone invalido.');
+      const pain = text(b.pain, 'Desafio', 40, true);
+      const employeeRange = text(b.employeeRange, 'Numero de colaboradores', 20, true);
+      const preferredDate = text(b.preferredDate, 'Data preferida', 10, true);
+      const preferredPeriod = text(b.preferredPeriod, 'Periodo', 20, true);
+      if (!DEMO_PAIN.has(pain)) throw new ValidationError('Escolha um desafio valido.');
+      if (!EMPLOYEE_RANGE.has(employeeRange)) throw new ValidationError('Escolha o numero de colaboradores.');
+      if (!['morning', 'afternoon'].includes(preferredPeriod)) throw new ValidationError('Escolha um periodo valido.');
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(preferredDate) || preferredDate < today) throw new ValidationError('Escolha uma data futura.');
+      if (b.consent !== true) throw new ValidationError('Confirme o consentimento para o contato.');
+      const leadId = newId('lead');
+      await withTransaction(async tx => {
+        await assertDemoRate(ip(req), email, tx);
+        await tx.query('insert into public.sales_leads (id, name, email, phone, company, role_title, employee_range, pain, pain_details, preferred_date, preferred_period, consent_at) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date, $11, now())', [
+          leadId, text(b.name, 'Nome', 120, true), email, phone, text(b.company, 'Empresa', 160, true),
+          text(b.roleTitle, 'Cargo', 120, true), employeeRange, pain, text(b.painDetails, 'Contexto', 1500), preferredDate, preferredPeriod
+        ]);
+        await logAudit({ tenantId: '', userId: leadId, userName: 'Pagina de Vendas', action: 'SALES_LEAD_RECEIVED', category: 'SALES_CRM', details: 'Nova solicitacao de demonstracao recebida.', ipAddress: ip(req), databaseAffected: 'sales_leads' }, tx);
+      });
+      res.status(201).json({ success: true, leadId });
+    } catch (err) { next(err); }
+  });
+
   app.get('/api/public/:slug/careers', async (req, res, next) => {
     try {
       const tenant = await router.getPublicTenant(req.params.slug);

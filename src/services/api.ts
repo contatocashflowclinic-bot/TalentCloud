@@ -50,7 +50,9 @@ import {
   ScreeningAllowance,
   ScreeningDecisionAction,
   ScreeningDecisionItem,
-  ScreeningDecisionResult
+  ScreeningDecisionResult,
+  SalesLead,
+  SalesLeadStatus
 } from '../types.js';
 
 // ---- Session (token kept in localStorage; server stores only its hash) ----
@@ -247,6 +249,26 @@ function membersApi(base: string, members: 'users' | 'members', withPositions = 
 }
 
 // Master / SuperAdmin APIs
+export interface DemoRequestInput {
+  name: string;
+  email: string;
+  phone: string;
+  company: string;
+  roleTitle: string;
+  employeeRange: string;
+  pain: string;
+  painDetails?: string;
+  preferredDate: string;
+  preferredPeriod: 'morning' | 'afternoon';
+  consent: boolean;
+  website?: string;
+}
+
+export const PublicSalesApi = {
+  requestDemo: async (payload: DemoRequestInput) =>
+    await request<{ success: boolean; leadId: string }>('/api/public/demo-requests', { method: 'POST', body: JSON.stringify(payload) })
+};
+
 export const MasterApi = {
   getTenantsPage: async (q: { search?: string; page?: number; pageSize?: number } = {}) => {
     const res = await request<{ success: boolean; tenants: Tenant[]; total: number; page: number; pageSize: number }>(
@@ -334,6 +356,12 @@ export const MasterApi = {
     );
   },
   // Uso da IA: créditos, consumo e limites
+  getLeads: async (q: { status?: string; q?: string; page?: number; pageSize?: number } = {}) => {
+    const res = await request<{ success: boolean; leads: SalesLead[]; total: number; page: number; pageSize: number; counts: Record<string, number> }>('/api/master/leads' + qs(q));
+    return { items: res.leads, total: res.total, page: res.page, pageSize: res.pageSize, counts: res.counts };
+  },
+  updateLead: async (id: string, payload: { status: SalesLeadStatus; commercialNotes: string; nextFollowUpAt?: string; assignedTo?: string }) =>
+    (await request<{ success: boolean; lead: SalesLead }>('/api/master/leads/' + id, { method: 'PATCH', body: JSON.stringify(payload) })).lead,
   getAiUsage: async (period: AiUsagePeriod) =>
     (await request<{ success: boolean; overview: AiUsageOverview }>(`/api/master/ai/overview${qs({ period })}`)).overview,
   /** Only the fields present are changed; null / empty clears an optional field. */

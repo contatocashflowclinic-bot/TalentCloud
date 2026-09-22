@@ -1231,10 +1231,36 @@ export interface SystemAuditLog {
   userId: string;
   userName: string;
   action: string;
-  category: 'TENANT_ROUTING' | 'DB_PROVISIONING' | 'ACCESS_CONTROL' | 'AI_EXECUTION' | 'CANDIDATE_DATA' | 'PEOPLE_DATA';
+  category: 'TENANT_ROUTING' | 'DB_PROVISIONING' | 'ACCESS_CONTROL' | 'AI_EXECUTION' | 'CANDIDATE_DATA' | 'PEOPLE_DATA' | 'SALES_CRM';
   details: string;
   ipAddress: string;
   databaseAffected: string;
+}
+
+export type SalesLeadStatus = 'new' | 'contacted' | 'scheduled' | 'qualified' | 'won' | 'lost';
+export type SalesLeadPain = 'hiring' | 'consistency' | 'development' | 'retention' | 'scattered_data' | 'indicators' | 'other';
+
+export interface SalesLead {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  name: string;
+  email: string;
+  phone: string;
+  company: string;
+  roleTitle: string;
+  employeeRange: string;
+  pain: SalesLeadPain;
+  painDetails?: string;
+  preferredDate: string;
+  preferredPeriod: 'morning' | 'afternoon';
+  timezone: string;
+  status: SalesLeadStatus;
+  commercialNotes: string;
+  nextFollowUpAt?: string;
+  consentAt: string;
+  source: string;
+  assignedTo?: string;
 }
 
 // Authentication

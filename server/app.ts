@@ -6,6 +6,7 @@ import { registerScreeningApi } from './screeningApi.js';
 import { assessAllowance, getAiSettings, getUsageOverview, isPeriod, recordUsage, setOrgLimit, updateAiSettings } from './aiUsage.js';
 import { hideShadowingEstimates, parseOrgLimit, parseSettingsPatch, shouldKeepPrevious } from './aiCost.js';
 import { getPool } from './db/pool.js';
+import { fromRow } from './db/crud.js';
 import { newId } from './ids.js';
 import { AppError, ConflictError, ForbiddenError, NotFoundError, TooManyRequestsError, ValidationError, toHttpError } from './errors.js';
 import { ALL_PERMISSIONS } from '../src/access.js';
@@ -440,6 +441,34 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // SuperAdmin Global Telemetry & Cross-Tenant Analytics
   app.get('/api/master/telemetry', h(async (req, res) => {
     res.json({ success: true, telemetry: await router.getGlobalTelemetry() });
+  }));
+
+  app.get('/api/master/leads', h(async (req, res) => {
+    const pageSize = Math.min(Math.max(Math.trunc(Number(req.query.pageSize) || 25), 1), 100);
+    const page = Math.max(Math.trunc(Number(req.query.page) || 1), 1);
+    const status = String(req.query.status ?? '');
+    const term = String(req.query.q ?? '').trim().toLowerCase();
+    const result = await getPool().query(
+      'select *, count(*) over ()::int as total_rows from public.sales_leads where (length($1) = 0 or status = $1) and (length($2) = 0 or position($2 in lower(name)) > 0 or position($2 in lower(company)) > 0 or position($2 in lower(email)) > 0) order by created_at desc limit $3 offset $4',
+      [status, term, pageSize, (page - 1) * pageSize]
+    );
+    const counts = await getPool().query('select status, count(*)::int as total from public.sales_leads group by status');
+    res.json({ success: true, leads: result.rows.map(({ total_rows: _total, ...row }) => fromRow({}, row)), total: result.rows[0]?.total_rows ?? 0, page, pageSize, counts: Object.fromEntries(counts.rows.map(r => [r.status, r.total])) });
+  }));
+
+  app.patch('/api/master/leads/:id', h(async (req, res) => {
+    const statuses = ['new', 'contacted', 'scheduled', 'qualified', 'won', 'lost'];
+    const status = String(req.body?.status ?? '');
+    if (!statuses.includes(status)) throw new ValidationError('Status comercial invalido.');
+    const notes = String(req.body?.commercialNotes ?? '').trim();
+    if (notes.length > 5000) throw new ValidationError('Observacoes excedem 5000 caracteres.');
+    const followUp = req.body?.nextFollowUpAt ? new Date(req.body.nextFollowUpAt) : null;
+    if (followUp && !Number.isFinite(followUp.getTime())) throw new ValidationError('Data de retorno invalida.');
+    const assignedTo = String(req.body?.assignedTo ?? '').trim() || null;
+    const result = await getPool().query('update public.sales_leads set status = $2, commercial_notes = $3, next_follow_up_at = $4, assigned_to = $5, updated_at = now() where id = $1 returning *', [req.params.id, status, notes, followUp, assignedTo]);
+    if (!result.rows[0]) throw new NotFoundError('Lead nao encontrado.');
+    await logAudit({ tenantId: '', userId: req.auth!.id, userName: req.auth!.name, action: 'SALES_LEAD_UPDATED', category: 'SALES_CRM', details: 'Lead comercial atualizado.', ipAddress: req.ip || '127.0.0.1', databaseAffected: 'sales_leads' });
+    res.json({ success: true, lead: fromRow({}, result.rows[0]) });
   }));
 
   // Master Audit Logs (Isolation, Provisioning, Routing trace)

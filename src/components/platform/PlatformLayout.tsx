@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Activity, Building2, Cpu, KeyRound, LogOut, ScrollText, ShieldCheck, ShieldAlert, Sparkles, UserCircle2, ChevronDown, Users } from 'lucide-react';
+import { Activity, Building2, Cpu, Handshake, KeyRound, LogOut, ScrollText, ShieldCheck, ShieldAlert, Sparkles, UserCircle2, ChevronDown, Users } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.js';
 import { SaoPauloClockBadge } from '../SaoPauloClockBadge.js';
 import { ChangePasswordModal } from '../auth/ChangePasswordModal.js';
@@ -8,9 +8,11 @@ import { ProvisionOrganizationModal } from '../ProvisionOrganizationModal.js';
 import { PlatformSection, SuperAdminConsole } from '../SuperAdminConsole.js';
 import { PlatformUsersPanel } from './PlatformUsersPanel.js';
 import { PlatformAiPanel } from './PlatformAiPanel.js';
+import { PlatformCrmPanel } from './PlatformCrmPanel.js';
 import { AppFooter } from '../AppFooter.js';
 
 const SECTIONS: Array<{ id: PlatformSection; name: string; desc: string; icon: React.ElementType }> = [
+  { id: 'leads', name: 'CRM', desc: 'Leads e demonstracoes', icon: Handshake },
   { id: 'overview', name: 'Visão geral', desc: 'Indicadores da plataforma', icon: Activity },
   { id: 'organizations', name: 'Organizações', desc: 'Clientes, planos e status', icon: Building2 },
   { id: 'users', name: 'Usuários', desc: 'Pessoas, vínculos e acessos', icon: Users },
@@ -134,7 +136,9 @@ export const PlatformLayout: React.FC = () => {
         </aside>
 
         <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8">
-          {section === 'users' ? (
+          {section === 'leads' ? (
+            <PlatformCrmPanel />
+          ) : section === 'users' ? (
             <PlatformUsersPanel />
           ) : section === 'ai' ? (
             <PlatformAiPanel />

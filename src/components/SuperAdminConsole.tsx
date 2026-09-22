@@ -27,7 +27,7 @@ import { OrganizationEditor } from './platform/OrganizationEditor.js';
 import { OrgAccessModal } from './platform/OrgAccessModal.js';
 import { ActionsMenu } from './platform/ActionsMenu.js';
 
-export type PlatformSection = 'overview' | 'organizations' | 'users' | 'ai' | 'audit';
+export type PlatformSection = 'overview' | 'leads' | 'organizations' | 'users' | 'ai' | 'audit';
 
 const STATUS_LABEL: Record<Tenant['status'], string> = {
   active: 'Ativo',
@@ -37,6 +37,7 @@ const STATUS_LABEL: Record<Tenant['status'], string> = {
 };
 
 const CATEGORY: Record<SystemAuditLog['category'], { label: string; style: string }> = {
+  SALES_CRM: { label: 'CRM Comercial', style: 'bg-orange-100 text-orange-800' },
   TENANT_ROUTING: { label: 'Roteamento de Tenant', style: 'bg-blue-100 text-blue-800' },
   DB_PROVISIONING: { label: 'Provisionamento', style: 'bg-purple-100 text-purple-800' },
   AI_EXECUTION: { label: 'Execução de IA', style: 'bg-emerald-100 text-emerald-800' },

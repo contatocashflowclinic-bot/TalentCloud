@@ -11,6 +11,7 @@ import { Header } from './components/Header.js';
 import { Sidebar } from './components/Sidebar.js';
 import { AppFooter } from './components/AppFooter.js';
 import { ClimatePendingBanner } from './components/retention/ClimatePendingBanner.js';
+import { SalesLandingPage } from './components/SalesLandingPage.js';
 
 // Each screen is its own chunk: the browser only downloads the modules (and heavy libs such as charts / PDF) that are opened.
 const PlatformLayout = lazy(() => import('./components/platform/PlatformLayout.js').then(m => ({ default: m.PlatformLayout })));
@@ -259,6 +260,7 @@ function Gate() {
   if (!isReady) {
     return <div className="min-h-screen flex items-center justify-center text-slate-400 text-xs animate-pulse">Validando sessão...</div>;
   }
+  if (!user && new URLSearchParams(window.location.search).get('view') !== 'login') return <SalesLandingPage />;
   if (!user) return <LoginPage />;
   if (needsOrgSelection) return <OrganizationPickerPage />;
   if (user.mustChangePassword) {
