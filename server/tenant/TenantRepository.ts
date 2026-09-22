@@ -534,16 +534,36 @@ export class TenantRepository {
       }, tx);
     }
 
-    // Selection pipeline: the candidate's application ends on the "hired" stage.
-    const application = (await this.applications.list(tx)).find(
-      a => a.candidateId === offer.candidateId && a.jobOpeningId === offer.jobOpeningId
-    );
+    // Selection pipeline: the candidate's application ends on the last stage of its own funnel.
+    // No stage template in this codebase actually has type 'hired' (the 5-stage default ends in 'proposal'), so
+    // looking for one always failed silently: the application kept its `status` correctly as 'hired', but
+    // `currentStageId` never moved — the Kanban card stayed stuck wherever the person was when the offer was
+    // accepted (e.g. still in a technical-assessment column). Falling back to the funnel's own last stage by
+    // `order` always resolves to a real stage, so the card reaches the end of the board it belongs to.
+    const allApplications = await this.applications.list(tx);
+    const application = allApplications.find(a => a.candidateId === offer.candidateId && a.jobOpeningId === offer.jobOpeningId);
     if (application && application.status !== 'hired') {
-      const hiredStage = job?.stages.find(s => s.type === 'hired');
+      const lastStage = job?.stages.length ? [...job.stages].sort((a, b) => b.order - a.order)[0] : undefined;
       await this.applications.update(application.id, {
         status: 'hired',
-        currentStageId: hiredStage?.id,
+        currentStageId: lastStage?.id ?? application.currentStageId,
         notes: [...application.notes, `[${new Date().toLocaleDateString('pt-BR')}] Proposta aceita — candidato contratado.`]
+      }, tx);
+    }
+
+    // The person is no longer available: any other active candidatura of theirs (to a different vaga) is closed,
+    // instead of being left open forever as if they were still being considered elsewhere.
+    const others = allApplications.filter(
+      a => a.candidateId === offer.candidateId && a.jobOpeningId !== offer.jobOpeningId
+        && a.status !== 'hired' && a.status !== 'rejected'
+    );
+    for (const other of others) {
+      await this.applications.update(other.id, {
+        status: 'rejected',
+        notes: [
+          ...other.notes,
+          `[${new Date().toLocaleDateString('pt-BR')}] Candidatura arquivada automaticamente: ${candidate?.name ?? 'a pessoa'} foi contratada para outra vaga (${job?.title ?? offer.jobOpeningId}).`
+        ]
       }, tx);
     }
 

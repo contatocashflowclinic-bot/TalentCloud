@@ -644,6 +644,13 @@ async function main() {
     check('profile defaults: RECRUITER holds openings:edit + candidates:edit and not structure:edit', (recruiterMe.json.user?.permissions ?? []).filter((p: string) => ['openings:edit', 'candidates:edit', 'structure:edit', 'positions:edit'].includes(p)).sort().join() === 'candidates:edit,openings:edit', recruiterMe);
 
     // ---- Contratação: o aceite abre o onboarding + pasta de admissão -----------------
+    // Setup for the "other processes die on hire" check below: the candidate has a second,
+    // still-open candidatura elsewhere BEFORE the offer is accepted (registerHire only runs
+    // its full logic once, guarded by the onboarding journey not existing yet — see below).
+    const otherJob = await A('POST', '/api/v1/openings', { title: 'Segunda Vaga (mesmo cargo)', positionId: posId, departmentId: deptId });
+    const otherApp = await A('POST', '/api/v1/applications', { candidateId: candId, jobOpeningId: otherJob.json.opening.id });
+    check('setup: candidate has a second, still-open candidatura elsewhere', otherApp.status === 201, otherApp.json);
+
     const accepted = await A('PATCH', `/api/v1/offers/${offer.json.offer.id}/status`, { status: 'accepted' });
     check('accept offer', accepted.json.offer?.status === 'accepted', accepted.json);
     const journeys = (await A('GET', '/api/v1/onboardings')).json.onboardings ?? [];
@@ -653,8 +660,22 @@ async function main() {
       journey?.admission?.length > 0 && journey.admission.some((i: any) => i.title === 'Contrato de trabalho assinado') && !journey.admission.some((i: any) => /prestação de serviços/.test(i.title)), journey?.admission?.length);
     await A('PATCH', `/api/v1/offers/${offer.json.offer.id}/status`, { status: 'accepted' });
     check('accepting twice does not duplicate the journey', ((await A('GET', '/api/v1/onboardings')).json.onboardings ?? []).filter((j: any) => j.candidateId === candId).length === 1);
-    check('application marked as hired', (await A('GET', '/api/v1/applications')).json.applications.find((a: any) => a.id === appId)?.status === 'hired');
+    const hiredApp = (await A('GET', '/api/v1/applications')).json.applications.find((a: any) => a.id === appId);
+    check('application marked as hired', hiredApp?.status === 'hired');
+    // No stage template ships type 'hired' (the default 5 stages end in 'proposal'): registerHire must fall back to
+    // the funnel's own last stage by `order`, or the Kanban card stays stuck wherever the offer was accepted from.
+    check('a hired application lands on the LAST stage of its own funnel (never stuck mid-pipeline)', hiredApp?.currentStageId === 'stg-5', hiredApp);
     check('opening seat counted once', (await A('GET', '/api/v1/openings')).json.openings.find((o: any) => o.id === jobId)?.filledCount === 1);
+
+    // Getting hired closes any OTHER open candidatura the same person has elsewhere: they are no longer available.
+    const otherAppAfter = (await A('GET', '/api/v1/applications')).json.applications.find((a: any) => a.id === otherApp.json.application.id);
+    check(
+      'a second open candidatura of the same (now hired) person is auto-archived, with a note explaining why',
+      otherAppAfter?.status === 'rejected' && /contratad[ao] para outra vaga/.test(otherAppAfter.notes.at(-1)),
+      otherAppAfter
+    );
+    // Close it like a real closed requisition would be, so it does not linger on the public careers portal below.
+    await A('PATCH', `/api/v1/openings/${otherJob.json.opening.id}`, { status: 'cancelled' });
 
     const upload = (token: string, jid: string, iid: string, body: Buffer | string, type: string, name = 'doc.pdf') =>
       fetch(`${BASE}/api/v1/onboardings/${jid}/admission/${iid}/file?name=${encodeURIComponent(name)}`, {
