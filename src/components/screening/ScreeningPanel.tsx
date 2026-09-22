@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Filter, CheckSquare, Square, ChevronRight, PauseCircle, Archive, Loader2, AlertTriangle, UserCheck } from 'lucide-react';
+import { Filter, CheckSquare, Square, ChevronRight, PauseCircle, Archive, Loader2, AlertTriangle, UserCheck, CheckCircle2, X } from 'lucide-react';
 import { TenantApi, ApiError } from '../../services/api.js';
 import type { JobOpening, ScreeningBoard, ScreeningRow, ScreeningDecisionAction } from '../../types.js';
 import { FLAG_LABEL, matchesFilter, type ScreeningFilter } from '../../screening.js';
@@ -15,6 +15,13 @@ const FIT_BADGE: Record<FitLevel, string> = {
   low: 'bg-rose-100 text-rose-800'
 };
 
+/** Texto da confirmação depois de uma decisão em lote (o que "Avançar" faz não aparece na tela de Triagem, que não mostra etapas — sem este aviso, parece que nada aconteceu). */
+const ACTION_DONE_LABEL: Record<ScreeningDecisionAction, string> = {
+  advance: 'avançada(s) para a próxima etapa',
+  hold: 'colocada(s) em espera',
+  archive: 'arquivada(s)'
+};
+
 const FILTERS: { id: ScreeningFilter; label: string }[] = [
   { id: 'all', label: 'Todas' },
   { id: 'high', label: 'Alta aderência' },
@@ -26,7 +33,13 @@ const FILTERS: { id: ScreeningFilter; label: string }[] = [
   { id: 'archived', label: 'Arquivadas' }
 ];
 
-export const ScreeningPanel: React.FC<{ job: JobOpening; onDataChanged?: () => void }> = ({ job, onDataChanged }) => {
+export const ScreeningPanel: React.FC<{
+  job: JobOpening;
+  onDataChanged?: () => void;
+  /** Candidatura sem currículo lido pela Triagem (ex.: veio do portal, ou foi avaliada antes desta funcionalidade existir):
+   * abre o resumo já existente da candidatura em vez de não fazer nada ao clicar na linha. */
+  onOpenApplication?: (applicationId: string) => void;
+}> = ({ job, onDataChanged, onOpenApplication }) => {
   const { canUpload, canDecide } = useScreeningAccess();
   const [board, setBoard] = useState<ScreeningBoard | null>(null);
   const [loading, setLoading] = useState(true);
@@ -37,6 +50,7 @@ export const ScreeningPanel: React.FC<{ job: JobOpening; onDataChanged?: () => v
   const [openFileId, setOpenFileId] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
   const [busyAction, setBusyAction] = useState(false);
+  const [feedback, setFeedback] = useState<{ tone: 'success' | 'warn'; message: string } | null>(null);
 
   const load = async () => {
     try {
@@ -74,18 +88,33 @@ export const ScreeningPanel: React.FC<{ job: JobOpening; onDataChanged?: () => v
 
   const runDecision = async (action: ScreeningDecisionAction, reason?: string) => {
     if (selectedRows.length === 0) return;
+    const nameOf = new Map(selectedRows.map(r => [r.applicationId, r.candidateName]));
     try {
       setBusyAction(true);
-      await TenantApi.decideScreening(
+      setFeedback(null);
+      const results = await TenantApi.decideScreening(
         job.id, action,
         selectedRows.map(r => ({ applicationId: r.applicationId, fromStageId: r.stageId })),
         reason
       );
+      const ok = results.filter(r => r.ok);
+      const failed = results.filter(r => !r.ok);
+      if (failed.length === 0) {
+        setFeedback({ tone: 'success', message: `${ok.length} candidatura(s) ${ACTION_DONE_LABEL[action]}.` });
+      } else {
+        const detail = failed.map(r => `${nameOf.get(r.applicationId) ?? r.applicationId}: ${r.message ?? 'falha desconhecida'}`).join(' · ');
+        setFeedback({
+          tone: 'warn',
+          message: ok.length > 0
+            ? `${ok.length} candidatura(s) ${ACTION_DONE_LABEL[action]}. ${failed.length} não puderam ser processadas — ${detail}`
+            : `Nenhuma candidatura pôde ser processada — ${detail}`
+        });
+      }
       setSelected(new Set());
       setArchiving(false);
       refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Falha ao aplicar a decisão.');
+      setFeedback({ tone: 'warn', message: err instanceof ApiError ? err.message : 'Falha ao aplicar a decisão.' });
     } finally {
       setBusyAction(false);
     }
@@ -97,6 +126,19 @@ export const ScreeningPanel: React.FC<{ job: JobOpening; onDataChanged?: () => v
 
   return (
     <div className="space-y-4">
+      {feedback && (
+        <div
+          className={`p-3 rounded-xl border text-xs flex items-start justify-between gap-3 ${
+            feedback.tone === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-amber-50 border-amber-200 text-amber-800'
+          }`}
+        >
+          <span className="flex items-start gap-1.5">
+            {feedback.tone === 'success' ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5" /> : <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />}
+            {feedback.message}
+          </span>
+          <button onClick={() => setFeedback(null)} className="shrink-0 opacity-60 hover:opacity-100"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      )}
       {board.criteria.blockers.length > 0 && (
         <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs space-y-1">
           <p className="font-semibold flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5" /> A triagem não pode rodar ainda:</p>
@@ -161,7 +203,8 @@ export const ScreeningPanel: React.FC<{ job: JobOpening; onDataChanged?: () => v
                 canDecide={canDecide}
                 checked={selected.has(row.applicationId)}
                 onToggle={() => toggle(row.applicationId)}
-                onOpen={() => row.file && setOpenFileId(row.file.id)}
+                clickable={!!row.file || !!onOpenApplication}
+                onOpen={() => (row.file ? setOpenFileId(row.file.id) : onOpenApplication?.(row.applicationId))}
               />
             ))}
             {rows.length === 0 && (
@@ -218,12 +261,15 @@ export const ScreeningPanel: React.FC<{ job: JobOpening; onDataChanged?: () => v
 };
 
 const ScreeningTableRow: React.FC<{
-  row: ScreeningRow; canDecide: boolean; checked: boolean; onToggle: () => void; onOpen: () => void;
-}> = ({ row, canDecide, checked, onToggle, onOpen }) => {
+  row: ScreeningRow; canDecide: boolean; checked: boolean; onToggle: () => void; onOpen: () => void; clickable: boolean;
+}> = ({ row, canDecide, checked, onToggle, onOpen, clickable }) => {
   const level = row.evaluation ? fitLevel(row.evaluation.overallFitScore) : null;
   const requirements = row.file?.summary?.requirements;
   return (
-    <tr className={`hover:bg-slate-50/80 cursor-pointer ${row.applicationStatus === 'rejected' ? 'opacity-60' : ''}`} onClick={onOpen}>
+    <tr
+      className={`${clickable ? 'hover:bg-slate-50/80 cursor-pointer' : 'cursor-default'} ${row.applicationStatus === 'rejected' ? 'opacity-60' : ''}`}
+      onClick={clickable ? onOpen : undefined}
+    >
       {canDecide && (
         <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
           <button onClick={onToggle} className="text-slate-400 hover:text-indigo-600">
@@ -254,7 +300,7 @@ const ScreeningTableRow: React.FC<{
           ))}
         </div>
       </td>
-      <td className="px-3 py-2.5 text-slate-300"><ChevronRight className="w-3.5 h-3.5" /></td>
+      <td className="px-3 py-2.5 text-slate-300">{clickable && <ChevronRight className="w-3.5 h-3.5" />}</td>
     </tr>
   );
 };

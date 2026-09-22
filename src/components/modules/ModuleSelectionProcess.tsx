@@ -149,7 +149,7 @@ export const ModuleSelectionProcess: React.FC<{
       </div>
 
       {view === 'screening' && activeJob && canViewScreening && (
-        <ScreeningPanel job={activeJob} onDataChanged={loadData} />
+        <ScreeningPanel job={activeJob} onDataChanged={loadData} onOpenApplication={setSummaryAppId} />
       )}
 
       {/* Kanban Pipeline Stages - Spacious Columns */}
