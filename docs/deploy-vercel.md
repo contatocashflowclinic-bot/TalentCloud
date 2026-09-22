@@ -50,7 +50,11 @@ A senha de instalação (`Admin@123`) é pública (está no README). Em produç�
 
 ### 1.4 Documentos (Supabase Storage)
 
-Os anexos de admissão e de propostas usam um *bucket* privado (`admission-docs`), criado sozinho na primeira gravação. Exige `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY`. **Limite por arquivo: 4 MB** (a Vercel rejeita corpo de requisição acima de 4,5 MB).
+Os anexos de admissão e de propostas usam um *bucket* privado (`admission-docs`, PDF/JPG/PNG), e os currículos da
+Triagem Inteligente usam um segundo *bucket* privado (`candidate-resumes`, PDF/Word), cada um criado sozinho na
+primeira gravação. Ambos exigem `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY`. **Limite por arquivo: 4 MB** (a Vercel
+rejeita corpo de requisição acima de 4,5 MB). A `GEMINI_API_KEY` usada pela Triagem precisa ser de um plano pago do
+Google (sem uso dos dados para treino) antes de habilitar o recurso para organizações reais.
 
 ---
 

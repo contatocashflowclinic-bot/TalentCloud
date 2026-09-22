@@ -7,6 +7,8 @@ import { useAuth } from '../../context/AuthContext.js';
 import { ApplicationSummaryModal } from './ApplicationSummaryModal.js';
 import { isLocalEstimate } from '../../utils/aiEvaluation.js';
 import { useAiAccess } from '../../hooks/useAiAccess.js';
+import { useScreeningAccess } from '../../hooks/useScreeningAccess.js';
+import { ScreeningPanel } from '../screening/ScreeningPanel.js';
 
 export const ModuleSelectionProcess: React.FC<{
   initialJobId?: string;
@@ -16,6 +18,8 @@ export const ModuleSelectionProcess: React.FC<{
 }> = ({ initialJobId, initialCandidateId, onNavigateToAI, onNavigateToCandidate }) => {
   const { activeTenant } = useTenant();
   const { aiEnabled } = useAiAccess();
+  const { canView: canViewScreening } = useScreeningAccess();
+  const [view, setView] = useState<'kanban' | 'screening'>('kanban');
   const [openings, setOpenings] = useState<JobOpening[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string>('');
   const [applications, setApplications] = useState<SelectionApplication[]>([]);
@@ -113,7 +117,7 @@ export const ModuleSelectionProcess: React.FC<{
         </div>
 
         {/* Job selector dropdown */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs font-semibold text-slate-500">Vaga Selecionada:</span>
           <select
             value={selectedJobId}
@@ -124,11 +128,32 @@ export const ModuleSelectionProcess: React.FC<{
               <option key={o.id} value={o.id}>{o.title}</option>
             ))}
           </select>
+
+          {canViewScreening && (
+            <div className="flex items-center rounded-xl border border-slate-200 bg-white p-0.5 shadow-xs text-xs font-semibold">
+              <button
+                onClick={() => setView('kanban')}
+                className={`px-3 py-1.5 rounded-lg transition-colors ${view === 'kanban' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+              >
+                Quadro
+              </button>
+              <button
+                onClick={() => setView('screening')}
+                className={`px-3 py-1.5 rounded-lg flex items-center gap-1 transition-colors ${view === 'screening' ? 'bg-indigo-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+              >
+                <Sparkles className="w-3.5 h-3.5" /> Triagem de Currículos
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
+      {view === 'screening' && activeJob && canViewScreening && (
+        <ScreeningPanel job={activeJob} onDataChanged={loadData} />
+      )}
+
       {/* Kanban Pipeline Stages - Spacious Columns */}
-      {activeJob ? (
+      {view === 'kanban' && activeJob ? (
         <div className="flex gap-4 sm:gap-5 overflow-x-auto pb-6 pt-1">
           {activeJob.stages.map((stage, sIdx) => {
             const stageApps = applications.filter(
@@ -271,9 +296,9 @@ export const ModuleSelectionProcess: React.FC<{
             );
           })}
         </div>
-      ) : (
+      ) : view === 'kanban' ? (
         <div className="p-8 text-center text-slate-500">Nenhuma vaga ativa encontrada.</div>
-      )}
+      ) : null}
 
       {summaryApp && activeJob && (
         <ApplicationSummaryModal

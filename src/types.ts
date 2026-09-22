@@ -307,6 +307,242 @@ export interface AIAssistedEvaluation {
   reviewedAt?: string;
 }
 
+// 9.2 Triagem Inteligente de Currículos
+/** Formatos aceitos: PDF e Word moderno (.docx). O tipo é detectado pelo conteúdo do arquivo, nunca pelo nome nem pelo navegador. */
+export const RESUME_MIMES = ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'] as const;
+export type ResumeMime = (typeof RESUME_MIMES)[number];
+/** Limites de envio: por lote (uma seleção de arquivos) e por vaga. O tamanho por arquivo é MAX_UPLOAD_BYTES. */
+export const RESUME_LIMITS = { perBatch: 50, perJob: 300 } as const;
+
+export type ResumeScreeningStatus = 'uploaded' | 'analyzing' | 'analyzed' | 'needs_data' | 'failed';
+export type RequirementStatus = 'met' | 'partial' | 'not_met' | 'no_evidence';
+/** Quanto o currículo mostra de um pilar do DNA: 'none' = nenhum sinal observável (nota neutra, nunca nota baixa). */
+export type EvidenceLevel = 'high' | 'medium' | 'low' | 'none';
+export type DocumentQuality = 'good' | 'partial' | 'unreadable';
+
+export interface RequirementCheck {
+  id: string;
+  requirement: string;
+  status: RequirementStatus;
+  /** Trecho curto copiado do currículo que sustenta o status (vazio quando não há). */
+  evidence: string;
+}
+
+export interface PillarReading {
+  id: string;
+  name: string;
+  weight: number;
+  score: number;
+  confidence: EvidenceLevel;
+  analysis: string;
+  evidence: string;
+}
+
+/** Dados lidos do currículo. Só o necessário para a triagem: nada de data de nascimento, estado civil, foto ou documentos. */
+export interface ResumeExtraction {
+  name?: string;
+  email?: string;
+  phone?: string;
+  location?: string;
+  linkedinUrl?: string;
+  currentRole?: string;
+  yearsOfExperience?: number;
+  education?: string;
+  skills: string[];
+  languages: string[];
+  summary?: string;
+}
+
+/** Os critérios que a IA recebeu, guardados junto da leitura para o RH poder conferir "com que régua isto foi avaliado". */
+export interface ScreeningCriteriaSnapshot {
+  jobTitle: string;
+  positionTitle: string;
+  level: string;
+  requirements: string[];
+  pillars: Array<{ id: string; name: string; weight: number }>;
+  culturalFitThreshold: number;
+}
+
+export interface ResumeAnalysis {
+  promptVersion: string;
+  model: string;
+  criteriaHash: string;
+  criteria: ScreeningCriteriaSnapshot;
+  documentQuality: DocumentQuality;
+  qualityNote?: string;
+  extraction: ResumeExtraction;
+  requirements: RequirementCheck[];
+  pillars: PillarReading[];
+  /** Nota técnica dada pela IA; a cultural e a geral são calculadas pelo sistema (src/screening.ts). */
+  technicalScore: number;
+  culturalScore: number | null;
+  culturalCoverage: number;
+  overallScore: number;
+  strengths: string[];
+  gaps: string[];
+  interviewQuestions: string[];
+  explanation: string;
+  /** O currículo continha instruções dirigidas à IA (tentativa de manipular a nota). */
+  instructionsInDocument: boolean;
+  /** Texto oculto (branco, invisível) no arquivo Word. */
+  hiddenText: boolean;
+  truncated: boolean;
+}
+
+/** O que a lista precisa de cada leitura, sem carregar a análise inteira. */
+export interface ScreeningSummary {
+  overallScore: number;
+  technicalScore: number;
+  culturalScore: number | null;
+  culturalCoverage: number;
+  requirements: { total: number; met: number; partial: number; notMet: number; noEvidence: number };
+  documentQuality: DocumentQuality;
+  instructionsInDocument: boolean;
+  hiddenText: boolean;
+  criteriaHash: string;
+}
+
+/** Uma linha de `resume_screenings`. */
+export interface ResumeScreening {
+  id: string;
+  jobOpeningId: string;
+  candidateId?: string;
+  applicationId?: string;
+  evaluationId?: string;
+  fileName: string;
+  mime: ResumeMime;
+  sizeBytes: number;
+  contentHash: string;
+  storagePath: string;
+  status: ResumeScreeningStatus;
+  failureCode?: string;
+  failureMessage?: string;
+  attempts: number;
+  analyzingSince?: string;
+  summary?: ScreeningSummary;
+  analysis?: ResumeAnalysis;
+  model?: string;
+  promptVersion?: string;
+  criteriaHash?: string;
+  inputTokens: number;
+  outputTokens: number;
+  uploadedById: string;
+  uploadedByName: string;
+  uploadedAt: string;
+  analyzedAt?: string;
+}
+
+/** O arquivo como a tela o vê (sem caminho de armazenamento nem hash). `status` já é o efetivo: "lendo" abandonado volta a "guardado". */
+export interface ScreeningFile {
+  id: string;
+  fileName: string;
+  mime: ResumeMime;
+  sizeBytes: number;
+  status: ResumeScreeningStatus;
+  failureCode?: string;
+  failureMessage?: string;
+  attempts: number;
+  applicationId?: string;
+  candidateId?: string;
+  summary?: ScreeningSummary;
+  uploadedByName: string;
+  uploadedAt: string;
+  analyzedAt?: string;
+}
+
+/** Sinais derivados na leitura (não são gravados: refletem o corte atual do DNA e os critérios atuais do Cargo). */
+export const SCREENING_FLAGS = [
+  'second_look',
+  'below_cultural_cut',
+  'cultural_unverified',
+  'missing_requirements',
+  'incomplete_resume',
+  'injection_suspected',
+  'score_inconsistent',
+  'criteria_changed',
+  'no_resume'
+] as const;
+export type ScreeningFlag = (typeof SCREENING_FLAGS)[number];
+
+/** Uma candidatura da vaga na lista de triagem. */
+export interface ScreeningRow {
+  applicationId: string;
+  candidateId: string;
+  candidateName: string;
+  currentRole: string;
+  yearsOfExperience: number;
+  location: string;
+  stageId: string;
+  applicationStatus: ApplicationStatus;
+  appliedAt: string;
+  /** A avaliação real mais recente (uma estimativa local nunca entra no ranking). */
+  evaluation?: {
+    id: string;
+    overallFitScore: number;
+    technicalFitScore: number;
+    culturalFitScore: number;
+    evaluatedAt: string;
+    humanReviewerDecision?: AIAssistedEvaluation['humanReviewerDecision'];
+  };
+  file?: ScreeningFile;
+  flags: ScreeningFlag[];
+}
+
+export interface ScreeningCriteriaInfo {
+  positionTitle: string;
+  requirementCount: number;
+  pillarCount: number;
+  culturalFitThreshold: number | null;
+  criteriaHash: string;
+  /** Motivos, em português, pelos quais a triagem não pode rodar ou ficará menos precisa. */
+  blockers: string[];
+  warnings: string[];
+}
+
+export interface ScreeningBoard {
+  jobId: string;
+  jobTitle: string;
+  /** Vaga preenchida ou cancelada: não recebe novos currículos. */
+  jobClosed: boolean;
+  criteria: ScreeningCriteriaInfo;
+  rows: ScreeningRow[];
+  /** Arquivos que ainda não viraram candidatura (guardados, lendo, com falha ou precisando de dados). */
+  pending: ScreeningFile[];
+  fileCount: number;
+}
+
+export interface ScreeningDetail {
+  file: ScreeningFile;
+  analysis?: ResumeAnalysis;
+  flags: ScreeningFlag[];
+  candidate?: Pick<Candidate, 'id' | 'name' | 'email' | 'phone' | 'location' | 'currentRole' | 'yearsOfExperience' | 'education' | 'skills' | 'archived'>;
+  culturalFitThreshold: number | null;
+}
+
+export interface ScreeningAllowance {
+  available: boolean;
+  reason?: 'paused' | 'limit_reached' | 'budget_reached' | 'not_configured';
+  message?: string;
+  /** Análises com IA que o mês ainda comporta para esta organização (null = sem limite). */
+  remaining: number | null;
+  limit: number | null;
+  used: number;
+}
+
+export type ScreeningDecisionAction = 'advance' | 'hold' | 'archive';
+export interface ScreeningDecisionItem {
+  applicationId: string;
+  /** Etapa em que a tela viu a candidatura: impede avanço duplo por clique repetido ou por dois recrutadores. */
+  fromStageId: string;
+}
+export interface ScreeningDecisionResult {
+  applicationId: string;
+  ok: boolean;
+  message?: string;
+  stageId?: string;
+  status?: ApplicationStatus;
+}
+
 // 9.1 Controle de créditos e consumo da IA (Conta Mãe)
 /** O que fazer quando um limite mensal é atingido: seguir com a estimativa local (sem custo) ou barrar o pedido. */
 export type AiLimitPolicy = 'estimate' | 'block';

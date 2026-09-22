@@ -42,8 +42,9 @@ export const ModuleCandidates: React.FC<{
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [currentRole, setCurrentRole] = useState('');
-  const [yearsOfExperience, setYearsOfExperience] = useState(4);
-  const [education, setEducation] = useState('Bacharelado em Ciência da Computação');
+  // Nada vem preenchido por conta própria: o que o RH não informar fica em branco.
+  const [yearsOfExperience, setYearsOfExperience] = useState('');
+  const [education, setEducation] = useState('');
   const [skills, setSkills] = useState('');
   const [resumeSummary, setResumeSummary] = useState('');
 
@@ -78,8 +79,8 @@ export const ModuleCandidates: React.FC<{
         email,
         phone,
         currentRole,
-        yearsOfExperience: Number(yearsOfExperience),
-        education,
+        yearsOfExperience: yearsOfExperience.trim() === '' ? undefined : Number(yearsOfExperience),
+        education: education.trim(),
         resumeSummary,
         skills: skills.split(',').map(s => s.trim()).filter(Boolean)
       });
@@ -87,6 +88,8 @@ export const ModuleCandidates: React.FC<{
       setEmail('');
       setPhone('');
       setCurrentRole('');
+      setYearsOfExperience('');
+      setEducation('');
       setSkills('');
       setResumeSummary('');
       setIsModalOpen(false);
@@ -421,11 +424,25 @@ export const ModuleCandidates: React.FC<{
                   <label className="block font-semibold text-slate-700 mb-1">Anos de Experiência</label>
                   <input
                     type="number"
+                    min={0}
+                    max={70}
                     value={yearsOfExperience}
-                    onChange={(e) => setYearsOfExperience(Number(e.target.value))}
+                    onChange={(e) => setYearsOfExperience(e.target.value)}
+                    placeholder="Ex: 5"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Formação</label>
+                <input
+                  type="text"
+                  value={education}
+                  onChange={(e) => setEducation(e.target.value)}
+                  placeholder="Ex: Bacharelado em Administração"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm"
+                />
               </div>
 
               <div>

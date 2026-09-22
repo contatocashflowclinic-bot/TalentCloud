@@ -1,6 +1,8 @@
 import express, { Request, Response, NextFunction, RequestHandler } from 'express';
 import { TenantConnectionRouter, TenantConnectionContext } from './tenant/TenantConnectionRouter.js';
 import { evaluateCandidateWithAI } from './gemini.js';
+import { h, required } from './http.js';
+import { registerScreeningApi } from './screeningApi.js';
 import { assessAllowance, getAiSettings, getUsageOverview, isPeriod, recordUsage, setOrgLimit, updateAiSettings } from './aiUsage.js';
 import { hideShadowingEstimates, parseOrgLimit, parseSettingsPatch, shouldKeepPrevious } from './aiCost.js';
 import { getPool } from './db/pool.js';
@@ -56,10 +58,6 @@ const ROUTE_NOT_FOUND_MESSAGE =
   'Não foi possível concluir esta ação porque o sistema está desatualizado. ' +
   'Atualize a página (Ctrl+F5) e tente de novo. Se o problema continuar, avise o suporte.';
 
-/** Forwards rejected promises to the error middleware (Express 4 does not do it natively). */
-const h = (fn:(req: Request, res: Response) => Promise<unknown>): RequestHandler =>
-  (req, res, next) => { fn(req, res).catch(next); };
-
 const csv = (value: unknown): string[] =>
   Array.isArray(value)
     ? value
@@ -69,11 +67,6 @@ const csvLines = (value: unknown): string[] =>
   Array.isArray(value) ? value.map(v => String(v).trim()).filter(Boolean) : String(value ?? '').split('\n').map(s => s.trim()).filter(Boolean);
 
 const isBlankId = (value: unknown) => value === undefined || value === null || value === '';
-
-const required = (value: unknown, label: string): string => {
-  if (typeof value !== 'string' || !value.trim()) throw new ValidationError(`Campo obrigatório: ${label}`);
-  return value.trim();
-};
 
 let bootstrap: Promise<void> | null = null;
 
@@ -939,17 +932,19 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   app.post('/api/v1/candidates', can('candidates:create'), h(async (req, res) => {
     const { db } = ctx(req);
     const { name, email, phone, location, currentRole, yearsOfExperience, education, resumeSummary, skills, languages, tags, linkedinUrl } = req.body;
+    // O que não foi informado fica em branco: telefone, cargo, formação, resumo e "3 anos" inventados distorcem a leitura do RH e a avaliação da IA.
+    const hasYears = yearsOfExperience !== undefined && yearsOfExperience !== null && String(yearsOfExperience).trim() !== '';
     const candidate = await db.candidates.insert({
       id: newId('cand'),
       name: required(name, 'name'),
       email: required(email, 'email'),
-      phone: phone || '+55 11 99999-0000',
-      location: location || 'Brasil',
+      phone: String(phone ?? '').trim(),
+      location: String(location ?? '').trim(),
       linkedinUrl,
-      currentRole: currentRole || 'Profissional',
-      yearsOfExperience: Number(yearsOfExperience) || 3,
-      education: education || 'Ensino Superior Completo',
-      resumeSummary: resumeSummary || 'Perfil cadastrado na plataforma.',
+      currentRole: String(currentRole ?? '').trim(),
+      yearsOfExperience: hasYears ? intIn(yearsOfExperience, 'Anos de experiência', 0, 70) : 0,
+      education: String(education ?? '').trim(),
+      resumeSummary: String(resumeSummary ?? '').trim(),
       skills: csv(skills),
       languages: Array.isArray(languages) ? languages : ['Português (Nativo)'],
       registeredAt: new Date().toISOString(),
@@ -2093,6 +2088,11 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     if (isMeetingEventId(existing.id)) await db.syncDevelopmentFromEvent(existing, true);
     res.json({ success: true });
   }));
+
+  // ---------------------------------------------------------
+  // MÓDULO 8.1: Triagem Inteligente de Currículos
+  // ---------------------------------------------------------
+  registerScreeningApi(app);
 
   // Unknown API routes must not fall through to the SPA
   app.use('/api', (req, res) => {

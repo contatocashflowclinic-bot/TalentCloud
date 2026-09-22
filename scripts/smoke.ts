@@ -23,7 +23,8 @@ import { SYSTEM_TEMPLATES, hasHints, noHints, suggestPositions } from '../src/su
 import { parseBlocks } from '../server/tenant/surveyBlocks.js';
 import { TenantRepository } from '../server/tenant/TenantRepository.js';
 import { AccessService } from '../server/auth/AccessService.js';
-import { removeFile } from '../server/storage.js';
+import { removeFile, RESUME_BUCKET } from '../server/storage.js';
+import { zipSync, strToU8 } from 'fflate';
 
 config({ path: ['.env.local', '.env'], quiet: true });
 
@@ -32,6 +33,7 @@ const ADMIN_EMAIL = process.env.SMOKE_ADMIN_EMAIL || 'admin@admin.com.br';
 const ADMIN_PASSWORD = process.env.SMOKE_ADMIN_PASSWORD || 'Admin@123';
 
 const storedFiles = new Set<string>();
+const storedResumeFiles = new Set<string>();
 let passed = 0;
 const failures: string[] = [];
 
@@ -461,6 +463,93 @@ async function main() {
     check('org without the AI module: no evaluation is returned and the context says the module is off', listNoAI.status === 200 && listNoAI.json.evaluations.length === 0 && Array.isArray(ctxNoAI.json.tenant?.enabledRoutines) && !ctxNoAI.json.tenant.enabledRoutines.includes('ai_evaluation'), [listNoAI.json, ctxNoAI.json.tenant?.enabledRoutines]);
     await SU('PATCH', `/api/master/tenants/${tenantAId}`, { enabledRoutines: PLAN_ROUTINES.Scale });
     check('turning the AI module back on brings the evaluations back', (await A('GET', '/api/v1/ai/evaluations')).json.evaluations?.length >= 1);
+
+    // =====================================================================
+    // Triagem Inteligente de Currículos
+    // =====================================================================
+    // Set below only when a fake/real Gemini is actually configured on the server: the analyze call then creates a
+    // real candidate for org A, which the later "data physically stored" count must account for.
+    let screeningCreatedCandidate = false;
+    {
+      const screeningPdf = (marker: string) => Buffer.from(`%PDF-1.4\n1 0 obj<<>>endobj\n% marker: ${marker} ${Math.random()}\ntrailer<<>>\n%%EOF`);
+      const uploadResume = (token: string, jid: string, body: Buffer, mime: string, name = 'curriculo.pdf') =>
+        fetch(`${BASE}/api/v1/screening/jobs/${jid}/files?name=${encodeURIComponent(name)}`, {
+          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': mime }, body: body as any
+        }).then(async r => ({ status: r.status, json: (await r.json().catch(() => ({}))) as any }));
+
+      const board0 = await A('GET', `/api/v1/screening/jobs/${jobId}`);
+      check('screening board: no blockers for a vaga with Cargo and DNA', board0.status === 200 && Array.isArray(board0.json.board?.criteria?.blockers) && board0.json.board.criteria.blockers.length === 0, board0.json.board?.criteria);
+      check('screening board: unknown vaga -> 404', (await A('GET', '/api/v1/screening/jobs/job-nope')).status === 404);
+
+      const validPdf = screeningPdf('smoke');
+      const up1 = await uploadResume(adminA, jobId, validPdf, 'application/pdf', 'curriculo-smoke.pdf');
+      check('upload a valid PDF -> 201, status uploaded', up1.status === 201 && up1.json.file?.status === 'uploaded', up1.json);
+      const fileId = up1.json.file?.id;
+      // storagePath is deliberately not part of the API response (server/tenant/screening.ts fileOf), so the uploaded
+      // blob cannot be tracked for cleanup from here; it is an orphan in the disposable test storage, same known gap
+      // as a deleted tenant not clearing its Storage files (documented risk, not specific to the smoke test).
+
+      check('duplicate upload (same bytes) -> 409', (await uploadResume(adminA, jobId, validPdf, 'application/pdf', 'curriculo-smoke.pdf')).status === 409);
+      check('upload: type not PDF/DOCX -> 400', (await uploadResume(adminA, jobId, Buffer.from('não sou um currículo'), 'text/plain')).status === 400);
+      const oldDoc = Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.alloc(16)]);
+      check('upload: old .doc -> 400 with a friendly message', (await uploadResume(adminA, jobId, oldDoc, 'application/msword')).status === 400);
+      const docx = Buffer.from(zipSync({
+        'word/document.xml': strToU8('<?xml version="1.0"?><w:document><w:body><w:p><w:r><w:t>Currículo em Word para o smoke test.</w:t></w:r></w:p></w:body></w:document>')
+      }));
+      const upDocx = await uploadResume(adminA, jobId, docx, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'curriculo-smoke.docx');
+      check('upload a valid .docx -> 201', upDocx.status === 201 && upDocx.json.file?.mime?.includes('wordprocessingml'), upDocx.json);
+
+      check('RBAC: INTERVIEWER cannot view the screening board', (await R('INTERVIEWER', 'GET', `/api/v1/screening/jobs/${jobId}`)).status === 403);
+      check('RBAC: INTERVIEWER cannot upload', (await uploadResume(tokens.INTERVIEWER, jobId, screeningPdf('interviewer'), 'application/pdf')).status === 403);
+      check('RBAC: HIRING_MANAGER can view the board (view permissions), but cannot upload (lacks candidates:create/selection:create)', (await R('HIRING_MANAGER', 'GET', `/api/v1/screening/jobs/${jobId}`)).status === 200 && (await uploadResume(tokens.HIRING_MANAGER, jobId, screeningPdf('hm'), 'application/pdf')).status === 403);
+
+      const allowance = await A('GET', '/api/v1/screening/allowance');
+      check('allowance endpoint answers', allowance.status === 200 && typeof allowance.json.allowance?.available === 'boolean', allowance.json);
+      const aiConfigured = allowance.json.allowance?.reason !== 'not_configured';
+
+      const an1 = await A('POST', `/api/v1/screening/files/${fileId}/analyze`, {});
+      check('analyze -> 200 either way (never a hard error just because the AI is busy/unavailable)', an1.status === 200, an1.json);
+
+      if (!aiConfigured) {
+        check('AI not configured: the file stays "uploaded" with a plain-language notice, no candidate is invented', an1.json.file?.status === 'uploaded' && !!an1.json.notice && !an1.json.file?.candidateId, an1.json);
+      } else {
+        check('AI configured: analysis creates a candidate, an application and a real (gemini) evaluation — never a local estimate', an1.json.file?.status === 'analyzed' && !!an1.json.file?.candidateId && !!an1.json.file?.applicationId, an1.json);
+        screeningCreatedCandidate = true;
+        const board1 = await A('GET', `/api/v1/screening/jobs/${jobId}`);
+        const row1 = board1.json.board?.rows?.find((r: any) => r.applicationId === an1.json.file.applicationId);
+        check('the new candidate appears ranked on the board, with a real evaluation (never heuristic)', !!row1 && typeof row1.evaluation?.overallFitScore === 'number', row1);
+
+        const detail1 = await A('GET', `/api/v1/screening/files/${fileId}`);
+        check('detail: per-requirement checks match the Cargo requirement count', detail1.status === 200 && detail1.json.detail?.analysis?.requirements?.length === pos.json.position.technicalRequirements.length, detail1.json.detail?.analysis?.requirements);
+
+        check('reanalyzing without force -> returns the same result, no new AI call (idempotent)', (await A('POST', `/api/v1/screening/files/${fileId}/analyze`, {})).json.file?.status === 'analyzed');
+
+        const decideAdvance = await A('POST', `/api/v1/screening/jobs/${jobId}/decisions`, { action: 'advance', items: [{ applicationId: row1.applicationId, fromStageId: row1.stageId }] });
+        check('bulk decision: advance moves to the next stage', decideAdvance.json.results?.[0]?.ok === true && decideAdvance.json.results[0].stageId !== row1.stageId, decideAdvance.json);
+        check('bulk decision: a stale fromStageId is rejected per-item (partial result), not a hard 500', (await A('POST', `/api/v1/screening/jobs/${jobId}/decisions`, { action: 'advance', items: [{ applicationId: row1.applicationId, fromStageId: row1.stageId }] })).json.results?.[0]?.ok === false);
+        check('bulk decision: archive without a reason is rejected per-item', (await A('POST', `/api/v1/screening/jobs/${jobId}/decisions`, { action: 'archive', items: [{ applicationId: row1.applicationId, fromStageId: decideAdvance.json.results[0].stageId }] })).json.results?.[0]?.ok === false);
+
+        check('RBAC: only selection:edit + ai_evaluation:edit can decide (INTERVIEWER cannot)', (await api('POST', `/api/v1/screening/jobs/${jobId}/decisions`, { token: tokens.INTERVIEWER, body: { action: 'hold', items: [{ applicationId: row1.applicationId, fromStageId: decideAdvance.json.results[0].stageId }] } })).status === 403);
+
+        const del = await A('DELETE', `/api/v1/screening/files/${fileId}`, { reason: 'Limpeza do smoke test' });
+        check('delete a file requires and records a reason, then 404s afterwards', del.status === 200 && (await A('GET', `/api/v1/screening/files/${fileId}`)).status === 404);
+      }
+
+      // Isolation: org B cannot see org A's vaga/board/file through the screening routes
+      check('ISOLATION: org B cannot see org A vaga in the screening board', (await B('GET', `/api/v1/screening/jobs/${jobId}`)).status === 404);
+      if (fileId) check('ISOLATION: org B cannot download org A currículo', (await fetch(`${BASE}/api/v1/screening/files/${fileId}/file`, { headers: { Authorization: `Bearer ${adminB}` } })).status === 404);
+
+      // Org without the AI module: every screening route answers 403, same mechanism as the rest of the AI feature
+      await SU('PATCH', `/api/master/tenants/${tenantAId}`, { enabledRoutines: PLAN_ROUTINES.Scale.filter(k => k !== 'ai_evaluation') });
+      check('org WITHOUT the AI module: screening board -> 403', (await A('GET', `/api/v1/screening/jobs/${jobId}`)).status === 403);
+      check('org WITHOUT the AI module: upload -> 403', (await uploadResume(adminA, jobId, screeningPdf('noai'), 'application/pdf')).status === 403);
+      await SU('PATCH', `/api/master/tenants/${tenantAId}`, { enabledRoutines: PLAN_ROUTINES.Scale });
+      check('org module restored: screening board works again', (await A('GET', `/api/v1/screening/jobs/${jobId}`)).status === 200);
+
+      const auditScreening = await SU('GET', '/api/master/audit-logs?limit=200');
+      const screeningEvents = (auditScreening.json.logs ?? []).filter((l: any) => String(l.action ?? '').startsWith('RESUME_'));
+      check('audit: at least one RESUME_UPLOADED event is recorded', screeningEvents.some((l: any) => l.action === 'RESUME_UPLOADED'), screeningEvents.map((l: any) => l.action));
+    }
 
     const intv = await A('POST', '/api/v1/interviews', { jobOpeningId: jobId, candidateId: candId });
     check('create interview', intv.status === 201, intv.json);
@@ -1465,7 +1554,8 @@ async function main() {
 
     // ---- Physical checks --------------------------------------------------------------------------------
     const { rows } = await getPool().query('select count(*)::int as n from public.candidates where tenant_id = $1', [provA.json.tenant.id]);
-    check('data physically stored in Postgres', rows[0].n === 2, rows[0]);
+    const expectedCandidates = 2 + (screeningCreatedCandidate ? 1 : 0);
+    check('data physically stored in Postgres', rows[0].n === expectedCandidates, { ...rows[0], expectedCandidates });
 
     if (process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY) {
       const anon = { apikey: process.env.SUPABASE_ANON_KEY, Authorization: `Bearer ${process.env.SUPABASE_ANON_KEY}` };
@@ -1477,6 +1567,7 @@ async function main() {
     }
   } finally {
     for (const path of storedFiles) await removeFile(path);
+    for (const path of storedResumeFiles) await removeFile(path, RESUME_BUCKET);
     // ---- Cleanup: remove temporary orgs (cascade users/sessions) and their audit rows ----
     const ids = createdTenantIds.filter(Boolean);
     await getPool().query(`delete from public.platform_audit_logs where user_name like '%@smoke.test' or details like '%@smoke.test%'`);

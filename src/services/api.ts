@@ -43,7 +43,14 @@ import {
   AuthUser,
   AiSettings,
   AiUsageOverview,
-  AiUsagePeriod
+  AiUsagePeriod,
+  ScreeningBoard,
+  ScreeningDetail,
+  ScreeningFile,
+  ScreeningAllowance,
+  ScreeningDecisionAction,
+  ScreeningDecisionItem,
+  ScreeningDecisionResult
 } from '../types.js';
 
 // ---- Session (token kept in localStorage; server stores only its hash) ----
@@ -500,6 +507,24 @@ export const TenantApi = {
     method: 'PATCH',
     body: JSON.stringify({ decision, humanNotes })
   })).evaluation,
+
+  // 8.1 Triagem Inteligente de Currículos
+  getScreeningBoard: async (jobId: string) => (await request<{ success: boolean; board: ScreeningBoard }>(`/api/v1/screening/jobs/${jobId}`)).board,
+  getScreeningAllowance: async () => (await request<{ success: boolean; allowance: ScreeningAllowance }>('/api/v1/screening/allowance')).allowance,
+  uploadResume: async (jobId: string, file: File): Promise<{ file: ScreeningFile }> =>
+    request(`/api/v1/screening/jobs/${jobId}/files${qs({ name: file.name })}`, { method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file }),
+  analyzeResume: async (fileId: string, force = false): Promise<{ success: boolean; file: ScreeningFile; notice?: string }> =>
+    request(`/api/v1/screening/files/${fileId}/analyze`, { method: 'POST', body: JSON.stringify({ force }) }),
+  completeResume: async (fileId: string, name: string, email: string): Promise<{ success: boolean; file: ScreeningFile }> =>
+    request(`/api/v1/screening/files/${fileId}/complete`, { method: 'POST', body: JSON.stringify({ name, email }) }),
+  getScreeningDetail: async (fileId: string) => (await request<{ success: boolean; detail: ScreeningDetail }>(`/api/v1/screening/files/${fileId}`)).detail,
+  downloadResume: (fileId: string, fileName: string) => downloadAuthenticatedFile(`/api/v1/screening/files/${fileId}/file`, fileName),
+  deleteResume: async (fileId: string, reason: string) => request<{ success: boolean }>(`/api/v1/screening/files/${fileId}`, { method: 'DELETE', body: JSON.stringify({ reason }) }),
+  decideScreening: async (jobId: string, action: ScreeningDecisionAction, items: ScreeningDecisionItem[], reason?: string) =>
+    (await request<{ success: boolean; results: ScreeningDecisionResult[] }>(`/api/v1/screening/jobs/${jobId}/decisions`, {
+      method: 'POST',
+      body: JSON.stringify({ action, items, reason })
+    })).results,
 
   // 10. Entrevistas
   getInterviews: async () => (await request<{ success: boolean; interviews: InterviewSession[] }>('/api/v1/interviews')).interviews,

@@ -41,7 +41,7 @@ Na **janela anônima**, atualize a página (**F5**) e confira:
 |---|---|---|
 | 7 | Menu lateral. | **Avaliação Assistida por IA não existe mais.** |
 | 8 | **Candidatos**. | Os cartões **não têm** nota de IA, "Pendente" de IA nem botão de IA. Clique em um cartão: o resumo **não tem** o quadro "Avaliação assistida por IA". |
-| 9 | **Processo Seletivo**. | Os cartões mostram só o nome e o botão **Avançar**. Clique em um cartão: o resumo **não tem** o quadro de IA. Use **Copiar resumo** e cole em um bloco de notas: **não há** nenhuma linha sobre IA. |
+| 9 | **Processo Seletivo**. | Os cartões mostram só o nome e o botão **Avançar**. Clique em um cartão: o resumo **não tem** o quadro de IA. Use **Copiar resumo** e cole em um bloco de notas: **não há** nenhuma linha sobre IA. O alternador **Quadro \| Triagem de Currículos** também não existe mais (ver `docs/validacao-triagem-curriculos.md`). |
 | 10 | **Indicadores**. | Há **uma única aba** (Visão Geral). No funil, a etapa 2 chama-se **"Triagem"** (antes: "Fit Cultural IA"). |
 | 11 | **Exportações e busca.** Em Candidatos use **Exportar Talent Pool** (CSV e PDF). Em Indicadores use **Exportar Relatório**. Digite um nome na busca do topo. | O CSV/PDF de candidatos **não tem** as colunas de IA ("Score Fit Geral IA", "Decisão do Gestor Humano", "Fit IA"). O relatório de indicadores **não diz** "A IA apoia…". A busca **não mostra** "% Fit IA" nem o ícone de estrela. |
 

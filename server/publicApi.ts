@@ -126,7 +126,7 @@ export function registerPublicApi(app: Express, router: TenantConnectionRouter) 
                 phone: text(b.phone, 'Telefone', 40),
                 location: text(b.location, 'Localização', 120),
                 linkedinUrl: linkedinUrl || undefined,
-                currentRole: text(b.currentRole, 'Cargo atual', 120) || job.title,
+                currentRole: text(b.currentRole, 'Cargo atual', 120),
                 yearsOfExperience: Number.isFinite(years) ? Math.min(Math.max(years, 0), 60) : 0,
                 education: text(b.education, 'Formação', 120),
                 resumeSummary: text(b.resumeSummary, 'Resumo', 4000),

@@ -26,6 +26,8 @@ import {
   OrganizationalDNA,
   PendingSurvey,
   PositionOption,
+  ResumeAnalysis,
+  ResumeScreening,
   RetentionPerson,
   SelectionApplication,
   SurveyTemplate,
@@ -48,6 +50,8 @@ import { assertAlertRemovable, buildAlert, buildScopeData, normName, type AlertP
 import { isActiveAlert, sentimentOf } from '../../src/retention.js';
 import { buildChecklistItems, DEFAULT_INTEGRATION_TEMPLATES } from './integration.js';
 import { newId } from '../ids.js';
+import { ANALYSIS_LEASE_MS, summaryOf } from '../../src/screening.js';
+import { candidateFromAnalysis, namesCompatible } from './screening.js';
 
 /** Generic CRUD bound to a single tenant and table. */
 class Entity<T> {
@@ -82,6 +86,13 @@ const INDICATOR_FIELDS = [
   'totalHiresThisQuarter', 'retentionRate12Months', 'candidateNPS', 'recruitmentFunnel'
 ] as const;
 
+export interface ScreeningMaterializeResult {
+  screening: ResumeScreening;
+  candidate?: Candidate;
+  application?: SelectionApplication;
+  evaluation?: AIAssistedEvaluation;
+}
+
 /**
  * TenantRepository
  * All data access for one organization. Every statement is scoped by tenant_id and
@@ -108,6 +119,7 @@ export class TenantRepository {
   readonly climateSurveys: Entity<ClimateSurveyResponse>;
   readonly turnoverAlerts: Entity<TurnoverRiskAlert>;
   readonly agendaEvents: Entity<AgendaEvent>;
+  readonly resumeScreenings: Entity<ResumeScreening>;
 
   constructor(public readonly tenantId: string) {
     this.users = new Entity(TABLES.users, tenantId);
@@ -130,6 +142,7 @@ export class TenantRepository {
     this.climateSurveys = new Entity(TABLES.climateSurveys, tenantId);
     this.turnoverAlerts = new Entity(TABLES.turnoverAlerts, tenantId);
     this.agendaEvents = new Entity(TABLES.agendaEvents, tenantId);
+    this.resumeScreenings = new Entity(TABLES.resumeScreenings, tenantId);
   }
 
   // ---- DNA (one row per tenant) -------------------------------------
@@ -264,9 +277,14 @@ export class TenantRepository {
   }
 
   // ---- AI evaluations ---------------------------------------------------
-  /** Stores an evaluation and links it to the matching application (atomic). */
-  async saveAIEvaluation(evaluation: AIAssistedEvaluation): Promise<AIAssistedEvaluation> {
-    return withTransaction(async tx => {
+  /**
+   * Stores an evaluation and links it to the matching application (atomic). `db`, when given, reuses an already-open
+   * transaction (e.g. the resume-screening materialization) instead of opening a second one: a nested `withTransaction`
+   * would commit this insert on its own connection even if the OUTER transaction later rolled back, orphaning the row.
+   */
+  async saveAIEvaluation(evaluation: AIAssistedEvaluation, db?: PoolClient): Promise<AIAssistedEvaluation> {
+    const run = db ? <T,>(fn: (tx: PoolClient) => Promise<T>) => fn(db) : withTransaction;
+    return run(async tx => {
       const saved = await this.aiEvaluations.insert({ ...evaluation }, tx);
       await tx.query(
         `update public.selection_applications
@@ -280,6 +298,136 @@ export class TenantRepository {
         ]
       );
       return saved;
+    });
+  }
+
+  // ---- Resume screening ---------------------------------------------------------
+  /** Every currículo sent for a vaga, most recent first. */
+  async listScreeningsForJob(jobOpeningId: string, db: Queryable = getPool()): Promise<ResumeScreening[]> {
+    const { rows } = await db.query(
+      'select * from public.resume_screenings where tenant_id = $1 and job_opening_id = $2 order by seq desc',
+      [this.tenantId, jobOpeningId]
+    );
+    return rows.map(r => fromRow<ResumeScreening>({}, r));
+  }
+
+  /**
+   * Atomic claim before calling the AI: only a file that is `uploaded`/`needs_data`/`failed`, or `analyzing` past its
+   * lease (the serverless function that was reading it died), can be claimed. Two simultaneous requests for the same
+   * file never both call the AI (avoids double billing); the loser gets `undefined` and the route answers 409.
+   */
+  async claimScreening(id: string, opts: { force?: boolean } = {}): Promise<ResumeScreening | undefined> {
+    const claimable = opts.force
+      ? ['uploaded', 'analyzing', 'analyzed', 'needs_data', 'failed']
+      : ['uploaded', 'needs_data', 'failed'];
+    const leaseSeconds = Math.ceil(ANALYSIS_LEASE_MS / 1000);
+    const { rows } = await getPool().query(
+      `update public.resume_screenings
+          set status = 'analyzing', analyzing_since = now(), attempts = attempts + 1
+        where tenant_id = $1 and id = $2
+          and (status = any($3::text[]) or (status = 'analyzing' and analyzing_since < now() - make_interval(secs => $4)))
+        returning *`,
+      [this.tenantId, id, claimable, leaseSeconds]
+    );
+    return rows[0] ? fromRow<ResumeScreening>({}, rows[0]) : undefined;
+  }
+
+  /** A claimed file whose AI call itself failed (network, timeout, bad response): released back to `failed`, never billed as read. */
+  async releaseScreeningAsFailed(id: string, failureMessage: string): Promise<ResumeScreening | undefined> {
+    return this.resumeScreenings.update(id, { status: 'failed', failureCode: 'ai_error', failureMessage, analyzingSince: null });
+  }
+
+  /**
+   * The AI already read the file (`analysis`); this turns that reading into the usual records — a candidate (only if
+   * one doesn't already exist for that e-mail), a candidatura on the vaga's first stage, and a normal `ai_evaluations`
+   * row — all in ONE transaction, so a failure partway never leaves an orphaned candidate or evaluation. When the
+   * currículo has no e-mail, no name, a name that does not match an existing candidate of that e-mail, or that
+   * candidate is archived, nothing is created: the file stays `needs_data` with a plain-language reason, and a person
+   * decides (via `POST .../complete` or by reactivating the profile) before anything is written.
+   */
+  async completeScreeningAnalysis(
+    id: string,
+    analysis: ResumeAnalysis,
+    usage: { model: string; inputTokens: number; outputTokens: number }
+  ): Promise<ScreeningMaterializeResult> {
+    return withTransaction(async tx => {
+      const row = await getRow<ResumeScreening>(TABLES.resumeScreenings, this.tenantId, id, tx, true);
+      if (!row) throw new NotFoundError('Arquivo de currículo não encontrado.');
+
+      const summary = summaryOf(analysis);
+      const base = {
+        summary, analysis, model: usage.model, promptVersion: analysis.promptVersion, criteriaHash: analysis.criteriaHash,
+        inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, analyzedAt: new Date().toISOString()
+      };
+      const needsData = async (failureCode: string, failureMessage: string) => ({
+        screening: (await this.resumeScreenings.update(id, { ...base, status: 'needs_data', failureCode, failureMessage }, tx))!
+      });
+
+      const { name, email } = analysis.extraction;
+      if (!email) return needsData('missing_email', 'O currículo não trouxe um e-mail para identificar o candidato. Complete os dados para continuar.');
+      if (!name) return needsData('missing_name', 'O currículo não trouxe um nome legível. Complete os dados para continuar.');
+
+      // Trava por e-mail: dois currículos da mesma pessoa analisados ao mesmo tempo (em vagas diferentes ou repetidos)
+      // não criam dois candidatos — o e-mail não é uma chave única no banco.
+      await tx.query('select pg_advisory_xact_lock(hashtext($1))', [`candidate-email:${this.tenantId}:${email.toLowerCase()}`]);
+      const found = await tx.query(
+        'select id, name, archived from public.candidates where tenant_id = $1 and lower(email) = $2 limit 1',
+        [this.tenantId, email.toLowerCase()]
+      );
+      const existing = found.rows[0] as { id: string; name: string; archived: boolean } | undefined;
+
+      if (existing && !namesCompatible(name, existing.name)) {
+        return needsData(
+          'name_mismatch',
+          `Já existe um candidato com este e-mail (${existing.name}), mas o nome do currículo é bem diferente (${name}). Confirme antes de continuar.`
+        );
+      }
+      if (existing?.archived) {
+        return needsData('candidate_archived', `Já existe um perfil arquivado para ${existing.name}. Reative o perfil no Banco de Talentos antes de continuar.`);
+      }
+
+      const candidate = existing
+        ? (await this.candidates.get(existing.id, tx))!
+        : await this.candidates.insert(
+            { id: newId('cand'), ...candidateFromAnalysis(analysis.extraction), registeredAt: new Date().toISOString() },
+            tx
+          );
+
+      const dup = await tx.query(
+        'select id from public.selection_applications where tenant_id = $1 and job_opening_id = $2 and candidate_id = $3',
+        [this.tenantId, row.jobOpeningId, candidate.id]
+      );
+      const application = dup.rows[0]
+        ? (await getRow<SelectionApplication>(TABLES.applications, this.tenantId, dup.rows[0].id, tx))!
+        : await this.createApplication(candidate.id, row.jobOpeningId, newId('app'), tx);
+
+      const evaluation = await this.saveAIEvaluation(
+        {
+          id: newId('eval'),
+          candidateId: candidate.id,
+          jobOpeningId: row.jobOpeningId,
+          evaluatedAt: new Date().toISOString(),
+          source: 'gemini',
+          overallFitScore: analysis.overallScore,
+          technicalFitScore: analysis.technicalScore,
+          // O NOT NULL da coluna exige um número mesmo sem cultura verificável; 50 é neutro (a IA já é instruída a dar 50 a pilar sem evidência).
+          culturalFitScore: analysis.culturalScore ?? 50,
+          detailedExplanation: analysis.explanation,
+          keyStrengths: analysis.strengths,
+          potentialGaps: analysis.gaps,
+          suggestedInterviewQuestions: analysis.interviewQuestions,
+          pillarScores: analysis.pillars.map(p => ({ pillarName: p.name, score: p.score, analysis: p.analysis }))
+        },
+        tx
+      );
+
+      const updated = (await this.resumeScreenings.update(
+        id,
+        { ...base, status: 'analyzed', candidateId: candidate.id, applicationId: application.id, evaluationId: evaluation.id },
+        tx
+      ))!;
+
+      return { screening: updated, candidate, application, evaluation };
     });
   }
 

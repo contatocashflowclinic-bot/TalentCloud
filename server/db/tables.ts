@@ -56,6 +56,17 @@ export const TABLES = {
       'humanReviewerDecision', 'humanNotes', 'reviewedBy', 'reviewedAt'
     ]
   },
+  resumeScreenings: {
+    table: 'resume_screenings',
+    json: ['summary', 'analysis'],
+    orderBy: 'seq desc',
+    columns: [
+      'id', 'jobOpeningId', 'candidateId', 'applicationId', 'evaluationId', 'fileName', 'mime', 'sizeBytes',
+      'contentHash', 'storagePath', 'status', 'failureCode', 'failureMessage', 'attempts', 'analyzingSince',
+      'summary', 'analysis', 'model', 'promptVersion', 'criteriaHash', 'inputTokens', 'outputTokens',
+      'uploadedById', 'uploadedByName', 'uploadedAt', 'analyzedAt'
+    ]
+  },
   interviews: {
     table: 'interview_sessions',
     json: ['scorecard'],

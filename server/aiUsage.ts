@@ -72,6 +72,9 @@ export interface AllowanceResult {
   decision: Allowance;
   settings: AiSettings;
   model: string;
+  /** Avaliações com IA já usadas este mês por esta organização, e o limite efetivo (próprio, senão o padrão da plataforma; null = sem limite). */
+  orgUsed: number;
+  orgLimit: number | null;
 }
 
 /** May this organization use the AI right now? Looks at the pause switch, its monthly limit and the platform ceiling. */
@@ -88,15 +91,16 @@ export async function assessAllowance(tenantId: string, db: Queryable = getPool(
     [tenantId]
   );
   const r = rows[0];
+  const orgLimit = r.custom_limit ?? settings.defaultOrgMonthlyLimit ?? null;
   const decision = decideAllowance({
     enabled: settings.enabled,
     onLimit: settings.onLimit,
-    orgLimit: r.custom_limit ?? settings.defaultOrgMonthlyLimit ?? null,
+    orgLimit,
     orgUsed: r.org_used,
     monthlyBudgetBrl: settings.monthlyBudgetBrl ?? null,
     monthCostBrl: r.month_cost
   });
-  return { decision, settings, model };
+  return { decision, settings, model, orgUsed: r.org_used, orgLimit };
 }
 
 export interface UsageRecord {

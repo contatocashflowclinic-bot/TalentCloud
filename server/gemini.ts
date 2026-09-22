@@ -7,6 +7,7 @@ import {
   OrganizationalDNA
 } from '../src/types.js';
 import type { AiSkipReason } from './aiCost.js';
+import { isProduction } from './runtime.js';
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 
@@ -90,27 +91,34 @@ export function describeFailure(err: unknown): string {
 
 let geminiClient: GoogleGenAI | null = null;
 
-function getGeminiClient(): GoogleGenAI | null {
+/**
+ * Shared client (also used by resumeAi.ts). `GEMINI_BASE_URL` only applies outside produção: aponta o SDK para um
+ * Gemini falso (scripts/fakeGemini.ts) nos testes, sem risco de um valor esquecido desviar tráfego real em produção.
+ */
+export function getGeminiClient(): GoogleGenAI | null {
   if (!geminiClient && process.env.GEMINI_API_KEY) {
+    const baseUrl = !isProduction() ? process.env.GEMINI_BASE_URL : undefined;
     geminiClient = new GoogleGenAI({
       apiKey: process.env.GEMINI_API_KEY,
       httpOptions: {
         headers: {
           'User-Agent': 'aistudio-build',
-        }
+        },
+        ...(baseUrl ? { baseUrl } : {})
       }
     });
   }
   return geminiClient;
 }
 
-/** A score must come from the model as a number; a missing/invalid one is a failed answer, never a made-up default. */
-function toScore(value: unknown, label: string): number {
+/** A score must come from the model as a number; a missing/invalid one is a failed answer, never a made-up default. Reused by resumeAi.ts. */
+export function toScore(value: unknown, label: string): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`Resposta do modelo sem nota válida (${label})`);
   return Math.min(100, Math.max(0, Math.round(value)));
 }
 
-function toStrings(value: unknown, label: string): string[] {
+/** Reused by resumeAi.ts. */
+export function toStrings(value: unknown, label: string): string[] {
   if (!Array.isArray(value)) throw new Error(`Resposta do modelo sem lista válida (${label})`);
   return value.filter((v): v is string => typeof v === 'string' && v.trim() !== '');
 }
@@ -125,7 +133,11 @@ function toPillarScores(value: unknown): AIAssistedEvaluation['pillarScores'] {
   });
 }
 
-const normName = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+/** Reused by resumeAi.ts (compara nome extraído do currículo com o de um candidato já cadastrado). */
+export const normName = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase();
+
+/** Campo em branco vira "Não informado": a IA não pode tratar vazio como dado nem ler um valor inventado. */
+const informed = (value: string | null | undefined): string => (value && value.trim() ? value.trim() : 'Não informado');
 
 /**
  * Keeps only the organization's OWN pillars, in the DNA's order and with the DNA's official names (the model sometimes adds
@@ -193,12 +205,13 @@ DADOS DA VAGA & CARGO:
 
 DADOS DO CANDIDATO:
 - Nome: ${candidate.name}
-- Cargo Atual: ${candidate.currentRole}
-- Anos de Experiência: ${candidate.yearsOfExperience} anos
-- Formação: ${candidate.education}
-- Resumo Profissional: ${candidate.resumeSummary}
-- Competências Principais: ${candidate.skills.join(', ')}
-- Idiomas: ${candidate.languages.join(', ')}
+- Cargo Atual: ${informed(candidate.currentRole)}
+- Anos de Experiência: ${candidate.yearsOfExperience > 0 ? `${candidate.yearsOfExperience} anos` : 'Não informado (ou sem experiência profissional)'}
+- Formação: ${informed(candidate.education)}
+- Resumo Profissional: ${informed(candidate.resumeSummary)}
+- Competências Principais: ${candidate.skills.length ? candidate.skills.join(', ') : 'Não informado'}
+- Idiomas: ${candidate.languages.length ? candidate.languages.join(', ') : 'Não informado'}
+Campos "Não informado" são ausência de dado, não um ponto negativo: não invente conteúdo para eles e, se a falta impedir a análise, diga isso em potentialGaps.
 
 Em pillarScores, devolva exatamente um item para cada pilar cultural listado acima, usando o nome exato do pilar, e nenhum pilar além desses.
 Retorne um JSON com a avaliação honesta, construtiva e fundamentada.
@@ -309,10 +322,12 @@ Retorne um JSON com a avaliação honesta, construtiva e fundamentada.
   const cultureScore = Math.min(95, Math.max(70, Math.round(78 + (candidate.skills.length % 5) * 3)));
   const overall = Math.round((techScore * 0.5) + (cultureScore * 0.5));
 
+  // Só cita experiência e cargo quando o candidato os informou (campos em branco não são inventados).
+  const knowsExperience = candidate.yearsOfExperience > 0 && candidate.currentRole.trim() !== '';
   const pillarScores = dna.pillars.map((pillar, idx) => ({
     pillarName: pillar.name,
     score: Math.min(95, Math.max(68, cultureScore + ((idx % 2 === 0) ? 3 : -4))),
-    analysis: `O perfil do candidato demonstra compatibilidade com o pilar '${pillar.name}', especialmente pela vivência de ${candidate.yearsOfExperience} anos no cargo de ${candidate.currentRole}. Recomenda-se aprofundar na entrevista comportamental.`
+    analysis: `O perfil do candidato demonstra compatibilidade com o pilar '${pillar.name}'${knowsExperience ? `, especialmente pela vivência de ${candidate.yearsOfExperience} anos no cargo de ${candidate.currentRole}` : ''}. Recomenda-se aprofundar na entrevista comportamental.`
   }));
 
   usage.durationMs = Date.now() - startedAt;
@@ -324,12 +339,12 @@ Retorne um JSON com a avaliação honesta, construtiva e fundamentada.
     overallFitScore: overall,
     technicalFitScore: techScore,
     culturalFitScore: cultureScore,
-    detailedExplanation: `⚠ ESTIMATIVA LOCAL — ${fallbackReason}. Estas notas vêm de regras simples (habilidades × requisitos e anos de experiência), NÃO de uma avaliação de IA. Use apenas como apoio e valide em entrevista. Análise assistida gerada para a vaga '${job.title}'. O candidato ${candidate.name} possui ${candidate.yearsOfExperience} anos de experiência sólida como '${candidate.currentRole}'. Foram identificadas correspondências fortes em ${techMatches.length > 0 ? techMatches.join(', ') : 'requisitos essenciais'}, com destaque para sua formação e consistência profissional. Aderência ao arquétipo cultural '${dna.archetype}' classificada em nível ${cultureScore >= 85 ? 'Excelente' : 'Bom'}.`,
+    detailedExplanation: `⚠ ESTIMATIVA LOCAL — ${fallbackReason}. Estas notas vêm de regras simples (habilidades × requisitos e anos de experiência), NÃO de uma avaliação de IA. Use apenas como apoio e valide em entrevista. Análise assistida gerada para a vaga '${job.title}'. ${knowsExperience ? `O candidato ${candidate.name} possui ${candidate.yearsOfExperience} anos de experiência sólida como '${candidate.currentRole}'.` : `O candidato ${candidate.name} não informou tempo de experiência ou cargo atual.`} Foram identificadas correspondências fortes em ${techMatches.length > 0 ? techMatches.join(', ') : 'requisitos essenciais'}, com destaque para sua formação e consistência profissional. Aderência ao arquétipo cultural '${dna.archetype}' classificada em nível ${cultureScore >= 85 ? 'Excelente' : 'Bom'}.`,
     keyStrengths: [
-      `Experiência de ${candidate.yearsOfExperience} anos como ${candidate.currentRole}`,
-      `Domínio nas competências centrais: ${candidate.skills.slice(0, 3).join(', ')}`,
-      `Formação acadêmica sólida (${candidate.education})`
-    ],
+      knowsExperience ? `Experiência de ${candidate.yearsOfExperience} anos como ${candidate.currentRole}` : null,
+      candidate.skills.length ? `Domínio nas competências centrais: ${candidate.skills.slice(0, 3).join(', ')}` : null,
+      candidate.education.trim() ? `Formação acadêmica sólida (${candidate.education})` : null
+    ].filter((s): s is string => s !== null),
     potentialGaps: [
       'Validar em entrevista casos práticos de superação de metas sob pressão',
       'Investigar expectativas salariais e adaptação à dinâmica de squads da empresa'

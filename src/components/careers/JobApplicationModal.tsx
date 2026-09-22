@@ -21,11 +21,12 @@ export const JobApplicationModal: React.FC<JobApplicationModalProps> = ({
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [location, setLocation] = useState('São Paulo, SP');
+  const [location, setLocation] = useState('');
   const [linkedinUrl, setLinkedinUrl] = useState('');
   const [currentRole, setCurrentRole] = useState('');
-  const [yearsOfExperience, setYearsOfExperience] = useState<number>(3);
-  const [education, setEducation] = useState('Ensino Superior Completo');
+  // Nada aqui vem preenchido por conta própria: o que o candidato não informar fica em branco (nunca inventamos dados).
+  const [yearsOfExperience, setYearsOfExperience] = useState('');
+  const [education, setEducation] = useState('');
   const [resumeSummary, setResumeSummary] = useState('');
   const [skillsRaw, setSkillsRaw] = useState('');
   const [loading, setLoading] = useState(false);
@@ -41,22 +42,21 @@ export const JobApplicationModal: React.FC<JobApplicationModalProps> = ({
     try {
       setLoading(true);
 
-      const parsedSkills = skillsRaw
-        ? skillsRaw.split(',').map(s => s.trim()).filter(Boolean)
-        : ['Comunicação', 'Resolução de Problemas', 'Trabalho em Equipe'];
+      const parsedSkills = skillsRaw.split(',').map(s => s.trim()).filter(Boolean);
 
-      // Single public call: creates the profile and the application atomically
+      // Single public call: creates the profile and the application atomically.
+      // Campos em branco seguem em branco: telefone, LinkedIn, habilidades, resumo e anos de experiência nunca são inventados.
       const result = await PublicApi.apply(tenant.slug, {
         jobOpeningId: job.id,
         name,
         email,
-        phone: phone || '(11) 98765-4321',
-        location: location || 'Brasil',
-        linkedinUrl: linkedinUrl || `https://linkedin.com/in/${name.toLowerCase().replace(/\s+/g, '-')}`,
-        currentRole: currentRole || job.title,
-        yearsOfExperience: Number(yearsOfExperience) || 3,
-        education: education || 'Superior',
-        resumeSummary: resumeSummary || `Profissional motivado e alinhado aos desafios da vaga de ${job.title}.`,
+        phone,
+        location,
+        linkedinUrl,
+        currentRole,
+        yearsOfExperience: yearsOfExperience.trim() === '' ? undefined : Number(yearsOfExperience),
+        education,
+        resumeSummary,
         skills: parsedSkills,
       });
 
@@ -75,7 +75,7 @@ export const JobApplicationModal: React.FC<JobApplicationModalProps> = ({
     setName('');
     setEmail('');
     setPhone('');
-    setLocation('São Paulo, SP');
+    setLocation('');
     setLinkedinUrl('');
     setCurrentRole('');
     setResumeSummary('');
@@ -278,7 +278,8 @@ export const JobApplicationModal: React.FC<JobApplicationModalProps> = ({
                     min={0}
                     max={40}
                     value={yearsOfExperience}
-                    onChange={(e) => setYearsOfExperience(Number(e.target.value))}
+                    onChange={(e) => setYearsOfExperience(e.target.value)}
+                    placeholder="Ex: 5"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-hidden focus:border-indigo-500 text-xs"
                   />
                 </div>
@@ -292,6 +293,7 @@ export const JobApplicationModal: React.FC<JobApplicationModalProps> = ({
                     onChange={(e) => setEducation(e.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-hidden focus:border-indigo-500 text-xs bg-white"
                   >
+                    <option value="">Prefiro não informar</option>
                     <option value="Ensino Superior Completo">Ensino Superior Completo</option>
                     <option value="Ensino Superior Cursando">Ensino Superior Cursando</option>
                     <option value="Pós-Graduação / MBA">Pós-Graduação / MBA</option>
