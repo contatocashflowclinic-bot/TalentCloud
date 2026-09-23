@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Layers, Plus, Clock, MapPin, Share2, Globe, ExternalLink, ArrowRight, GitBranch, Pencil } from 'lucide-react';
+import { Layers, Plus, Clock, MapPin, Share2, Globe, ExternalLink, ArrowRight, GitBranch, Pencil, AlertTriangle } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { JobOpening, JobPosition, Department, OrganizationalDNA } from '../../types.js';
@@ -21,7 +21,9 @@ export const ModuleOpenings: React.FC<{
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [summaryId, setSummaryId] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { user } = useAuth();
+  const canCreate = !!user?.permissions.includes('openings:create');
   const canEdit = !!user?.permissions.includes('openings:edit');
 
   // Social Share Modal state
@@ -39,6 +41,7 @@ export const ModuleOpenings: React.FC<{
   const loadData = async () => {
     try {
       setLoading(true);
+      setLoadError(null);
       const [ops, pos, deps, orgDna] = await Promise.all([
         TenantApi.getOpenings(),
         TenantApi.getPositions(),
@@ -53,6 +56,7 @@ export const ModuleOpenings: React.FC<{
       if (deps.length > 0) setDepartmentId(deps[0].id);
     } catch (err) {
       console.error('Failed to load openings:', err);
+      setLoadError('Não foi possível carregar as vagas e seus dados de apoio.');
     } finally {
       setLoading(false);
     }
@@ -111,15 +115,22 @@ export const ModuleOpenings: React.FC<{
             </button>
           )}
 
-          <button
+          {canCreate && <button
             onClick={() => setIsModalOpen(true)}
             className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs shadow-xs transition-colors flex items-center gap-2"
           >
             <Plus className="w-4 h-4" />
             Abrir Nova Vaga
-          </button>
+          </button>}
         </div>
       </div>
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+          <span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 shrink-0" />{loadError}</span>
+          <button onClick={loadData} className="font-semibold underline">Tentar novamente</button>
+        </div>
+      )}
 
       {/* Expanded Grid of Job Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-5 sm:gap-6">

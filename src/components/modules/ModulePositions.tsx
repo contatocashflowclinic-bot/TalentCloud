@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Pencil } from 'lucide-react';
+import { Plus, Pencil, AlertTriangle } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { JobPosition, Department } from '../../types.js';
@@ -16,7 +16,9 @@ export const ModulePositions: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [summaryId, setSummaryId] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { user } = useAuth();
+  const canCreate = !!user?.permissions.includes('positions:create');
   const canEdit = !!user?.permissions.includes('positions:edit');
 
   // Form states
@@ -33,6 +35,7 @@ export const ModulePositions: React.FC = () => {
   const loadData = async () => {
     try {
       setLoading(true);
+      setLoadError(null);
       const [posData, depData] = await Promise.all([
         TenantApi.getPositions(),
         TenantApi.getDepartments()
@@ -42,6 +45,7 @@ export const ModulePositions: React.FC = () => {
       if (depData.length > 0) setDepartmentId(depData[0].id);
     } catch (err) {
       console.error('Failed to load positions:', err);
+      setLoadError('Não foi possível carregar os cargos e departamentos.');
     } finally {
       setLoading(false);
     }
@@ -88,14 +92,21 @@ export const ModulePositions: React.FC = () => {
           </p>
         </div>
 
-        <button
+        {canCreate && <button
           onClick={() => setIsModalOpen(true)}
           className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs shadow-xs transition-colors flex items-center gap-2"
         >
           <Plus className="w-4 h-4" />
           Cadastrar Cargo
-        </button>
+        </button>}
       </div>
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+          <span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 shrink-0" />{loadError}</span>
+          <button onClick={loadData} className="font-semibold underline">Tentar novamente</button>
+        </div>
+      )}
 
       {/* Positions Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">

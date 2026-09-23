@@ -22,6 +22,7 @@ export const ModuleOffers: React.FC = () => {
   const [editOfferId, setEditOfferId] = useState<string | null>(null);
   const { user } = useAuth();
   const canEdit = !!user?.permissions.includes('offers:edit');
+  const canCreate = !!user?.permissions.includes('offers:create');
   // Terms are locked once the offer has gone to the candidate
   const isEditable = (o: JobOffer) => canEdit && ['draft', 'pending_approval', 'approved'].includes(o.status);
 
@@ -32,6 +33,7 @@ export const ModuleOffers: React.FC = () => {
   const [benefits, setBenefits] = useState<BenefitCatalogItem[]>([]);
   const [positions, setPositions] = useState<JobPosition[]>([]);
   const [dataWarnings, setDataWarnings] = useState<string[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
   const [selectedBenefits, setSelectedBenefits] = useState<string[]>([]);
   const [benefitsInput, setBenefitsInput] = useState('');
@@ -66,6 +68,7 @@ export const ModuleOffers: React.FC = () => {
     try {
       setLoading(true);
       setDataWarnings([]);
+      setLoadError(null);
       const [offData, candData, opData] = await Promise.all([
         TenantApi.getOffers(),
         TenantApi.getCandidates(),
@@ -87,6 +90,7 @@ export const ModuleOffers: React.FC = () => {
       if (opData.length > 0) setJobOpeningId(opData[0].id);
     } catch (err) {
       console.error('Failed to load offers:', err);
+      setLoadError('Não foi possível carregar as propostas e dados relacionados.');
     } finally {
       setLoading(false);
     }
@@ -140,20 +144,20 @@ export const ModuleOffers: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
-          <button
+          {canEdit && <button
             onClick={() => setIsCatalogOpen(true)}
             className="px-4 py-2.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs transition-colors flex items-center gap-2"
           >
             <Gift className="w-4 h-4" />
             Benefícios
-          </button>
-          <button
+          </button>}
+          {canCreate && <button
             onClick={() => setIsModalOpen(true)}
             className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs shadow-xs transition-colors flex items-center gap-2"
           >
             <Plus className="w-4 h-4" />
             Gerar Proposta
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -161,6 +165,13 @@ export const ModuleOffers: React.FC = () => {
         <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>Dados complementares indisponíveis: {dataWarnings.join(', ')}. A gestão de propostas continua usando os dados principais.</span>
+        </div>
+      )}
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+          <span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 shrink-0" />{loadError}</span>
+          <button onClick={loadData} className="font-semibold underline">Tentar novamente</button>
         </div>
       )}
 

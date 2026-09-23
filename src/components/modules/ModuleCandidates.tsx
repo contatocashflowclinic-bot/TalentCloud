@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, Mail, MapPin, Sparkles, ArrowRight, Pencil } from 'lucide-react';
+import { Plus, Search, Mail, MapPin, Sparkles, ArrowRight, Pencil, AlertTriangle } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { Candidate, JobOpening, AIAssistedEvaluation } from '../../types.js';
@@ -28,7 +28,9 @@ export const ModuleCandidates: React.FC<{
   const [summaryId, setSummaryId] = useState<string | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { user } = useAuth();
+  const canCreate = !!user?.permissions.includes('candidates:create');
   const canEdit = !!user?.permissions.includes('candidates:edit');
 
   useEffect(() => {
@@ -51,6 +53,7 @@ export const ModuleCandidates: React.FC<{
   const loadData = async () => {
     try {
       setLoading(true);
+      setLoadError(null);
       const [candData, opsData, evalsData] = await Promise.all([
         TenantApi.getCandidates(),
         TenantApi.getOpenings(),
@@ -61,6 +64,7 @@ export const ModuleCandidates: React.FC<{
       setEvaluations(evalsData);
     } catch (err) {
       console.error('Failed to load candidates:', err);
+      setLoadError('Não foi possível carregar os candidatos e dados relacionados.');
     } finally {
       setLoading(false);
     }
@@ -140,15 +144,22 @@ export const ModuleCandidates: React.FC<{
             itemCount={filtered.length}
           />
 
-          <button
+          {canCreate && <button
             onClick={() => setIsModalOpen(true)}
             className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs shadow-xs transition-colors flex items-center gap-2"
           >
             <Plus className="w-4 h-4" />
             Cadastrar Candidato
-          </button>
+          </button>}
         </div>
       </div>
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+          <span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 shrink-0" />{loadError}</span>
+          <button onClick={loadData} className="font-semibold underline">Tentar novamente</button>
+        </div>
+      )}
 
       {/* Filter / Search Bar */}
       <div className="flex items-center gap-3">

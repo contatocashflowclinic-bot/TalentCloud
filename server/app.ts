@@ -779,6 +779,17 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     if (!Number.isFinite(n) || n < 0 || n > 99_999_999) throw new ValidationError(`${label} inválido.`);
     return n;
   };
+  const emailOf = (value: unknown, label = 'E-mail'): string => {
+    const email = required(value, label).toLowerCase();
+    if (!/^\S+@\S+\.\S+$/.test(email)) throw new ValidationError('E-mail inválido.');
+    return email;
+  };
+  const dateOnlyOf = (value: unknown, label: string): string => {
+    if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new ValidationError(`${label} inválida.`);
+    const date = new Date(`${value}T00:00:00Z`);
+    if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) throw new ValidationError(`${label} inválida.`);
+    return value;
+  };
   const optionalMoney = (value: unknown, label: string): number | null =>
     value === null || value === '' ? null : moneyOf(value, label);
   const requireUser = async (db: TenantConnectionContext['db'], id: unknown, label: string): Promise<string> => {
@@ -827,18 +838,22 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   app.post('/api/v1/positions', can('positions:create'), h(async (req, res) => {
     const { db } = ctx(req);
     const { title, departmentId, level, description, technicalRequirements, behavioralCompetencies, minSalary, maxSalary, careerTrack } = req.body;
+    if (!(await db.departments.get(required(departmentId, 'departmentId')))) throw new ValidationError('Departamento não encontrado nesta organização.');
+    const min = moneyOf(minSalary ?? 8000, 'Salário mínimo');
+    const max = moneyOf(maxSalary ?? 12000, 'Salário máximo');
+    if (max < min) throw new ValidationError('O salário máximo não pode ser menor que o mínimo.');
     const position = await db.positions.insert({
       id: newId('pos'),
       title: required(title, 'title'),
-      departmentId: required(departmentId, 'departmentId'),
-      level: level || 'Pleno',
+      departmentId,
+      level: level === undefined ? 'Pleno' : oneOfList(level, POSITION_LEVELS, 'Nível'),
       description: description ?? '',
       technicalRequirements: csv(technicalRequirements),
       behavioralCompetencies: csv(behavioralCompetencies),
-      minSalary: Number(minSalary) || 8000,
-      maxSalary: Number(maxSalary) || 12000,
+      minSalary: min,
+      maxSalary: max,
       currency: 'BRL',
-      careerTrack: careerTrack || 'Y_TECNICO',
+      careerTrack: careerTrack === undefined ? 'Y_TECNICO' : oneOfList(careerTrack, ['Y_TECNICO', 'GESTÃO', 'OPERACIONAL'], 'Trilha de carreira'),
       status: 'active'
     });
     res.status(201).json({ success: true, position });
@@ -887,7 +902,11 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     if (!resolvedPositionId) throw new ValidationError('Cadastre um cargo antes de abrir uma vaga.');
     if (!resolvedDepartmentId) throw new ValidationError('Cadastre um departamento antes de abrir uma vaga.');
 
-    const sla = Number(slaDays) || 30;
+    const sla = slaDays === undefined ? 30 : intIn(slaDays, 'SLA', 1, 730);
+    const count = openingsCount === undefined ? 1 : intIn(openingsCount, 'Número de posições', 1, 10000);
+    const salaryMin = salaryOfferedMin === undefined ? undefined : moneyOf(salaryOfferedMin, 'Salário oferecido (mínimo)');
+    const salaryMax = salaryOfferedMax === undefined ? undefined : moneyOf(salaryOfferedMax, 'Salário oferecido (máximo)');
+    if (salaryMin != null && salaryMax != null && salaryMax < salaryMin) throw new ValidationError('O salário máximo oferecido não pode ser menor que o mínimo.');
     const opening = await db.openings.insert({
       id: newId('job'),
       title: required(title, 'title'),
@@ -896,15 +915,15 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
       hiringManagerId: users.find(u => u.profileId === 'hiring_manager')?.id || users[0]?.id,
       recruiterId: users.find(u => u.profileId === 'recruiter')?.id || users[0]?.id,
       status: 'open',
-      openingsCount: Number(openingsCount) || 1,
+      openingsCount: count,
       filledCount: 0,
-      workModel: workModel || 'Híbrido',
+      workModel: workModel === undefined ? 'Híbrido' : oneOfList(workModel, ['Presencial', 'Híbrido', 'Remoto'], 'Modelo de trabalho'),
       location: location || 'Remoto / Brasil',
       slaDays: sla,
       openedAt: new Date().toISOString(),
       targetFillDate: new Date(Date.now() + sla * 86400000).toISOString(),
-      salaryOfferedMin: Number(salaryOfferedMin) || undefined,
-      salaryOfferedMax: Number(salaryOfferedMax) || undefined,
+      salaryOfferedMin: salaryMin,
+      salaryOfferedMax: salaryMax,
       stages: [
         { id: 'stg-1', name: 'Triagem Inicial', type: 'screening', order: 1, description: 'Análise de currículo' },
         { id: 'stg-2', name: 'Fit Cultural com IA', type: 'cultural_fit', order: 2, description: 'Aderência ao DNA e explicabilidade' },
@@ -966,7 +985,7 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     const candidate = await db.candidates.insert({
       id: newId('cand'),
       name: required(name, 'name'),
-      email: required(email, 'email'),
+      email: emailOf(email),
       phone: String(phone ?? '').trim(),
       location: String(location ?? '').trim(),
       linkedinUrl,
@@ -1245,16 +1264,30 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   app.post('/api/v1/interviews', can('interviews:create'), h(async (req, res) => {
     const { db } = ctx(req);
     const { jobOpeningId, candidateId, stageName, scheduledFor, interviewerIds, durationMinutes, meetLink, structuredScript } = req.body;
+    if (!(await db.openings.get(required(jobOpeningId, 'jobOpeningId')))) throw new ValidationError('Vaga não encontrada nesta organização.');
+    if (!(await db.candidates.get(required(candidateId, 'candidateId')))) throw new ValidationError('Candidato não encontrado nesta organização.');
     const users = await db.users.list();
+    const activeUsers = users.filter(u => u.active);
+    const selectedInterviewerIds = interviewerIds === undefined
+      ? (activeUsers[0] ? [activeUsers[0].id] : [])
+      : interviewerIds;
+    if (!Array.isArray(selectedInterviewerIds) || selectedInterviewerIds.length === 0 || selectedInterviewerIds.some(id => typeof id !== 'string' || !activeUsers.some(u => u.id === id))) {
+      throw new ValidationError('Selecione entrevistadores ativos desta organização.');
+    }
+    const scheduled = scheduledFor === undefined ? new Date(Date.now() + 86400000).toISOString() : String(scheduledFor);
+    if (Number.isNaN(new Date(scheduled).getTime())) throw new ValidationError('Data da entrevista inválida.');
+    const duration = durationMinutes === undefined ? 45 : intIn(durationMinutes, 'Duração', 1, 1440);
+    const link = meetLink === undefined ? 'https://meet.google.com/xyz-talent' : String(meetLink).trim();
+    if (link && !/^https?:\/\//i.test(link)) throw new ValidationError('O link da entrevista deve começar com http:// ou https://.');
     const interview = await db.interviews.insert({
       id: newId('int'),
-      jobOpeningId: required(jobOpeningId, 'jobOpeningId'),
-      candidateId: required(candidateId, 'candidateId'),
+      jobOpeningId,
+      candidateId,
       stageName: stageName || 'Entrevista com RH',
-      scheduledFor: scheduledFor || new Date(Date.now() + 86400000).toISOString(),
-      interviewerIds: Array.isArray(interviewerIds) && interviewerIds.length ? interviewerIds : users[0] ? [users[0].id] : [],
-      durationMinutes: Number(durationMinutes) || 45,
-      meetLink: meetLink || 'https://meet.google.com/xyz-talent',
+      scheduledFor: scheduled,
+      interviewerIds: selectedInterviewerIds,
+      durationMinutes: duration,
+      meetLink: link,
       status: 'scheduled',
       structuredScript: structuredScript || [
         'Apresentação mútua e trajetória profissional',
@@ -1291,15 +1324,20 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   app.post('/api/v1/offers', can('offers:create'), h(async (req, res) => {
     const { db } = ctx(req);
     const { jobOpeningId, candidateId, baseSalary, benefits, startDate, contractType } = req.body;
+    if (!(await db.openings.get(required(jobOpeningId, 'jobOpeningId')))) throw new ValidationError('Vaga não encontrada nesta organização.');
+    if (!(await db.candidates.get(required(candidateId, 'candidateId')))) throw new ValidationError('Candidato não encontrado nesta organização.');
     const users = await db.users.list();
+    const salary = baseSalary === undefined ? 15000 : moneyOf(baseSalary, 'Salário base');
+    const start = startDate === undefined ? new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0] : dateOnlyOf(startDate, 'Data de início');
+    const type = contractType === undefined ? 'CLT' : oneOfList(contractType, ['CLT', 'PJ'], 'Tipo de contrato');
     const offer = await db.offers.insert({
       id: newId('off'),
-      jobOpeningId: required(jobOpeningId, 'jobOpeningId'),
-      candidateId: required(candidateId, 'candidateId'),
-      baseSalary: Number(baseSalary) || 15000,
+      jobOpeningId,
+      candidateId,
+      baseSalary: salary,
       benefits: Array.isArray(benefits) ? benefits : ['Plano de Saúde', 'Vale Refeição', 'Seguro de Vida'],
-      startDate: startDate || new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
-      contractType: contractType || 'CLT',
+      startDate: start,
+      contractType: type,
       status: 'pending_approval',
       approverId: users.find(u => u.profileId === 'hiring_manager')?.id || users[0]?.id
     });
@@ -1370,7 +1408,19 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   app.patch('/api/v1/offers/:id/status',can('offers:edit'), h(async (req, res) => {
     const { status, notes } = req.body;
     const { db } = ctx(req);
-    const offer = await db.setOfferStatus(req.params.id, required(status, 'status') as Parameters<typeof db.setOfferStatus>[1], notes);
+    const nextStatus = oneOfList(status, ['draft', 'pending_approval', 'approved', 'sent', 'accepted', 'declined'], 'Status da proposta') as Parameters<typeof db.setOfferStatus>[1];
+    const current = await db.offers.get(req.params.id);
+    if (!current) throw new NotFoundError('Proposta não encontrada');
+    const allowed: Record<typeof current.status, readonly string[]> = {
+      draft: ['pending_approval'],
+      pending_approval: ['approved'],
+      approved: ['sent'],
+      sent: ['accepted', 'declined'],
+      accepted: [],
+      declined: []
+    };
+    if (!allowed[current.status].includes(nextStatus)) throw new ValidationError(`Não é possível mudar uma proposta de ${current.status} para ${nextStatus}.`);
+    const offer = await db.setOfferStatus(req.params.id, nextStatus, notes);
     res.json({ success: true, offer });
   }));
 

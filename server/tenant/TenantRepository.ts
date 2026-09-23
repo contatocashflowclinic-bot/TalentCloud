@@ -439,13 +439,14 @@ export class TenantRepository {
   async setOfferStatus(id: string, status: JobOffer['status'], notes?: string): Promise<JobOffer> {
     return withTransaction(async tx => {
       const now = new Date().toISOString();
-      const offer = await this.offers.update(id, {
+      const current = await this.offers.get(id, tx);
+      if (!current) throw new NotFoundError('Proposta não encontrada');
+      const offer = (await this.offers.update(id, {
         status,
         notes,
         sentAt: status === 'sent' ? now : undefined,
         respondedAt: status === 'accepted' || status === 'declined' ? now : undefined
-      }, tx);
-      if (!offer) throw new NotFoundError('Proposta não encontrada');
+      }, tx))!;
       if (status === 'accepted') await this.registerHire(offer, tx);
       return offer;
     });

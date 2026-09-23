@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Plus, Clock, Video, CheckCircle2, Star, User, MessageSquare } from 'lucide-react';
+import { Calendar, Plus, Clock, Video, CheckCircle2, Star, User, MessageSquare, AlertTriangle } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { InterviewSession, Candidate, JobOpening } from '../../types.js';
@@ -12,6 +12,7 @@ export const ModuleInterviews: React.FC = () => {
   const [openings, setOpenings] = useState<JobOpening[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeSession, setActiveSession] = useState<InterviewSession | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Scorecard filling state
   const [scorecardScores, setScorecardScores] = useState<Record<string, number>>({});
@@ -22,6 +23,7 @@ export const ModuleInterviews: React.FC = () => {
   const loadData = async () => {
     try {
       setLoading(true);
+      setLoadError(null);
       const [ints, cands, ops] = await Promise.all([
         TenantApi.getInterviews(),
         TenantApi.getCandidates(),
@@ -35,6 +37,7 @@ export const ModuleInterviews: React.FC = () => {
       }
     } catch (err) {
       console.error('Failed to load interviews:', err);
+      setLoadError('Não foi possível carregar as entrevistas e dados relacionados.');
     } finally {
       setLoading(false);
     }
@@ -81,6 +84,13 @@ export const ModuleInterviews: React.FC = () => {
           </p>
         </div>
       </div>
+
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
+          <span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 shrink-0" />{loadError}</span>
+          <button onClick={loadData} className="font-semibold underline">Tentar novamente</button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
