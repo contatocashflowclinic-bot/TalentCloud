@@ -120,7 +120,9 @@ export const DepartmentSummaryModal: React.FC<{
   const team = (users ?? []).filter(u => u.departmentId === department.id && u.active);
   const progress = Math.min(100, Math.round((department.currentHeadcount / (department.headcountTarget || 1)) * 100));
   const gap = Math.max(0, department.headcountTarget - department.currentHeadcount);
-  const openSeats = deptOpenings.filter(o => o.status === 'open').reduce((sum, o) => sum + Math.max(0, o.openingsCount - o.filledCount), 0);
+  const openSeats = deptOpenings
+    .filter(o => ['open', 'in_progress', 'offer'].includes(o.status))
+    .reduce((sum, o) => sum + Math.max(0, o.openingsCount - o.filledCount), 0);
 
   return (
     <Shell

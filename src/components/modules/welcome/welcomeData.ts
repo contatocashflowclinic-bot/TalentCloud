@@ -99,7 +99,9 @@ export function buildWelcomeView(
   // ---- KPI cards -------------------------------------------------------
   const stats: WelcomeStats = {};
   if (openings) {
-    const open = openings.filter(o => o.status === 'open' || o.status === 'in_progress');
+    const open = openings.filter(o =>
+      ['open', 'in_progress', 'offer'].includes(o.status) && o.openingsCount > o.filledCount
+    );
     stats.openJobs = { total: open.length, thisWeek: open.filter(o => withinDays(o.openedAt, 7, now)).length };
   }
   if (candidates) {

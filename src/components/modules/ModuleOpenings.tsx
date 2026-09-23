@@ -137,6 +137,15 @@ export const ModuleOpenings: React.FC<{
         {openings.map((job) => {
           const dept = departments.find(d => d.id === job.departmentId);
           const pos = positions.find(p => p.id === job.positionId);
+          const statusLabel = job.status === 'open'
+            ? 'Aberta / Ativa'
+            : job.status === 'filled'
+              ? 'Preenchida'
+              : job.status === 'cancelled'
+                ? 'Cancelada'
+                : job.status === 'draft'
+                  ? 'Rascunho'
+                  : 'Em andamento';
 
           return (
             <div
@@ -149,14 +158,14 @@ export const ModuleOpenings: React.FC<{
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div className="flex items-center gap-1.5">
                     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider ${
-                      job.status === 'open'
+                      job.status === 'open' || job.status === 'filled'
                         ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80'
                         : 'bg-slate-100 text-slate-700 border border-slate-200'
                     }`}>
                       {job.status === 'open' && (
                         <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                       )}
-                      {job.status === 'open' ? 'Aberta / Ativa' : 'Encerrada'}
+                      {statusLabel}
                     </span>
                   </div>
 
@@ -164,6 +173,10 @@ export const ModuleOpenings: React.FC<{
                     <Clock className="w-3 h-3 text-slate-400" />
                     SLA {job.slaDays}d
                   </span>
+                </div>
+
+                <div className="text-xs font-medium text-slate-500">
+                  Posições preenchidas: <span className="font-mono font-bold text-slate-700">{job.filledCount}/{job.openingsCount}</span>
                 </div>
 
                 {/* Job Title & Department */}

@@ -889,7 +889,9 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // MÓDULO 6: Vagas
   // ---------------------------------------------------------
   app.get('/api/v1/openings', can('openings:view'), h(async (req, res) => {
-    res.json({ success: true, openings: await ctx(req).db.openings.list() });
+    const db = ctx(req).db;
+    await db.syncAcceptedOffers();
+    res.json({ success: true, openings: await db.openings.list() });
   }));
 
   app.post('/api/v1/openings', can('openings:create'), h(async (req, res) => {
@@ -2065,7 +2067,9 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // MÓDULO 15: Indicadores (Tenant Analytics)
   // ---------------------------------------------------------
   app.get('/api/v1/indicators', can('indicators:view'), h(async (req, res) => {
-    const indicators = await ctx(req).db.getIndicators();
+    const db = ctx(req).db;
+    await db.syncAcceptedOffers();
+    const indicators = await db.getIndicators();
     if (!indicators) throw new NotFoundError('Indicadores não disponíveis para este tenant.');
     res.json({ success: true, indicators });
   }));

@@ -485,6 +485,24 @@ export class TenantRepository {
       for (const offer of offers) {
         if (offer.status === 'accepted' && !started.has(offer.candidateId)) await this.registerHire(offer, tx);
       }
+
+      // Older accepted offers may already have an onboarding journey, so registerHire
+      // correctly skips them. Reconcile the vacancy counters independently as well.
+      const acceptedByOpening = new Map<string, Set<string>>();
+      for (const offer of offers) {
+        if (offer.status !== 'accepted') continue;
+        const candidates = acceptedByOpening.get(offer.jobOpeningId) ?? new Set<string>();
+        candidates.add(offer.candidateId);
+        acceptedByOpening.set(offer.jobOpeningId, candidates);
+      }
+      for (const job of await this.openings.list(tx)) {
+        const acceptedCount = acceptedByOpening.get(job.id)?.size ?? 0;
+        const filledCount = Math.max(job.filledCount, acceptedCount);
+        const nextStatus = filledCount >= job.openingsCount ? 'filled' : job.status;
+        if (filledCount !== job.filledCount || nextStatus !== job.status) {
+          await this.openings.update(job.id, { filledCount, status: nextStatus }, tx);
+        }
+      }
     });
   }
 
