@@ -147,8 +147,11 @@ const StatusBadge: React.FC<{ item: QueueItem; onRetry: () => void }> = ({ item,
       return <span className="flex items-center gap-1 text-amber-600" title={item.message}><CheckCircle2 className="w-3.5 h-3.5" />Precisa de dados</span>;
     case 'error':
       return (
-        <span className="flex items-center gap-1.5">
-          <span className="flex items-center gap-1 text-rose-600" title={item.message}><XCircle className="w-3.5 h-3.5" />Não foi possível ler</span>
+        <span className="flex items-center gap-1.5 min-w-0">
+          <span className="flex items-center gap-1 text-rose-600 min-w-0" title={item.message}>
+            <XCircle className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate max-w-[28rem]">{item.message || 'Não foi possível ler'}</span>
+          </span>
           <button type="button" onClick={onRetry} className="text-slate-400 hover:text-indigo-600" title="Tentar de novo">
             <RotateCw className="w-3.5 h-3.5" />
           </button>
