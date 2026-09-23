@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Filter, CheckSquare, Square, ChevronRight, PauseCircle, Archive, Loader2, AlertTriangle, UserCheck, CheckCircle2, X } from 'lucide-react';
+import { Filter, CheckSquare, Square, ChevronRight, PauseCircle, Archive, Trash2, Loader2, AlertTriangle, UserCheck, CheckCircle2, X } from 'lucide-react';
 import { TenantApi, ApiError } from '../../services/api.js';
 import type { JobOpening, ScreeningBoard, ScreeningRow, ScreeningDecisionAction } from '../../types.js';
 import { FLAG_LABEL, matchesFilter, type ScreeningFilter } from '../../screening.js';
@@ -49,6 +49,7 @@ export const ScreeningPanel: React.FC<{
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [openFileId, setOpenFileId] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [busyAction, setBusyAction] = useState(false);
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'warn'; message: string } | null>(null);
 
@@ -85,6 +86,7 @@ export const ScreeningPanel: React.FC<{
   };
 
   const selectedRows = rows.filter(r => selected.has(r.applicationId));
+  const selectedFiles = selectedRows.filter(row => row.file);
 
   const runDecision = async (action: ScreeningDecisionAction, reason?: string) => {
     if (selectedRows.length === 0) return;
@@ -117,6 +119,28 @@ export const ScreeningPanel: React.FC<{
       setFeedback({ tone: 'warn', message: err instanceof ApiError ? err.message : 'Falha ao aplicar a decisão.' });
     } finally {
       setBusyAction(false);
+    }
+  };
+
+  const deleteSelected = async (reason: string) => {
+    if (selectedFiles.length === 0) return;
+    try {
+      setDeleting(true);
+      setFeedback(null);
+      const results = await Promise.allSettled(selectedFiles.map(row => TenantApi.deleteResume(row.file!.id, reason)));
+      const deleted = results.filter(result => result.status === 'fulfilled').length;
+      const failed = results.length - deleted;
+      setFeedback({
+        tone: failed === 0 ? 'success' : 'warn',
+        message: failed === 0
+          ? `${deleted} currículo(s) excluído(s) da organização.`
+          : `${deleted} currículo(s) excluído(s); ${failed} não puderam ser excluídos.`
+      });
+      setSelected(new Set());
+      setDeleting(false);
+      refresh();
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -240,6 +264,11 @@ export const ScreeningPanel: React.FC<{
           <button disabled={busyAction} onClick={() => setArchiving(true)} className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 flex items-center gap-1 disabled:opacity-60">
             <Archive className="w-3.5 h-3.5" /> Arquivar
           </button>
+          {selectedFiles.length > 0 && (
+            <button disabled={busyAction || deleting} onClick={() => setDeleting(true)} className="px-3 py-1.5 rounded-xl bg-slate-700 hover:bg-slate-800 flex items-center gap-1 disabled:opacity-60">
+              <Trash2 className="w-3.5 h-3.5" /> Excluir
+            </button>
+          )}
           {busyAction && <Loader2 className="w-4 h-4 animate-spin" />}
         </div>
       )}
@@ -250,6 +279,15 @@ export const ScreeningPanel: React.FC<{
           busy={busyAction}
           onCancel={() => setArchiving(false)}
           onConfirm={reason => void runDecision('archive', reason)}
+        />
+      )}
+
+      {deleting && (
+        <DeleteResumeModal
+          count={selectedFiles.length}
+          busy={deleting}
+          onCancel={() => setDeleting(false)}
+          onConfirm={reason => void deleteSelected(reason)}
         />
       )}
 
@@ -339,6 +377,36 @@ const ArchiveReasonModal: React.FC<{ count: number; busy: boolean; onCancel: () 
             className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs disabled:opacity-60"
           >
             {busy ? 'Aguarde…' : 'Arquivar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const DeleteResumeModal: React.FC<{ count: number; busy: boolean; onCancel: () => void; onConfirm: (reason: string) => void }> = ({ count, busy, onCancel, onConfirm }) => {
+  const backdrop = useBackdropClose(onCancel);
+  const [reason, setReason] = useState('');
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs" {...backdrop}>
+      <div className="bg-white rounded-2xl w-full max-w-sm border border-slate-200 shadow-xl p-5 space-y-3" onClick={e => e.stopPropagation()}>
+        <h3 className="text-sm font-bold text-slate-900">Excluir {count} currículo(s)</h3>
+        <p className="text-xs text-slate-500">O arquivo e os dados da triagem serão removidos desta organização. Esta ação não pode ser desfeita.</p>
+        <textarea
+          value={reason}
+          onChange={e => setReason(e.target.value)}
+          rows={3}
+          placeholder="Motivo da exclusão (obrigatório)"
+          className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs"
+        />
+        <div className="flex items-center justify-end gap-2 pt-1">
+          <button onClick={onCancel} disabled={busy} className="px-4 py-2 rounded-xl text-slate-600 hover:bg-slate-100 font-medium text-xs disabled:opacity-60">Cancelar</button>
+          <button
+            onClick={() => reason.trim() && onConfirm(reason.trim())}
+            disabled={busy || !reason.trim()}
+            className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs disabled:opacity-60"
+          >
+            {busy ? 'Aguarde…' : 'Excluir definitivamente'}
           </button>
         </div>
       </div>
