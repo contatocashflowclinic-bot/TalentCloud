@@ -22,14 +22,26 @@ export const ModuleOnboarding: React.FC = () => {
   const [integrationTemplates, setIntegrationTemplates] = useState<IntegrationTemplate[]>([]);
   const [isIntegrationCatalogOpen, setIsIntegrationCatalogOpen] = useState(false);
   const [checklistJourneyId, setChecklistJourneyId] = useState<string | null>(null);
+  const [dataWarnings, setDataWarnings] = useState<string[]>([]);
 
   const loadData = async () => {
     try {
       setLoading(true);
+      setDataWarnings([]);
       const data = await TenantApi.getOnboardings();
       setOnboardings(data);
-      TenantApi.getAdmissionTemplates().then(setTemplates).catch(() => setTemplates([]));
-      TenantApi.getIntegrationTemplates().then(setIntegrationTemplates).catch(() => setIntegrationTemplates([]));
+      await Promise.all([
+        TenantApi.getAdmissionTemplates().then(setTemplates).catch(err => {
+          console.error('Onboarding: failed to load admission templates:', err);
+          setTemplates([]);
+          setDataWarnings(list => [...new Set([...list, 'modelos de admissão'])]);
+        }),
+        TenantApi.getIntegrationTemplates().then(setIntegrationTemplates).catch(err => {
+          console.error('Onboarding: failed to load integration templates:', err);
+          setIntegrationTemplates([]);
+          setDataWarnings(list => [...new Set([...list, 'modelos de integração'])]);
+        })
+      ]);
     } catch (err) {
       console.error('Failed to load onboardings:', err);
     } finally {
@@ -105,6 +117,13 @@ export const ModuleOnboarding: React.FC = () => {
         </button>
         </div>
       </div>
+
+      {dataWarnings.length > 0 && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Dados complementares indisponíveis: {dataWarnings.join(', ')}. As jornadas carregadas continuam visíveis.</span>
+        </div>
+      )}
 
       {/* Journeys List */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

@@ -2030,13 +2030,13 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     if (Number.isNaN(new Date(value as string).getTime())) throw new ValidationError(`${label} inválida.`);
   };
 
-  app.get('/api/v1/agenda', h(async (req, res) => {
+  app.get('/api/v1/agenda', can('agenda:view'), h(async (req, res) => {
     res.json({ success: true, events: await ctx(req).db.agendaEvents.list() });
   }));
 
   // Diretório mínimo (id, nome, cargo) dos colaboradores ativos: monta convidados/responsáveis mesmo
   // para quem não tem a permissão `users:view` — todos podem agendar e atribuir na Agenda.
-  app.get('/api/v1/agenda/directory', h(async (req, res) => {
+  app.get('/api/v1/agenda/directory', can('agenda:view'), h(async (req, res) => {
     const members = await AccessService.listMembers(getPool(), ctx(req).tenant.id);
     res.json({
       success: true,
@@ -2044,7 +2044,7 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     });
   }));
 
-  app.post('/api/v1/agenda', h(async (req, res) => {
+  app.post('/api/v1/agenda', can('agenda:create'), h(async (req, res) => {
     const { db } = ctx(req);
     const b = req.body ?? {};
     const startsAt = required(b.startsAt, 'startsAt');
@@ -2072,7 +2072,7 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     res.status(201).json({ success: true, event });
   }));
 
-  app.patch('/api/v1/agenda/:id', h(async (req, res) => {
+  app.patch('/api/v1/agenda/:id', can('agenda:edit'), h(async (req, res) => {
     const { db } = ctx(req);
     const existing = await db.agendaEvents.get(req.params.id);
     if (!existing) throw new NotFoundError('Compromisso não encontrado.');
@@ -2108,7 +2108,7 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     res.json({ success: true, event });
   }));
 
-  app.delete('/api/v1/agenda/:id', h(async (req, res) => {
+  app.delete('/api/v1/agenda/:id', can('agenda:delete'), h(async (req, res) => {
     const { db } = ctx(req);
     const existing = await db.agendaEvents.get(req.params.id);
     if (!existing) throw new NotFoundError('Compromisso não encontrado.');

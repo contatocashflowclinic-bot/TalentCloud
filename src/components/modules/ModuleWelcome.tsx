@@ -262,7 +262,7 @@ const PendingRow: React.FC<{ item: PendingItem; onOpen: () => void }> = ({ item,
 export const ModuleWelcome: React.FC<{ onNavigate: (moduleId: number) => void }> = ({ onNavigate }) => {
   const { user } = useAuth();
   const { can, permissions } = useTenant();
-  const { view, members, loading, reload } = useWelcomeData();
+  const { view, members, warnings, loading, reload } = useWelcomeData();
   const firstName = (user?.name || '').split(' ')[0];
 
   const [showAllPending, setShowAllPending] = useState(false);
@@ -276,6 +276,8 @@ export const ModuleWelcome: React.FC<{ onNavigate: (moduleId: number) => void }>
   const pending = view?.pending ?? [];
   const lateCount = view?.lateCount ?? 0;
   const today = view?.today ?? [];
+  const canCreateAgenda = can('agenda:create');
+  const canDeleteAgenda = can('agenda:delete');
 
   const kpis: Kpi[] = [];
   if (stats.openJobs) {
@@ -358,6 +360,13 @@ export const ModuleWelcome: React.FC<{ onNavigate: (moduleId: number) => void }>
         </button>
       </div>
 
+      {warnings.length > 0 && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Alguns blocos da página inicial não carregaram: {warnings.join(', ')}. Os demais dados seguem disponíveis.</span>
+        </div>
+      )}
+
       {/* KPIs */}
       <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${XL_COLS[kpis.length]}`}>
         {kpis.map(kpi => <KpiCard key={kpi.key} kpi={kpi} loading={loading} />)}
@@ -379,12 +388,14 @@ export const ModuleWelcome: React.FC<{ onNavigate: (moduleId: number) => void }>
           ) : today.length === 0 ? (
             <div className="py-8 text-center border border-dashed border-slate-200 rounded-xl">
               <p className="text-sm text-slate-500">Nada agendado para hoje.</p>
-              <button
-                onClick={() => setCreateOpen(true)}
-                className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors"
-              >
-                <Plus className="w-4 h-4" /> Novo compromisso
-              </button>
+              {canCreateAgenda && (
+                <button
+                  onClick={() => setCreateOpen(true)}
+                  className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition-colors"
+                >
+                  <Plus className="w-4 h-4" /> Novo compromisso
+                </button>
+              )}
             </div>
           ) : (
             <div className="space-y-2.5">
@@ -501,7 +512,7 @@ export const ModuleWelcome: React.FC<{ onNavigate: (moduleId: number) => void }>
           members={members}
           onClose={() => setSelectedEvent(null)}
           onSaved={reload}
-          onDelete={selectedEvent.createdById === user?.id ? deleteSelected : undefined}
+          onDelete={canDeleteAgenda && selectedEvent.createdById === user?.id ? deleteSelected : undefined}
         />
       )}
     </div>

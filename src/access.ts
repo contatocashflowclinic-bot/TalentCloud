@@ -33,6 +33,7 @@ export const ROUTINES: Routine[] = [
   { key: 'structure', label: 'Estrutura Organizacional', description: 'Departamentos e centros de custo.', moduleId: 4, actions: ['view', 'create', 'edit'] },
   { key: 'positions', label: 'Cargos', description: 'Cargos, competências e faixas salariais.', moduleId: 5, actions: ['view', 'create', 'edit'] },
   { key: 'openings', label: 'Vagas', description: 'Abertura de vagas e pipeline.', moduleId: 6, actions: ['view', 'create', 'edit'] },
+  { key: 'careers', label: 'Divulgação & Portal', description: 'Portal público de vagas e compartilhamento social das oportunidades.', moduleId: 16, actions: ['view'] },
   { key: 'candidates', label: 'Candidatos', description: 'Banco de talentos.', moduleId: 7, actions: ['view', 'create', 'edit'] },
   { key: 'selection', label: 'Processo Seletivo', description: 'Candidaturas e movimentação entre etapas.', moduleId: 8, actions: ['view', 'create', 'edit'] },
   { key: 'ai_evaluation', label: 'Avaliação por IA', description: 'Avaliações assistidas por IA e decisão humana final.', moduleId: 9, actions: ['view', 'create', 'edit'] },
@@ -43,7 +44,8 @@ export const ROUTINES: Routine[] = [
   { key: 'retention', label: 'Retenção', description: 'Alertas de turnover e gestão das pesquisas de clima.', moduleId: 14, actions: ['view', 'edit'] },
   { key: 'retention_all', label: 'Alertas de toda a organização', description: 'Ver todos os alertas de risco de turnover. Sem esta permissão, a pessoa vê só os alertas da própria equipe (que ela gerencia, dos quais é responsável ou que ela abriu).', moduleId: 14, actions: ['view'] },
   { key: 'climate', label: 'Pesquisa de Clima', description: 'Responder às pesquisas de clima abertas para você (respostas anônimas).', moduleId: 14, actions: ['view'] },
-  { key: 'indicators', label: 'Indicadores', description: 'People analytics.', moduleId: 15, actions: ['view'] }
+  { key: 'indicators', label: 'Indicadores', description: 'People analytics.', moduleId: 15, actions: ['view'] },
+  { key: 'agenda', label: 'Agenda Corporativa', description: 'Reuniões e tarefas compartilhadas dentro da organização.', moduleId: 17, actions: ['view', 'create', 'edit', 'delete'] }
 ];
 
 export const permissionKey = (routine: string, action: PermissionAction) => `${routine}:${action}`;
@@ -90,7 +92,7 @@ export const isSubset = (subset: readonly string[], superset: readonly string[])
   return subset.every(p => s.has(p));
 };
 
-/** Whether a member may open an organization sidebar module (modules without routines, like the portal, are open). */
+/** Whether a member may open an organization sidebar module. */
 export function canAccessModule(permissions: readonly string[], moduleId: number): boolean {
   const routines = ROUTINES.filter(r => r.moduleId === moduleId);
   if (routines.length === 0) return true;
@@ -109,7 +111,7 @@ export const ALL_ROUTINE_KEYS: string[] = ROUTINES.map(r => r.key);
 export const PLAN_ROUTINES: Record<'Starter' | 'Scale' | 'Enterprise', string[]> = {
   Starter: [
     ...CORE_ROUTINES, 'dna', 'structure', 'positions', 'openings', 'candidates', 'selection', 'interviews', 'offers',
-    'onboarding'
+    'onboarding', 'careers', 'agenda'
   ],
   Scale: ALL_ROUTINE_KEYS,
   Enterprise: ALL_ROUTINE_KEYS
@@ -141,7 +143,8 @@ export interface DefaultProfile extends ProfileLike {
 }
 
 // `climate:view` = responder às pesquisas de clima: todo perfil de sistema pode, o que não dá acesso a alertas nem resultados.
-const BASE_VIEW = ['dna:view', 'structure:view', 'positions:view', 'openings:view', 'climate:view'];
+const BASE_VIEW = ['dna:view', 'structure:view', 'positions:view', 'openings:view', 'climate:view', 'agenda:view'];
+const BASE_AGENDA = ['agenda:create', 'agenda:edit', 'agenda:delete'];
 
 export const DEFAULT_PROFILES: DefaultProfile[] = [
   {
@@ -159,7 +162,7 @@ export const DEFAULT_PROFILES: DefaultProfile[] = [
     permissions: normalizePermissions([
       ...BASE_VIEW, 'users:view', 'openings:create', 'openings:edit', 'candidates:create', 'candidates:edit', 'selection:create', 'selection:edit',
       'ai_evaluation:create', 'ai_evaluation:edit', 'interviews:create', 'interviews:edit', 'offers:create',
-      'offers:edit', 'onboarding:edit', 'development:edit', 'retention:edit', 'retention_all:view', 'indicators:view'
+      'offers:edit', 'onboarding:edit', 'development:edit', 'retention:edit', 'retention_all:view', 'indicators:view', 'careers:view', ...BASE_AGENDA
     ]).permissions
   },
   {
@@ -169,7 +172,7 @@ export const DEFAULT_PROFILES: DefaultProfile[] = [
     isAdmin: false,
     permissions: normalizePermissions([
       ...BASE_VIEW, 'users:view', 'candidates:view', 'selection:edit', 'ai_evaluation:edit', 'interviews:edit',
-      'offers:edit', 'onboarding:edit', 'development:edit', 'retention:edit', 'indicators:view'
+      'offers:edit', 'onboarding:edit', 'development:edit', 'retention:edit', 'indicators:view', 'careers:view', ...BASE_AGENDA
     ]).permissions
   },
   {
@@ -178,7 +181,7 @@ export const DEFAULT_PROFILES: DefaultProfile[] = [
     description: 'Consulta candidatos e preenche scorecards de entrevistas.',
     isAdmin: false,
     permissions: normalizePermissions([
-      ...BASE_VIEW, 'users:view', 'candidates:view', 'interviews:edit'
+      ...BASE_VIEW, 'users:view', 'candidates:view', 'interviews:edit', ...BASE_AGENDA
     ]).permissions
   },
   {
@@ -186,7 +189,7 @@ export const DEFAULT_PROFILES: DefaultProfile[] = [
     name: 'Colaborador',
     description: 'Consulta DNA, estrutura, cargos e vagas abertas.',
     isAdmin: false,
-    permissions: BASE_VIEW
+    permissions: normalizePermissions([...BASE_VIEW, ...BASE_AGENDA]).permissions
   }
 ];
 

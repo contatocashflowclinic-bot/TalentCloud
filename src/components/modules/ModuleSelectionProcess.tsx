@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { GitBranch, User, Sparkles, ChevronRight, CheckCircle2, ArrowRight } from 'lucide-react';
+import { GitBranch, User, Sparkles, ChevronRight, CheckCircle2, ArrowRight, AlertTriangle } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { SelectionApplication, JobOpening, Candidate, AIAssistedEvaluation, InterviewSession } from '../../types.js';
@@ -29,6 +29,7 @@ export const ModuleSelectionProcess: React.FC<{
   const { user } = useAuth();
   const [interviews, setInterviews] = useState<InterviewSession[]>([]);
   const [summaryAppId, setSummaryAppId] = useState<string | null>(null);
+  const [dataWarnings, setDataWarnings] = useState<string[]>([]);
 
   useEffect(() => {
     if (initialJobId) {
@@ -39,13 +40,18 @@ export const ModuleSelectionProcess: React.FC<{
   const loadData = async () => {
     try {
       setLoading(true);
+      setDataWarnings([]);
       const [ops, apps, cands, evals] = await Promise.all([
         TenantApi.getOpenings(),
         TenantApi.getApplications(),
         TenantApi.getCandidates(),
         aiEnabled ? TenantApi.getAIEvaluations() : Promise.resolve([] as AIAssistedEvaluation[]),
         // Entrevistas só enriquecem o resumo; sem permissão de ver entrevistas o Kanban segue funcionando.
-        TenantApi.getInterviews().then(setInterviews).catch(() => setInterviews([]))
+        TenantApi.getInterviews().then(setInterviews).catch(err => {
+          console.error('Selection process: failed to load interviews:', err);
+          setInterviews([]);
+          setDataWarnings(list => [...new Set([...list, 'entrevistas'])]);
+        })
       ]);
       setOpenings(ops);
       setApplications(apps);
@@ -147,6 +153,13 @@ export const ModuleSelectionProcess: React.FC<{
           )}
         </div>
       </div>
+
+      {dataWarnings.length > 0 && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Dados complementares indisponíveis: {dataWarnings.join(', ')}. O Kanban continua usando vagas, candidaturas e candidatos.</span>
+        </div>
+      )}
 
       {view === 'screening' && activeJob && canViewScreening && (
         <ScreeningPanel job={activeJob} onDataChanged={loadData} onOpenApplication={setSummaryAppId} />

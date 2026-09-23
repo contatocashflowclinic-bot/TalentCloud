@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Gift, Pencil, CheckCircle2, Send, Calendar, Paperclip } from 'lucide-react';
+import { Plus, Gift, Pencil, CheckCircle2, Send, Calendar, Paperclip, AlertTriangle } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
 import { JobOffer, Candidate, JobOpening, BenefitCatalogItem, JobPosition } from '../../types.js';
@@ -31,13 +31,21 @@ export const ModuleOffers: React.FC = () => {
   const [baseSalary, setBaseSalary] = useState(16000);
   const [benefits, setBenefits] = useState<BenefitCatalogItem[]>([]);
   const [positions, setPositions] = useState<JobPosition[]>([]);
+  const [dataWarnings, setDataWarnings] = useState<string[]>([]);
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
   const [selectedBenefits, setSelectedBenefits] = useState<string[]>([]);
   const [benefitsInput, setBenefitsInput] = useState('');
   const [startDate, setStartDate] = useState(new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0]);
 
-  const loadBenefits = () =>
-    TenantApi.getBenefits().then(setBenefits).catch(() => setBenefits([]));
+  const loadBenefits = async () => {
+    try {
+      setBenefits(await TenantApi.getBenefits());
+    } catch (err) {
+      console.error('Offers: failed to load benefits:', err);
+      setBenefits([]);
+      setDataWarnings(list => [...new Set([...list, 'benefícios'])]);
+    }
+  };
 
   const activeBenefits = benefits.filter(b => b.active);
 
@@ -57,13 +65,20 @@ export const ModuleOffers: React.FC = () => {
   const loadData = async () => {
     try {
       setLoading(true);
+      setDataWarnings([]);
       const [offData, candData, opData] = await Promise.all([
         TenantApi.getOffers(),
         TenantApi.getCandidates(),
         TenantApi.getOpenings(),
         loadBenefits(),
         // Cargos só definem o pacote-padrão por nível; sem permissão de ver cargos a proposta segue funcionando.
-        TenantApi.getPositions().then(setPositions).catch(() => setPositions([]))
+        TenantApi.getPositions()
+          .then(setPositions)
+          .catch(err => {
+            console.error('Offers: failed to load positions:', err);
+            setPositions([]);
+            setDataWarnings(list => [...new Set([...list, 'cargos'])]);
+          })
       ]);
       setOffers(offData);
       setCandidates(candData);
@@ -141,6 +156,13 @@ export const ModuleOffers: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {dataWarnings.length > 0 && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Dados complementares indisponíveis: {dataWarnings.join(', ')}. A gestão de propostas continua usando os dados principais.</span>
+        </div>
+      )}
 
       {isCatalogOpen && (
         <BenefitCatalogModal benefits={benefits} onClose={() => setIsCatalogOpen(false)} onChanged={async () => { await loadBenefits(); }} />

@@ -29,7 +29,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     mod.id === 14 && pendingSurveys > 0 ? `${pendingSurveys} ${pendingSurveys === 1 ? 'pesquisa' : 'pesquisas'}` : mod.badge;
 
   const visibleSections = MODULE_SECTIONS
-    .map(sec => ({ ...sec, modules: sec.modules.filter(m => m.id === 16 || canAccessModule(permissions, m.id)) }))
+    .map(sec => ({ ...sec, modules: sec.modules.filter(m => canAccessModule(permissions, m.id)) }))
     .filter(sec => sec.modules.length > 0);
 
   const allModules = visibleSections.flatMap(s => s.modules);

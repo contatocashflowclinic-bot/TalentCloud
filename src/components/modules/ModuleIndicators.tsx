@@ -10,7 +10,8 @@ import {
   Layers,
   ShieldCheck,
   Calendar,
-  CheckCircle2
+  CheckCircle2,
+  AlertTriangle
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
@@ -29,17 +30,29 @@ export const ModuleIndicators: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'governance'>('overview');
   const [openings, setOpenings] = useState<JobOpening[]>([]);
   const [evaluations, setEvaluations] = useState<AIAssistedEvaluation[]>([]);
+  const [dataWarnings, setDataWarnings] = useState<string[]>([]);
 
   useEffect(() => {
     const load = async () => {
       try {
         setLoading(true);
+        const warnings: string[] = [];
+        const optional = async <T,>(label: string, promise: Promise<T>, fallback: T): Promise<T> => {
+          try {
+            return await promise;
+          } catch (err) {
+            console.error(`Indicators: failed to load ${label}:`, err);
+            warnings.push(label);
+            return fallback;
+          }
+        };
         const [indicatorsData, deptsData, openingsData, evaluationsData] = await Promise.all([
           TenantApi.getIndicators(),
-          TenantApi.getDepartments().catch(() => [] as Department[]),
-          TenantApi.getOpenings().catch(() => [] as JobOpening[]),
-          aiEnabled ? TenantApi.getAIEvaluations().catch(() => [] as AIAssistedEvaluation[]) : Promise.resolve([] as AIAssistedEvaluation[])
+          optional('departamentos', TenantApi.getDepartments(), [] as Department[]),
+          optional('vagas', TenantApi.getOpenings(), [] as JobOpening[]),
+          aiEnabled ? optional('avaliações de IA', TenantApi.getAIEvaluations(), [] as AIAssistedEvaluation[]) : Promise.resolve([] as AIAssistedEvaluation[])
         ]);
+        setDataWarnings(warnings);
         setIndicators(indicatorsData);
         setDepartments(deptsData || []);
         setOpenings(openingsData || []);
@@ -99,6 +112,13 @@ export const ModuleIndicators: React.FC = () => {
           />
         </div>
       </div>
+
+      {dataWarnings.length > 0 && (
+        <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Alguns dados complementares não carregaram: {dataWarnings.join(', ')}. Os indicadores principais continuam preservados.</span>
+        </div>
+      )}
 
       {/* Navigation Tabs */}
       <div className="flex items-center gap-2 border-b border-slate-200 pb-px">
@@ -301,4 +321,3 @@ export const ModuleIndicators: React.FC = () => {
     </div>
   );
 };
-

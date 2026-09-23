@@ -243,6 +243,7 @@ export function useWelcomeData() {
   const { user } = useAuth();
   const [source, setSource] = useState<WelcomeSource | null>(null);
   const [members, setMembers] = useState<AgendaDirectoryMember[]>([]);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const latestRequest = useRef(0);
   const permissionsKey = permissions.join('|');
@@ -250,29 +251,32 @@ export function useWelcomeData() {
   const load = useCallback(async () => {
     const request = ++latestRequest.current;
     /** One failing endpoint must not blank the whole screen: it just drops its own block. */
-    const safely = async <T,>(allowed: boolean, fetcher: () => Promise<T>): Promise<T | undefined> => {
+    const warnings: string[] = [];
+    const safely = async <T,>(label: string, allowed: boolean, fetcher: () => Promise<T>): Promise<T | undefined> => {
       if (!allowed) return undefined;
       try {
         return await fetcher();
       } catch (err) {
-        console.error('Welcome: failed to load a data source:', err);
+        console.error(`Welcome: failed to load ${label}:`, err);
+        warnings.push(label);
         return undefined;
       }
     };
 
     const [openings, candidates, applications, interviews, offers, events, directory] = await Promise.all([
-      safely(can('openings:view'), TenantApi.getOpenings),
-      safely(can('candidates:view'), TenantApi.getCandidates),
-      safely(can('selection:view'), TenantApi.getApplications),
-      safely(can('interviews:view'), TenantApi.getInterviews),
-      safely(can('offers:view'), TenantApi.getOffers),
-      safely(true, TenantApi.getAgendaEvents),
-      safely(true, TenantApi.getAgendaDirectory)
+      safely('vagas', can('openings:view'), TenantApi.getOpenings),
+      safely('candidatos', can('candidates:view'), TenantApi.getCandidates),
+      safely('processo seletivo', can('selection:view'), TenantApi.getApplications),
+      safely('entrevistas', can('interviews:view'), TenantApi.getInterviews),
+      safely('propostas', can('offers:view'), TenantApi.getOffers),
+      safely('agenda', can('agenda:view'), TenantApi.getAgendaEvents),
+      safely('diretório da agenda', can('agenda:view'), TenantApi.getAgendaDirectory)
     ]);
 
     if (request !== latestRequest.current) return; // a newer load (e.g. tenant switch) superseded this one
     setSource({ openings, candidates, applications, interviews, offers, events: events ?? [] });
     setMembers(directory ?? []);
+    setWarnings(warnings);
     setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTenant?.id, permissionsKey]);
@@ -288,5 +292,5 @@ export function useWelcomeData() {
     [source, user?.id, permissionsKey]
   );
 
-  return { view, members, loading, reload: load };
+  return { view, members, warnings, loading, reload: load };
 }
