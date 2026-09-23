@@ -72,7 +72,7 @@ Google (sem uso dos dados para treino) antes de habilitar o recurso para organiz
 | `SUPERADMIN_EMAIL` / `SUPERADMIN_PASSWORD` | só em banco novo | credenciais da Conta Mãe (seção 1.3) |
 | `GEMINI_API_KEY` | opcional | sem ela a avaliação de IA usa a estimativa local, rotulada como tal |
 | `GEMINI_MODEL` | opcional | padrão `gemini-3.8-flash` |
-| `NODEJS_HELPERS` | recomendado | `0` (garante que o corpo das requisições chegue ao Express; o `vercel.json` já define no build) |
+| `NODEJS_HELPERS` | recomendado | `0` (garante que o corpo das requisições chegue ao Express; o `vercel.json` já define no runtime) |
 | `PUBLIC_APPLY_LIMIT` | opcional | candidaturas públicas por IP por hora (padrão 10) |
 | `DB_POOL_MAX` | opcional | conexões por instância (padrão 5 na Vercel) |
 | `DB_SSL_CA` | opcional | PEM do certificado do Supabase, para **verificar** o certificado do banco |

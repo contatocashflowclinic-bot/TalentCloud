@@ -4,10 +4,8 @@
   "installCommand": "npm ci",
   "buildCommand": "npm run build:web",
   "outputDirectory": "dist",
-  "build": {
-    "env": {
-      "NODEJS_HELPERS": "0"
-    }
+  "env": {
+    "NODEJS_HELPERS": "0"
   },
   "functions": {
     "api/index.ts": {
