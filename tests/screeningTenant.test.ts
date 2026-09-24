@@ -200,9 +200,9 @@ describe('buildScreeningBoard: candidaturas, candidatos, avaliações e arquivos
   const job = { id: 'job-1', title: 'Vaga X', status: 'open', stages };
   const criteria = screeningCriteriaInfo(position, dna, 'hash-atual');
 
-  const candidate = (id: string, name: string): Candidate => ({
+  const candidate = (id: string, name: string, over: Partial<Candidate> = {}): Candidate => ({
     id, name, email: `${id}@exemplo.com`, phone: '', location: '', currentRole: 'Dev', yearsOfExperience: 3,
-    education: '', resumeSummary: '', skills: [], languages: [], registeredAt: '', tags: [], dataOrigin: 'rh', archived: false
+    education: '', resumeSummary: '', skills: [], languages: [], registeredAt: '', tags: [], dataOrigin: 'rh', archived: false, ...over
   });
   const application = (id: string, candidateId: string, over: Partial<SelectionApplication> = {}): SelectionApplication => ({
     id, jobOpeningId: 'job-1', candidateId, currentStageId: 'stg-1', status: 'in_review', appliedAt: '2026-09-01T00:00:00Z', notes: [], ...over
@@ -226,6 +226,18 @@ describe('buildScreeningBoard: candidaturas, candidatos, avaliações e arquivos
     assert.equal(board.rows.length, 1);
     assert.ok(board.rows[0].flags.includes('no_resume'));
     assert.equal(board.rows[0].file, undefined);
+  });
+
+  test('candidatura criada por curriculo importado some da triagem quando o arquivo e excluido', () => {
+    const src: BoardSource = {
+      job, criteria,
+      applications: [application('app-1', 'c1')],
+      candidates: [candidate('c1', 'Fulana', { tags: [RESUME_IMPORT_TAG] })],
+      evaluations: [evaluation('c1')],
+      screenings: []
+    };
+    const board = buildScreeningBoard(src);
+    assert.equal(board.rows.length, 0);
   });
 
   test('avaliação heurística (estimativa local) nunca entra no ranking', () => {

@@ -235,17 +235,18 @@ export function buildScreeningBoard(src: BoardSource): ScreeningBoard {
     }
   }
 
-  const rows: ScreeningRow[] = src.applications.map(app => {
+  const rows: ScreeningRow[] = src.applications.flatMap(app => {
     const candidate = candidateById.get(app.candidateId);
     const evaluation = evaluationByCandidate.get(app.candidateId);
     const screening = screeningByApplication.get(app.id);
     const file = screening ? fileOf(screening) : undefined;
+    if (!file && candidate?.tags.includes(RESUME_IMPORT_TAG)) return [];
     const flags = deriveFlags(screening?.summary, {
       culturalFitThreshold: src.criteria.culturalFitThreshold,
       criteriaHash: src.criteria.criteriaHash
     });
     if (!file) flags.push('no_resume');
-    return {
+    return [{
       applicationId: app.id,
       candidateId: app.candidateId,
       candidateName: candidate?.name ?? '(candidato removido)',
@@ -265,7 +266,7 @@ export function buildScreeningBoard(src: BoardSource): ScreeningBoard {
       },
       file,
       flags
-    };
+    }];
   });
 
   return {
