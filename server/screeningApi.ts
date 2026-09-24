@@ -11,6 +11,7 @@ import { docxToText, PDF_MIME, sniffResume } from './resumeFile.js';
 import { getFile, MAX_FILE_BYTES, putFile, removeFile, RESUME_BUCKET, safeFileName } from './storage.js';
 import { newId } from './ids.js';
 import { consumeQuota } from './rateLimit.js';
+import { withTransaction } from './db/pool.js';
 import { buildScreeningBoard, criteriaHashOf, criteriaOf, fileOf, planDecision, screeningCriteriaInfo } from './tenant/screening.js';
 import { deriveFlags, effectiveStatus, MAX_AUTO_ATTEMPTS, SCREENING_PERMISSIONS } from '../src/screening.js';
 import { RESUME_LIMITS, type ScreeningDecisionAction, type ScreeningDecisionResult } from '../src/types.js';
@@ -37,10 +38,11 @@ export function registerScreeningApi(app: Express): void {
     const { db } = ctx(req);
     const job = await db.openings.get(req.params.jobId);
     if (!job) throw new NotFoundError('Vaga não encontrada.');
-    const [position, dna, applications, candidates, evaluations, screenings] = await Promise.all([
-      db.positions.get(job.positionId), db.getDna(), db.applications.list(), db.candidates.list(),
-      db.aiEvaluations.list(), db.listScreeningsForJob(job.id)
+    const [position, dna, applications, evaluations, screenings] = await Promise.all([
+      db.positions.get(job.positionId), db.getDna(), db.listApplicationsForJob(job.id),
+      db.listAIEvaluationsForJob(job.id), db.listScreeningsForJob(job.id)
     ]);
+    const candidates = await db.listCandidatesByIds(applications.map(a => a.candidateId));
     const criteriaHash = position && dna ? criteriaHashOf(criteriaOf(job, position, dna)) : '';
     const criteria = screeningCriteriaInfo(position, dna, criteriaHash);
     const board = buildScreeningBoard({
@@ -299,14 +301,58 @@ export function registerScreeningApi(app: Express): void {
   app.delete('/api/v1/screening/files/:id', ...canAll(SCREENING_PERMISSIONS.decide), h(async (req, res) => {
     const { db, tenant } = ctx(req);
     const reason = required(req.body?.reason, 'reason');
-    const row = await db.resumeScreenings.get(req.params.id);
-    if (!row) throw new NotFoundError('Arquivo não encontrado.');
-    await db.resumeScreenings.delete(row.id);
-    if (row.storagePath.startsWith(`${tenant.id}/resumes/`)) void removeFile(row.storagePath, RESUME_BUCKET);
+    const deleted = await withTransaction(async tx => {
+      const row = await db.resumeScreenings.get(req.params.id, tx);
+      if (!row) throw new NotFoundError('Arquivo nao encontrado.');
+      const storagePaths = [row.storagePath];
+      const counts = { screenings: 0, applications: 0, evaluations: 0, interviews: 0, offers: 0, onboardings: 0, candidates: 0 };
+
+      if (!row.candidateId) {
+        await db.resumeScreenings.delete(row.id, tx);
+        counts.screenings = 1;
+        return { row, storagePaths, counts };
+      }
+
+      const candidateId = row.candidateId;
+      const offerDocs = await tx.query(
+        'select id, documents from public.job_offers where tenant_id = $1 and candidate_id = $2',
+        [tenant.id, candidateId]
+      );
+      for (const offer of offerDocs.rows as Array<{ id: string; documents?: Array<{ path?: string }> }>) {
+        for (const doc of offer.documents ?? []) {
+          if (doc.path?.startsWith(`${tenant.id}/offers/${offer.id}/`)) storagePaths.push(doc.path);
+        }
+      }
+      const journeys = await tx.query(
+        'select id, checklists, admission from public.onboarding_journeys where tenant_id = $1 and candidate_id = $2',
+        [tenant.id, candidateId]
+      );
+      for (const journey of journeys.rows as Array<{ id: string; checklists?: Array<{ file?: { path?: string } }>; admission?: Array<{ file?: { path?: string } }> }>) {
+        for (const item of [...(journey.checklists ?? []), ...(journey.admission ?? [])]) {
+          const path = item.file?.path;
+          if (path?.startsWith(`${tenant.id}/${journey.id}/`)) storagePaths.push(path);
+        }
+      }
+
+      counts.screenings = (await tx.query('delete from public.resume_screenings where tenant_id = $1 and (candidate_id = $2 or application_id in (select id from public.selection_applications where tenant_id = $1 and candidate_id = $2) or id = $3)', [tenant.id, candidateId, row.id])).rowCount ?? 0;
+      counts.interviews = (await tx.query('delete from public.interview_sessions where tenant_id = $1 and candidate_id = $2', [tenant.id, candidateId])).rowCount ?? 0;
+      counts.offers = (await tx.query('delete from public.job_offers where tenant_id = $1 and candidate_id = $2', [tenant.id, candidateId])).rowCount ?? 0;
+      counts.onboardings = (await tx.query('delete from public.onboarding_journeys where tenant_id = $1 and candidate_id = $2', [tenant.id, candidateId])).rowCount ?? 0;
+      counts.applications = (await tx.query('delete from public.selection_applications where tenant_id = $1 and candidate_id = $2', [tenant.id, candidateId])).rowCount ?? 0;
+      counts.evaluations = (await tx.query('delete from public.ai_evaluations where tenant_id = $1 and candidate_id = $2', [tenant.id, candidateId])).rowCount ?? 0;
+      counts.candidates = (await tx.query('delete from public.candidates where tenant_id = $1 and id = $2', [tenant.id, candidateId])).rowCount ?? 0;
+      return { row, storagePaths, counts };
+    });
+
+    for (const path of [...new Set(deleted.storagePaths)]) {
+      if (path.startsWith(`${tenant.id}/resumes/`)) void removeFile(path, RESUME_BUCKET);
+      else if (path.startsWith(`${tenant.id}/`)) void removeFile(path);
+    }
     void logAudit({
       tenantId: tenant.id, userId: req.auth!.id, userName: req.auth!.name, action: 'RESUME_DELETED', category: 'CANDIDATE_DATA',
-      details: `Currículo excluído (${row.fileName}). Motivo: ${reason}`, ipAddress: req.ip || '127.0.0.1', databaseAffected: tenant.dbConfig.dbName
-    }).catch(err => console.warn('[audit] falha ao registrar exclusão de currículo:', err));
+      details: `Curriculo excluido (${deleted.row.fileName}). Motivo: ${reason}. Registros removidos: ${JSON.stringify(deleted.counts)}`,
+      ipAddress: req.ip || '127.0.0.1', databaseAffected: tenant.dbConfig.dbName
+    }).catch(err => console.warn('[audit] falha ao registrar exclusao de curriculo:', err));
     res.json({ success: true });
   }));
 

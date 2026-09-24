@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, Search, Mail, MapPin, Sparkles, ArrowRight, Pencil, AlertTriangle } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
@@ -103,13 +103,25 @@ export const ModuleCandidates: React.FC<{
     }
   };
 
-  const archivedCount = candidates.filter(c => c.archived).length;
+  const archivedCount = useMemo(() => candidates.filter(c => c.archived).length, [candidates]);
+  const evaluationByCandidate = useMemo(() => {
+    const map = new Map<string, AIAssistedEvaluation>();
+    for (const evaluation of evaluations) {
+      if (!map.has(evaluation.candidateId)) map.set(evaluation.candidateId, evaluation);
+    }
+    return map;
+  }, [evaluations]);
 
-  const filtered = candidates.filter(c => (showArchived || !c.archived) && (
-    c.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    c.currentRole.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    c.skills.some(s => s.toLowerCase().includes(searchTerm.toLowerCase()))
-  ));
+  const filtered = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    return candidates.filter(c => (showArchived || !c.archived) && (
+      !query ||
+      c.name.toLowerCase().includes(query) ||
+      c.currentRole.toLowerCase().includes(query) ||
+      c.skills.some(s => s.toLowerCase().includes(query))
+    ));
+  }, [candidates, searchTerm, showArchived]);
+  const visibleCandidates = filtered.slice(0, 120);
 
   const handleExportCSV = () => {
     exportCandidatesToCSV(filtered, evaluations, activeTenant?.name || 'Vértice 360', aiEnabled);
@@ -183,8 +195,8 @@ export const ModuleCandidates: React.FC<{
 
       {/* Candidates List - Expanded Responsive Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-5 sm:gap-6">
-        {filtered.map((cand) => {
-          const evalItem = evaluations.find(e => e.candidateId === cand.id);
+        {visibleCandidates.map((cand) => {
+          const evalItem = evaluationByCandidate.get(cand.id);
           const isHighlighted = initialSelectedCandidateId === cand.id;
           const initials = cand.name
             .split(' ')
@@ -334,6 +346,12 @@ export const ModuleCandidates: React.FC<{
           );
         })}
       </div>
+
+      {filtered.length > visibleCandidates.length && (
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-center text-xs text-slate-500">
+          Mostrando os primeiros {visibleCandidates.length} de {filtered.length} candidatos. Use a busca para refinar a lista antes de abrir todos os resultados.
+        </div>
+      )}
 
       {summaryId && candidates.some(c => c.id === summaryId) && (
         <CandidateSummaryModal

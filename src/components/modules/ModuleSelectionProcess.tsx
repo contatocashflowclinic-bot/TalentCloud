@@ -25,7 +25,6 @@ export const ModuleSelectionProcess: React.FC<{
   const [applications, setApplications] = useState<SelectionApplication[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [aiEvaluations, setAiEvaluations] = useState<AIAssistedEvaluation[]>([]);
-  const [loading, setLoading] = useState(true);
   const { user } = useAuth();
   const [interviews, setInterviews] = useState<InterviewSession[]>([]);
   const [summaryAppId, setSummaryAppId] = useState<string | null>(null);
@@ -37,43 +36,66 @@ export const ModuleSelectionProcess: React.FC<{
     }
   }, [initialJobId]);
 
-  const loadData = async () => {
+  const loadOpenings = async () => {
     try {
-      setLoading(true);
       setDataWarnings([]);
-      const [ops, apps, cands, evals] = await Promise.all([
-        TenantApi.getOpenings(),
-        TenantApi.getApplications(),
-        TenantApi.getCandidates(),
-        aiEnabled ? TenantApi.getAIEvaluations() : Promise.resolve([] as AIAssistedEvaluation[]),
-        // Entrevistas só enriquecem o resumo; sem permissão de ver entrevistas o Kanban segue funcionando.
-        TenantApi.getInterviews().then(setInterviews).catch(err => {
+      setApplications([]);
+      setCandidates([]);
+      setAiEvaluations([]);
+      setInterviews([]);
+      const ops = await TenantApi.getOpenings();
+      setOpenings(ops);
+      if (initialJobId && ops.some(o => o.id === initialJobId)) {
+        setSelectedJobId(initialJobId);
+      } else if (ops.length > 0) {
+        setSelectedJobId(current => current && ops.some(o => o.id === current) ? current : ops[0].id);
+      } else {
+        setSelectedJobId('');
+      }
+    } catch (err) {
+      console.error('Failed to load openings for selection process:', err);
+      setOpenings([]);
+      setSelectedJobId('');
+    }
+  };
+
+  const loadJobData = async (jobId = selectedJobId) => {
+    if (!jobId) {
+      setApplications([]);
+      setCandidates([]);
+      setAiEvaluations([]);
+      setInterviews([]);
+      return;
+    }
+    try {
+      setDataWarnings([]);
+      const apps = await TenantApi.getApplications({ jobId });
+      const candidateIds = [...new Set(apps.map(app => app.candidateId))];
+      const [cands, evals] = await Promise.all([
+        candidateIds.length > 0 ? TenantApi.getCandidates({ ids: candidateIds }) : Promise.resolve([] as Candidate[]),
+        aiEnabled ? TenantApi.getAIEvaluations({ jobId }) : Promise.resolve([] as AIAssistedEvaluation[]),
+        // Entrevistas so enriquecem o resumo; sem permissao de ver entrevistas o Kanban segue funcionando.
+        TenantApi.getInterviews({ jobId }).then(setInterviews).catch(err => {
           console.error('Selection process: failed to load interviews:', err);
           setInterviews([]);
           setDataWarnings(list => [...new Set([...list, 'entrevistas'])]);
         })
       ]);
-      setOpenings(ops);
       setApplications(apps);
       setCandidates(cands);
       setAiEvaluations(evals);
-
-      if (initialJobId && ops.some(o => o.id === initialJobId)) {
-        setSelectedJobId(initialJobId);
-      } else if (ops.length > 0 && !selectedJobId) {
-        setSelectedJobId(ops[0].id);
-      }
     } catch (err) {
-      console.error('Failed to load selection process:', err);
-    } finally {
-      setLoading(false);
+      console.error('Failed to load selected job pipeline:', err);
     }
   };
 
   useEffect(() => {
-    loadData();
+    void loadOpenings();
   }, [activeTenant?.id]);
 
+  useEffect(() => {
+    void loadJobData(selectedJobId);
+  }, [selectedJobId, aiEnabled]);
   const activeJob = openings.find(o => o.id === selectedJobId) || openings[0];
 
   const summaryApp = applications.find(a => a.id === summaryAppId);
@@ -85,7 +107,7 @@ export const ModuleSelectionProcess: React.FC<{
       const nextStage = activeJob.stages[currentIndex + 1];
       try {
         await TenantApi.updateApplicationStage(appId, nextStage.id, `Avançado para a etapa '${nextStage.name}'`);
-        await loadData();
+        await loadJobData();
       } catch (err: any) {
         alert(`Erro ao avançar etapa: ${err.message}`);
       }
@@ -96,7 +118,7 @@ export const ModuleSelectionProcess: React.FC<{
   const handleArchive = async (app: SelectionApplication, reason: string) => {
     try {
       await TenantApi.updateApplicationStage(app.id, undefined, `Candidatura arquivada. Motivo: ${reason}`, 'rejected');
-      await loadData();
+      await loadJobData();
     } catch (err: any) {
       alert(`Erro ao arquivar: ${err.message}`);
     }
@@ -105,7 +127,7 @@ export const ModuleSelectionProcess: React.FC<{
   const handleReactivate = async (app: SelectionApplication) => {
     try {
       await TenantApi.updateApplicationStage(app.id, undefined, 'Candidatura reativada.', 'in_review');
-      await loadData();
+      await loadJobData();
     } catch (err: any) {
       alert(`Erro ao reativar: ${err.message}`);
     }
@@ -162,7 +184,7 @@ export const ModuleSelectionProcess: React.FC<{
       )}
 
       {view === 'screening' && activeJob && canViewScreening && (
-        <ScreeningPanel job={activeJob} onDataChanged={loadData} onOpenApplication={setSummaryAppId} />
+        <ScreeningPanel job={activeJob} onDataChanged={() => void loadJobData()} onOpenApplication={setSummaryAppId} />
       )}
 
       {/* Kanban Pipeline Stages - Spacious Columns */}

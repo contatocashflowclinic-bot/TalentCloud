@@ -75,15 +75,14 @@ export const ModuleAIEvaluation: React.FC<{
     try {
       setLoading(true);
       setActionError(null);
-      const [cands, ops, evals, dnaData] = await Promise.all([
+      const [cands, ops, dnaData] = await Promise.all([
         TenantApi.getCandidates(),
         TenantApi.getOpenings(),
-        TenantApi.getAIEvaluations(),
         TenantApi.getDNA()
       ]);
       setCandidates(cands);
       setOpenings(ops);
-      setEvaluations(evals);
+      setEvaluations([]);
       setDna(dnaData);
 
       const targetCand = preselectedCandidateId || (cands[0]?.id ?? '');
@@ -107,6 +106,24 @@ export const ModuleAIEvaluation: React.FC<{
     if (preselectedJobId) setSelectedJobId(preselectedJobId);
   }, [preselectedCandidateId, preselectedJobId]);
 
+  const loadEvaluationsForSelectedJob = async (jobId = selectedJobId) => {
+    if (!jobId) {
+      setEvaluations([]);
+      return;
+    }
+    try {
+      setActionError(null);
+      setEvaluations(await TenantApi.getAIEvaluations({ jobId }));
+    } catch (err) {
+      console.error('Failed to load AI evaluations for selected job:', err);
+      setActionError('Não foi possível carregar as avaliações da vaga selecionada.');
+    }
+  };
+
+  useEffect(() => {
+    void loadEvaluationsForSelectedJob(selectedJobId);
+  }, [selectedJobId]);
+
   const activeCandidate = candidates.find(c => c.id === selectedCandidateId);
   const activeJob = openings.find(j => j.id === selectedJobId);
   const activeEvaluation = evaluations.find(
@@ -128,7 +145,7 @@ export const ModuleAIEvaluation: React.FC<{
       const result = await TenantApi.evaluateCandidateWithAI(selectedCandidateId, selectedJobId);
       if (result.kept) setNotice(result.notice ?? 'A IA não foi usada desta vez. Mantivemos a avaliação anterior.');
       // Reload evaluations
-      const updatedEvals = await TenantApi.getAIEvaluations();
+      const updatedEvals = await TenantApi.getAIEvaluations({ jobId: selectedJobId });
       setEvaluations(updatedEvals);
     } catch (err: any) {
       // A limit set by the platform is not a failure: show its message as it is
@@ -145,7 +162,7 @@ export const ModuleAIEvaluation: React.FC<{
       setIsSubmittingReview(true);
       setActionError(null);
       await TenantApi.submitHumanReview(activeEvaluation.id, humanDecision, humanNotes);
-      const updatedEvals = await TenantApi.getAIEvaluations();
+      const updatedEvals = await TenantApi.getAIEvaluations({ jobId: selectedJobId });
       setEvaluations(updatedEvals);
       setHumanNotes('');
     } catch (err: any) {

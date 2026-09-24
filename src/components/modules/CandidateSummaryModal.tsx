@@ -77,7 +77,7 @@ interface Props {
 export const CandidateSummaryModal: React.FC<Props> = ({
   candidate, evaluations, showAI = true, openings, canEdit, onEdit, onOpenAI, onOpenApplication, onArchive, onUnarchive, onClose
 }) => {
-  const applications = useRelated(() => TenantApi.getApplications(), [] as SelectionApplication[]);
+  const applications = useRelated(() => TenantApi.getApplications({ candidateId: candidate.id }), [] as SelectionApplication[]);
   const history = useRelated(() => TenantApi.getCandidateHistory(candidate.id), [] as CandidateChange[]);
   const [archiving, setArchiving] = useState(false);
   const [reason, setReason] = useState('');

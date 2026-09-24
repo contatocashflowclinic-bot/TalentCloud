@@ -67,13 +67,14 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
   const [applications, setApplications] = useState<SelectionApplication[]>([]);
   const [evaluations, setEvaluations] = useState<AIAssistedEvaluation[]>([]);
   const [loading, setLoading] = useState(false);
+  const [hasLoadedSearchData, setHasLoadedSearchData] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
-  // Load organization-isolated candidates and processes
+  // Load organization-isolated candidates and processes only when the search palette is opened.
   const loadSearchData = async () => {
-    if (!activeTenant) return;
+    if (!activeTenant || loading) return;
     try {
       setLoading(true);
       const [cands, ops, apps, evals] = await Promise.all([
@@ -86,6 +87,7 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
       setOpenings(ops);
       setApplications(apps);
       setEvaluations(evals);
+      setHasLoadedSearchData(true);
     } catch (err) {
       console.error('Failed to load global search data for tenant:', err);
     } finally {
@@ -94,8 +96,18 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
   };
 
   useEffect(() => {
-    loadSearchData();
-  }, [activeTenant?.id]);
+    setCandidates([]);
+    setOpenings([]);
+    setApplications([]);
+    setEvaluations([]);
+    setHasLoadedSearchData(false);
+    setSelectedJobScope('all');
+    setPreviewCandidate(null);
+  }, [activeTenant?.id, aiEnabled]);
+
+  useEffect(() => {
+    if (isOpen && !hasLoadedSearchData) void loadSearchData();
+  }, [isOpen, hasLoadedSearchData, activeTenant?.id, aiEnabled]);
 
   // Global keyboard shortcut (Cmd+K / Ctrl+K or '/')
   useEffect(() => {
@@ -145,29 +157,37 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
       .map(entry => entry[0]);
   }, [candidates]);
 
-  // Process and link each candidate with their job opening applications
+  // Process and link each candidate with their job opening applications using lookup maps for large tenants.
   const enrichedCandidates = useMemo(() => {
-    return candidates.map(candidate => {
-      const candidateApps = applications.filter(a => a.candidateId === candidate.id);
-      const activeJobs = candidateApps.map(app => {
-        const opening = openings.find(o => o.id === app.jobOpeningId);
-        const stage = opening?.stages.find(s => s.id === app.currentStageId);
-        const aiEval = evaluations.find(e => e.candidateId === candidate.id && e.jobOpeningId === app.jobOpeningId);
-        return {
-          application: app,
-          opening,
-          stage,
-          aiEval
-        };
-      });
+    const openingById = new Map(openings.map(opening => [opening.id, opening] as const));
+    const appsByCandidate = new Map<string, SelectionApplication[]>();
+    for (const app of applications) {
+      const list = appsByCandidate.get(app.candidateId) ?? [];
+      list.push(app);
+      appsByCandidate.set(app.candidateId, list);
+    }
+    const evaluationByCandidateJob = new Map<string, AIAssistedEvaluation>();
+    const generalEvaluationByCandidate = new Map<string, AIAssistedEvaluation>();
+    for (const evaluation of evaluations) {
+      const key = `${evaluation.candidateId}:${evaluation.jobOpeningId}`;
+      if (!evaluationByCandidateJob.has(key)) evaluationByCandidateJob.set(key, evaluation);
+      if (!generalEvaluationByCandidate.has(evaluation.candidateId)) generalEvaluationByCandidate.set(evaluation.candidateId, evaluation);
+    }
 
-      const generalEval = evaluations.find(e => e.candidateId === candidate.id);
+    return candidates.map(candidate => {
+      const candidateApps = appsByCandidate.get(candidate.id) ?? [];
+      const activeJobs = candidateApps.map(app => {
+        const opening = openingById.get(app.jobOpeningId);
+        const stage = opening?.stages.find(s => s.id === app.currentStageId);
+        const aiEval = evaluationByCandidateJob.get(`${candidate.id}:${app.jobOpeningId}`);
+        return { application: app, opening, stage, aiEval };
+      });
 
       return {
         ...candidate,
         applications: activeJobs,
         hasActiveProcess: activeJobs.length > 0,
-        generalEval
+        generalEval: generalEvaluationByCandidate.get(candidate.id)
       };
     });
   }, [candidates, applications, openings, evaluations]);

@@ -976,7 +976,8 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // MÓDULO 7: Candidatos
   // ---------------------------------------------------------
   app.get('/api/v1/candidates', can('candidates:view'), h(async (req, res) => {
-    res.json({ success: true, candidates: await ctx(req).db.candidates.list() });
+    const ids = csv(req.query.ids);
+    res.json({ success: true, candidates: ids.length > 0 ? await ctx(req).db.listCandidatesByIds(ids) : await ctx(req).db.candidates.list() });
   }));
 
   app.post('/api/v1/candidates', can('candidates:create'), h(async (req, res) => {
@@ -1112,7 +1113,12 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // ---------------------------------------------------------
   // (also read as supporting data by candidates / interviews, which is all an Entrevistador needs)
   app.get('/api/v1/applications', can('selection:view', 'candidates:view', 'interviews:view'), h(async (req, res) => {
-    res.json({ success: true, applications: await ctx(req).db.applications.list() });
+    const jobId = typeof req.query.jobId === 'string' ? req.query.jobId.trim() : '';
+    const candidateId = typeof req.query.candidateId === 'string' ? req.query.candidateId.trim() : '';
+    const applications = jobId
+      ? await ctx(req).db.listApplicationsForJob(jobId)
+      : candidateId ? await ctx(req).db.listApplicationsForCandidate(candidateId) : await ctx(req).db.applications.list();
+    res.json({ success: true, applications });
   }));
 
   app.post('/api/v1/applications', can('selection:create'), h(async (req, res) => {
@@ -1140,7 +1146,9 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     const { db, tenant } = ctx(req);
     // An organization whose contract has no AI module sees no AI evaluation at all (old ones stay stored; they come back if the module is turned on again)
     if (!tenant.enabledRoutines.includes('ai_evaluation')) return res.json({ success: true, evaluations: [] });
-    res.json({ success: true, evaluations: hideShadowingEstimates(await db.aiEvaluations.list()) });
+    const jobId = typeof req.query.jobId === 'string' ? req.query.jobId.trim() : '';
+    const evaluations = jobId ? await db.listAIEvaluationsForJob(jobId) : await db.aiEvaluations.list();
+    res.json({ success: true, evaluations: hideShadowingEstimates(evaluations) });
   }));
 
   app.post('/api/v1/ai/evaluate-candidate', can('ai_evaluation:create'), h(async (req, res) => {
@@ -1260,7 +1268,8 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // MÓDULO 10: Entrevistas
   // ---------------------------------------------------------
   app.get('/api/v1/interviews', can('interviews:view'), h(async (req, res) => {
-    res.json({ success: true, interviews: await ctx(req).db.interviews.list() });
+    const jobId = typeof req.query.jobId === 'string' ? req.query.jobId.trim() : '';
+    res.json({ success: true, interviews: jobId ? await ctx(req).db.listInterviewsForJob(jobId) : await ctx(req).db.interviews.list() });
   }));
 
   app.post('/api/v1/interviews', can('interviews:create'), h(async (req, res) => {

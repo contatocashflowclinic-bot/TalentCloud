@@ -276,6 +276,32 @@ export class TenantRepository {
     });
   }
 
+  async listApplicationsForJob(jobOpeningId: string, db: Queryable = getPool()): Promise<SelectionApplication[]> {
+    const { rows } = await db.query(
+      'select * from public.selection_applications where tenant_id = $1 and job_opening_id = $2 order by seq asc',
+      [this.tenantId, jobOpeningId]
+    );
+    return rows.map(r => fromRow<SelectionApplication>({}, r));
+  }
+
+  async listCandidatesByIds(ids: readonly string[], db: Queryable = getPool()): Promise<Candidate[]> {
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (unique.length === 0) return [];
+    const { rows } = await db.query(
+      'select * from public.candidates where tenant_id = $1 and id = any($2::text[]) order by seq asc',
+      [this.tenantId, unique]
+    );
+    return rows.map(r => fromRow<Candidate>({}, r));
+  }
+
+  async listApplicationsForCandidate(candidateId: string, db: Queryable = getPool()): Promise<SelectionApplication[]> {
+    const { rows } = await db.query(
+      'select * from public.selection_applications where tenant_id = $1 and candidate_id = $2 order by applied_at desc',
+      [this.tenantId, candidateId]
+    );
+    return rows.map(r => fromRow<SelectionApplication>({}, r));
+  }
+
   // ---- AI evaluations ---------------------------------------------------
   /**
    * Stores an evaluation and links it to the matching application (atomic). `db`, when given, reuses an already-open
@@ -299,6 +325,22 @@ export class TenantRepository {
       );
       return saved;
     });
+  }
+
+  async listAIEvaluationsForJob(jobOpeningId: string, db: Queryable = getPool()): Promise<AIAssistedEvaluation[]> {
+    const { rows } = await db.query(
+      'select * from public.ai_evaluations where tenant_id = $1 and job_opening_id = $2 order by seq desc',
+      [this.tenantId, jobOpeningId]
+    );
+    return rows.map(r => fromRow<AIAssistedEvaluation>({}, r));
+  }
+
+  async listInterviewsForJob(jobOpeningId: string, db: Queryable = getPool()): Promise<InterviewSession[]> {
+    const { rows } = await db.query(
+      'select * from public.interview_sessions where tenant_id = $1 and job_opening_id = $2 order by scheduled_for asc',
+      [this.tenantId, jobOpeningId]
+    );
+    return rows.map(r => fromRow<InterviewSession>({}, r));
   }
 
   // ---- Resume screening ---------------------------------------------------------

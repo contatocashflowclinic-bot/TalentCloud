@@ -252,7 +252,7 @@ export const OpeningSummaryModal: React.FC<{
   onClose: () => void;
 }> = ({ job, department, position, onOpenPipeline, onOpenPortal, onShare, onEdit, onClose }) => {
   const users = useRelated(() => TenantApi.getUsers(), [] as TenantUser[]);
-  const applications = useRelated(() => TenantApi.getApplications(), [] as SelectionApplication[]);
+  const applications = useRelated(() => TenantApi.getApplications({ jobId: job.id }), [] as SelectionApplication[]);
 
   const jobApps = (applications ?? []).filter(a => a.jobOpeningId === job.id);
   const nameOf = (id: string) => users?.find(u => u.id === id)?.name ?? (users ? 'Não definido' : '—');

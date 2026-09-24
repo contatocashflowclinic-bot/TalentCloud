@@ -486,7 +486,7 @@ export const TenantApi = {
   })).opening,
 
   // 7. Candidatos
-  getCandidates: async () => (await request<{ success: boolean; candidates: Candidate[] }>('/api/v1/candidates')).candidates,
+  getCandidates: async (q: { ids?: string[] } = {}) => (await request<{ success: boolean; candidates: Candidate[] }>(`/api/v1/candidates${qs({ ids: q.ids?.join(',') })}`)).candidates,
   updateCandidate: async (id: string, payload: Record<string, unknown>) => (await request<{ success: boolean; candidate: Candidate }>(`/api/v1/candidates/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(payload)
@@ -510,7 +510,7 @@ export const TenantApi = {
   })).candidate,
 
   // 8. Processo Seletivo (Aplicações)
-  getApplications: async () => (await request<{ success: boolean; applications: SelectionApplication[] }>('/api/v1/applications')).applications,
+  getApplications: async (q: { jobId?: string; candidateId?: string } = {}) => (await request<{ success: boolean; applications: SelectionApplication[] }>(`/api/v1/applications${qs(q)}`)).applications,
   createApplication: async (candidateId: string, jobOpeningId: string) => (await request<{ success: boolean; application: SelectionApplication }>('/api/v1/applications', {
     method: 'POST',
     body: JSON.stringify({ candidateId, jobOpeningId })
@@ -521,7 +521,7 @@ export const TenantApi = {
   })).application,
 
   // 9. Avaliação Assistida por IA
-  getAIEvaluations: async () => (await request<{ success: boolean; evaluations: AIAssistedEvaluation[] }>('/api/v1/ai/evaluations')).evaluations,
+  getAIEvaluations: async (q: { jobId?: string } = {}) => (await request<{ success: boolean; evaluations: AIAssistedEvaluation[] }>(`/api/v1/ai/evaluations${qs(q)}`)).evaluations,
   /** `kept` = the AI could not answer and the evaluation that already existed was kept (`notice` says why). */
   evaluateCandidateWithAI: async (candidateId: string, jobOpeningId: string) => {
     const res = await request<{ success: boolean; evaluation: AIAssistedEvaluation; kept?: boolean; notice?: string }>('/api/v1/ai/evaluate-candidate', {
@@ -570,7 +570,7 @@ export const TenantApi = {
     })).results,
 
   // 10. Entrevistas
-  getInterviews: async () => (await request<{ success: boolean; interviews: InterviewSession[] }>('/api/v1/interviews')).interviews,
+  getInterviews: async (q: { jobId?: string } = {}) => (await request<{ success: boolean; interviews: InterviewSession[] }>(`/api/v1/interviews${qs(q)}`)).interviews,
   createInterview: async (payload: Partial<InterviewSession>) => (await request<{ success: boolean; interview: InterviewSession }>('/api/v1/interviews', {
     method: 'POST',
     body: JSON.stringify(payload)
