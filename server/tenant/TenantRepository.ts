@@ -424,6 +424,17 @@ export class TenantRepository {
     return rows.map(r => fromRow<ResumeScreening>({}, r));
   }
 
+  async screeningUploadStatsForJob(jobOpeningId: string, contentHash: string, db: Queryable = getPool()): Promise<{ total: number; duplicate: boolean }> {
+    const { rows } = await db.query(
+      `select count(*)::int as total,
+              coalesce(bool_or(content_hash = $3), false) as duplicate
+         from public.resume_screenings
+        where tenant_id = $1 and job_opening_id = $2`,
+      [this.tenantId, jobOpeningId, contentHash]
+    );
+    return { total: Number(rows[0]?.total ?? 0), duplicate: rows[0]?.duplicate === true };
+  }
+
   /**
    * Atomic claim before calling the AI: only a file that is `uploaded`/`needs_data`/`failed`, or `analyzing` past its
    * lease (the serverless function that was reading it died), can be claimed. Two simultaneous requests for the same

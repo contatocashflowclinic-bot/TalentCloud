@@ -96,15 +96,13 @@ export function registerScreeningApi(app: Express): void {
 
       const { mime } = sniffResume(req.body); // já valida tipo pelo CONTEÚDO e tamanho; lança ValidationError com mensagem amigável
       const contentHash = createHash('sha256').update(req.body as Buffer).digest('hex');
-
-      const already = await db.listScreeningsForJob(job.id);
-      if (already.length >= RESUME_LIMITS.perJob) {
-        throw new ValidationError(`Esta vaga já atingiu o limite de ${RESUME_LIMITS.perJob} currículos enviados.`);
+      const uploadStats = await db.screeningUploadStatsForJob(job.id, contentHash);
+      if (uploadStats.total >= RESUME_LIMITS.perJob) {
+        throw new ValidationError(`Esta vaga j� atingiu o limite de ${RESUME_LIMITS.perJob} curr�culos enviados.`);
       }
-      if (already.some(s => s.contentHash === contentHash)) {
-        throw new ConflictError('Este mesmo arquivo já foi enviado para esta vaga.');
+      if (uploadStats.duplicate) {
+        throw new ConflictError('Este mesmo arquivo j� foi enviado para esta vaga.');
       }
-
       // Disjuntor simples contra envio em massa (mesmo mecanismo usado no login e no portal público de vagas).
       await consumeQuota(
         'resume-upload', [tenant.id], { limit: UPLOAD_HOURLY_LIMIT, windowSeconds: 3600 },

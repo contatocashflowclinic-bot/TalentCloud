@@ -29,3 +29,9 @@ create index if not exists ai_evaluations_candidate_seq_idx
 
 create index if not exists interview_sessions_status_schedule_idx
   on public.interview_sessions (tenant_id, status, scheduled_for desc, seq desc);
+
+create index if not exists resume_screenings_job_seq_idx
+  on public.resume_screenings (tenant_id, job_opening_id, seq desc);
+
+create index if not exists resume_screenings_job_content_hash_idx
+  on public.resume_screenings (tenant_id, job_opening_id, content_hash);

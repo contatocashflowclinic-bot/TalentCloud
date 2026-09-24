@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { GitBranch, User, Sparkles, ChevronRight, CheckCircle2, ArrowRight, AlertTriangle } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
@@ -98,7 +98,35 @@ export const ModuleSelectionProcess: React.FC<{
   }, [selectedJobId, aiEnabled]);
   const activeJob = openings.find(o => o.id === selectedJobId) || openings[0];
 
-  const summaryApp = applications.find(a => a.id === summaryAppId);
+  const candidateById = useMemo(() => new Map(candidates.map(candidate => [candidate.id, candidate] as const)), [candidates]);
+  const applicationById = useMemo(() => new Map(applications.map(application => [application.id, application] as const)), [applications]);
+  const evaluationByCandidateJob = useMemo(() => {
+    const map = new Map<string, AIAssistedEvaluation>();
+    for (const evaluation of aiEvaluations) {
+      const key = `${evaluation.candidateId}:${evaluation.jobOpeningId}`;
+      if (!map.has(key)) map.set(key, evaluation);
+    }
+    return map;
+  }, [aiEvaluations]);
+  const interviewsByCandidateJob = useMemo(() => {
+    const map = new Map<string, InterviewSession[]>();
+    for (const interview of interviews) {
+      const key = `${interview.candidateId}:${interview.jobOpeningId}`;
+      map.set(key, [...(map.get(key) ?? []), interview]);
+    }
+    return map;
+  }, [interviews]);
+  const applicationsByStage = useMemo(() => {
+    const map = new Map<string, SelectionApplication[]>();
+    if (!activeJob) return map;
+    for (const application of applications) {
+      if (application.jobOpeningId !== activeJob.id) continue;
+      map.set(application.currentStageId, [...(map.get(application.currentStageId) ?? []), application]);
+    }
+    return map;
+  }, [applications, activeJob?.id]);
+
+  const summaryApp = summaryAppId ? applicationById.get(summaryAppId) : undefined;
 
   const handleAdvanceStage = async (appId: string, currentStageId: string) => {
     if (!activeJob) return;
@@ -191,9 +219,7 @@ export const ModuleSelectionProcess: React.FC<{
       {view === 'kanban' && activeJob ? (
         <div className="flex gap-4 sm:gap-5 overflow-x-auto pb-6 pt-1">
           {activeJob.stages.map((stage, sIdx) => {
-            const stageApps = applications.filter(
-              a => a.jobOpeningId === activeJob.id && a.currentStageId === stage.id
-            );
+            const stageApps = applicationsByStage.get(stage.id) ?? [];
 
             return (
               <div
@@ -217,8 +243,8 @@ export const ModuleSelectionProcess: React.FC<{
 
                   <div className="mt-4 space-y-3.5">
                     {stageApps.map((app) => {
-                      const candidate = candidates.find(c => c.id === app.candidateId);
-                      const evalItem = aiEvaluations.find(e => e.candidateId === app.candidateId && e.jobOpeningId === activeJob.id);
+                      const candidate = candidateById.get(app.candidateId);
+                      const evalItem = evaluationByCandidateJob.get(`${app.candidateId}:${activeJob.id}`);
                       const isHighlighted = initialCandidateId && candidate?.id === initialCandidateId;
                       const initials = candidate?.name
                         ? candidate.name.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()
@@ -338,10 +364,10 @@ export const ModuleSelectionProcess: React.FC<{
       {summaryApp && activeJob && (
         <ApplicationSummaryModal
           application={summaryApp}
-          candidate={candidates.find(c => c.id === summaryApp.candidateId)}
+          candidate={candidateById.get(summaryApp.candidateId)}
           job={activeJob}
-          evaluation={aiEvaluations.find(e => e.candidateId === summaryApp.candidateId && e.jobOpeningId === activeJob.id)}
-          interviews={interviews.filter(i => i.candidateId === summaryApp.candidateId && i.jobOpeningId === activeJob.id)}
+          evaluation={evaluationByCandidateJob.get(`${summaryApp.candidateId}:${activeJob.id}`)}
+          interviews={interviewsByCandidateJob.get(`${summaryApp.candidateId}:${activeJob.id}`) ?? []}
           canEdit={!!user?.permissions.includes('selection:edit')}
           onAdvance={async () => {
             await handleAdvanceStage(summaryApp.id, summaryApp.currentStageId);
@@ -350,7 +376,7 @@ export const ModuleSelectionProcess: React.FC<{
           onArchive={async (reason) => { await handleArchive(summaryApp, reason); }}
           onReactivate={async () => { await handleReactivate(summaryApp); }}
           onOpenProfile={onNavigateToCandidate ? () => {
-            const candidate = candidates.find(c => c.id === summaryApp.candidateId);
+            const candidate = candidateById.get(summaryApp.candidateId);
             onNavigateToCandidate(summaryApp.candidateId, candidate?.name);
           } : undefined}
           onOpenAI={onNavigateToAI ? () => onNavigateToAI(summaryApp.candidateId, activeJob.id) : undefined}
