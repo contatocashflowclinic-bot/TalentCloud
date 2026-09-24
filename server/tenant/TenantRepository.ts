@@ -284,6 +284,16 @@ export class TenantRepository {
     return rows.map(r => fromRow<SelectionApplication>({}, r));
   }
 
+  async listOpeningsByIds(ids: readonly string[], db: Queryable = getPool()): Promise<JobOpening[]> {
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (unique.length === 0) return [];
+    const { rows } = await db.query(
+      'select * from public.job_openings where tenant_id = $1 and id = any($2::text[]) order by seq asc',
+      [this.tenantId, unique]
+    );
+    return rows.map(r => fromRow<JobOpening>({}, r));
+  }
+
   async listCandidatesByIds(ids: readonly string[], db: Queryable = getPool()): Promise<Candidate[]> {
     const unique = [...new Set(ids.filter(Boolean))];
     if (unique.length === 0) return [];
@@ -300,6 +310,27 @@ export class TenantRepository {
       [this.tenantId, candidateId]
     );
     return rows.map(r => fromRow<SelectionApplication>({}, r));
+  }
+
+  async getCandidatesPage(opts: { search?: string; includeArchived?: boolean; page?: number; pageSize?: number }, db: Queryable = getPool()) {
+    const page = Math.max(1, Math.floor(opts.page || 1));
+    const pageSize = Math.min(120, Math.max(1, Math.floor(opts.pageSize || 48)));
+    const where = ['tenant_id = $1'];
+    const params: unknown[] = [this.tenantId];
+    if (!opts.includeArchived) where.push('archived = false');
+    const search = (opts.search ?? '').trim().toLowerCase();
+    if (search) {
+      params.push(`%${search}%`);
+      const p = `$${params.length}`;
+      where.push(`(lower(name) like ${p} or lower("current_role") like ${p} or lower(email) like ${p} or exists (select 1 from unnest(skills) as skill(skill_name) where lower(skill_name) like ${p}))`);
+    }
+    const whereSql = where.join(' and ');
+    const count = await db.query(`select count(*)::int as total from public.candidates where ${whereSql}`, params);
+    const { rows } = await db.query(
+      `select * from public.candidates where ${whereSql} order by registered_at desc, seq desc limit $${params.length + 1} offset $${params.length + 2}`,
+      [...params, pageSize, (page - 1) * pageSize]
+    );
+    return { items: rows.map(r => fromRow<Candidate>({}, r)), total: Number(count.rows[0]?.total ?? 0), page, pageSize };
   }
 
   // ---- AI evaluations ---------------------------------------------------
@@ -341,6 +372,46 @@ export class TenantRepository {
       [this.tenantId, jobOpeningId]
     );
     return rows.map(r => fromRow<InterviewSession>({}, r));
+  }
+
+  async getInterviewsPage(opts: { page?: number; pageSize?: number; status?: string }, db: Queryable = getPool()) {
+    const page = Math.max(1, Math.floor(opts.page || 1));
+    const pageSize = Math.min(100, Math.max(1, Math.floor(opts.pageSize || 25)));
+    const where = ['tenant_id = $1'];
+    const params: unknown[] = [this.tenantId];
+    if (opts.status && ['scheduled', 'completed', 'cancelled', 'no_show'].includes(opts.status)) {
+      params.push(opts.status);
+      where.push(`status = $${params.length}`);
+    }
+    const whereSql = where.join(' and ');
+    const count = await db.query(`select count(*)::int as total from public.interview_sessions where ${whereSql}`, params);
+    const { rows } = await db.query(
+      `select * from public.interview_sessions where ${whereSql} order by scheduled_for desc, seq desc limit $${params.length + 1} offset $${params.length + 2}`,
+      [...params, pageSize, (page - 1) * pageSize]
+    );
+    return { items: rows.map(r => fromRow<InterviewSession>({}, r)), total: Number(count.rows[0]?.total ?? 0), page, pageSize };
+  }
+
+  async listAIEvaluationsForCandidates(candidateIds: readonly string[], db: Queryable = getPool()): Promise<AIAssistedEvaluation[]> {
+    const unique = [...new Set(candidateIds.filter(Boolean))];
+    if (unique.length === 0) return [];
+    const { rows } = await db.query(
+      'select * from public.ai_evaluations where tenant_id = $1 and candidate_id = any($2::text[]) order by seq desc',
+      [this.tenantId, unique]
+    );
+    return rows.map(r => fromRow<AIAssistedEvaluation>({}, r));
+  }
+
+  async aiGovernanceSummary(db: Queryable = getPool()): Promise<{ reviewed: number; overruled: number }> {
+    const { rows } = await db.query(
+      `select
+         count(*) filter (where human_reviewer_decision is not null)::int as reviewed,
+         count(*) filter (where human_reviewer_decision = 'OVERRIDDEN')::int as overruled
+       from public.ai_evaluations
+       where tenant_id = $1`,
+      [this.tenantId]
+    );
+    return { reviewed: Number(rows[0]?.reviewed ?? 0), overruled: Number(rows[0]?.overruled ?? 0) };
   }
 
   // ---- Resume screening ---------------------------------------------------------
@@ -1194,4 +1265,3 @@ export class TenantRepository {
     if (!(await this.surveyTemplates.delete(templateId))) throw new NotFoundError('Template não encontrado');
   }
 }
-

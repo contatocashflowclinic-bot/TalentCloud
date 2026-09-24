@@ -29,6 +29,9 @@ export const ModuleCandidates: React.FC<{
   const [editId, setEditId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [totalCandidates, setTotalCandidates] = useState(0);
+  const pageSize = 48;
   const { user } = useAuth();
   const canCreate = !!user?.permissions.includes('candidates:create');
   const canEdit = !!user?.permissions.includes('candidates:edit');
@@ -36,6 +39,7 @@ export const ModuleCandidates: React.FC<{
   useEffect(() => {
     if (initialSearchTerm !== undefined) {
       setSearchTerm(initialSearchTerm);
+      setPage(1);
     }
   }, [initialSearchTerm]);
 
@@ -50,16 +54,24 @@ export const ModuleCandidates: React.FC<{
   const [skills, setSkills] = useState('');
   const [resumeSummary, setResumeSummary] = useState('');
 
-  const loadData = async () => {
+  const loadData = async (targetPage = page) => {
     try {
       setLoading(true);
       setLoadError(null);
-      const [candData, opsData, evalsData] = await Promise.all([
-        TenantApi.getCandidates(),
+      const candidatePage = await TenantApi.getCandidatesPage({
+        search: searchTerm,
+        includeArchived: showArchived,
+        page: targetPage,
+        pageSize
+      });
+      const ids = candidatePage.items.map(candidate => candidate.id);
+      const [opsData, evalsData] = await Promise.all([
         TenantApi.getOpenings(),
-        aiEnabled ? TenantApi.getAIEvaluations() : Promise.resolve([] as AIAssistedEvaluation[])
+        aiEnabled && ids.length > 0 ? TenantApi.getAIEvaluations({ candidateIds: ids }) : Promise.resolve([] as AIAssistedEvaluation[])
       ]);
-      setCandidates(candData);
+      setCandidates(candidatePage.items);
+      setTotalCandidates(candidatePage.total);
+      setPage(candidatePage.page);
       setOpenings(opsData);
       setEvaluations(evalsData);
     } catch (err) {
@@ -71,8 +83,13 @@ export const ModuleCandidates: React.FC<{
   };
 
   useEffect(() => {
-    loadData();
+    setPage(1);
   }, [activeTenant?.id]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadData(page); }, 250);
+    return () => window.clearTimeout(timer);
+  }, [activeTenant?.id, searchTerm, showArchived, page, aiEnabled]);
 
   const handleCreateCandidate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -97,13 +114,14 @@ export const ModuleCandidates: React.FC<{
       setSkills('');
       setResumeSummary('');
       setIsModalOpen(false);
-      await loadData();
+      await loadData(1);
     } catch (err: any) {
       alert(err.message || 'Erro ao cadastrar candidato');
     }
   };
 
   const archivedCount = useMemo(() => candidates.filter(c => c.archived).length, [candidates]);
+  const totalPages = Math.max(1, Math.ceil(totalCandidates / pageSize));
   const evaluationByCandidate = useMemo(() => {
     const map = new Map<string, AIAssistedEvaluation>();
     for (const evaluation of evaluations) {
@@ -112,16 +130,8 @@ export const ModuleCandidates: React.FC<{
     return map;
   }, [evaluations]);
 
-  const filtered = useMemo(() => {
-    const query = searchTerm.trim().toLowerCase();
-    return candidates.filter(c => (showArchived || !c.archived) && (
-      !query ||
-      c.name.toLowerCase().includes(query) ||
-      c.currentRole.toLowerCase().includes(query) ||
-      c.skills.some(s => s.toLowerCase().includes(query))
-    ));
-  }, [candidates, searchTerm, showArchived]);
-  const visibleCandidates = filtered.slice(0, 120);
+  const filtered = candidates;
+  const visibleCandidates = candidates;
 
   const handleExportCSV = () => {
     exportCandidatesToCSV(filtered, evaluations, activeTenant?.name || 'Vértice 360', aiEnabled);
@@ -152,8 +162,8 @@ export const ModuleCandidates: React.FC<{
           <ExportButton
             onExportCSV={handleExportCSV}
             onExportPDF={handleExportPDF}
-            label="Exportar Talent Pool"
-            itemCount={filtered.length}
+            label="Exportar Página"
+            itemCount={visibleCandidates.length}
           />
 
           {canCreate && <button
@@ -169,7 +179,7 @@ export const ModuleCandidates: React.FC<{
       {loadError && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
           <span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 shrink-0" />{loadError}</span>
-          <button onClick={loadData} className="font-semibold underline">Tentar novamente</button>
+          <button onClick={() => loadData(page)} className="font-semibold underline">Tentar novamente</button>
         </div>
       )}
 
@@ -180,17 +190,25 @@ export const ModuleCandidates: React.FC<{
           <input
             type="text"
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => {
+              setSearchTerm(e.target.value);
+              setPage(1);
+            }}
             placeholder="Buscar por nome, cargo atual ou competências (ex: React, Python, Scrum)..."
             className="w-full pl-9 pr-4 py-2 rounded-xl border border-slate-200 text-xs focus:outline-hidden focus:border-indigo-500 bg-white"
           />
         </div>
-        {archivedCount > 0 && (
-          <label className="flex items-center gap-2 text-xs font-medium text-slate-600 whitespace-nowrap cursor-pointer">
-            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
-            Mostrar arquivados ({archivedCount})
-          </label>
-        )}
+        <label className="flex items-center gap-2 text-xs font-medium text-slate-600 whitespace-nowrap cursor-pointer">
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(e) => {
+              setShowArchived(e.target.checked);
+              setPage(1);
+            }}
+          />
+          Mostrar arquivados{archivedCount > 0 ? ` (${archivedCount} nesta página)` : ''}
+        </label>
       </div>
 
       {/* Candidates List - Expanded Responsive Grid */}
@@ -347,11 +365,28 @@ export const ModuleCandidates: React.FC<{
         })}
       </div>
 
-      {filtered.length > visibleCandidates.length && (
-        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-center text-xs text-slate-500">
-          Mostrando os primeiros {visibleCandidates.length} de {filtered.length} candidatos. Use a busca para refinar a lista antes de abrir todos os resultados.
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-600">
+        <span>
+          Mostrando {visibleCandidates.length} de {totalCandidates} candidato(s){searchTerm ? ' encontrados para a busca atual' : ''}.
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page <= 1 || loading}
+            className="px-3 py-1.5 rounded-xl border border-slate-200 font-semibold disabled:opacity-40"
+          >
+            Anterior
+          </button>
+          <span className="font-mono text-slate-500">{page}/{totalPages}</span>
+          <button
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages || loading}
+            className="px-3 py-1.5 rounded-xl border border-slate-200 font-semibold disabled:opacity-40"
+          >
+            Próxima
+          </button>
         </div>
-      )}
+      </div>
 
       {summaryId && candidates.some(c => c.id === summaryId) && (
         <CandidateSummaryModal
@@ -366,7 +401,7 @@ export const ModuleCandidates: React.FC<{
           onArchive={async (reason) => {
             try {
               await TenantApi.archiveCandidate(summaryId, reason);
-              await loadData();
+              await loadData(1);
               setSummaryId(null);
             } catch (err: any) {
               alert(err.message || 'Erro ao arquivar o perfil');
@@ -375,7 +410,7 @@ export const ModuleCandidates: React.FC<{
           onUnarchive={async () => {
             try {
               await TenantApi.unarchiveCandidate(summaryId);
-              await loadData();
+              await loadData(1);
             } catch (err: any) {
               alert(err.message || 'Erro ao reativar o perfil');
             }
@@ -387,7 +422,7 @@ export const ModuleCandidates: React.FC<{
       {editId && candidates.some(c => c.id === editId) && (
         <CandidateEditModal
           candidate={candidates.find(c => c.id === editId)!}
-          onSaved={loadData}
+          onSaved={() => loadData(page)}
           onClose={() => setEditId(null)}
         />
       )}

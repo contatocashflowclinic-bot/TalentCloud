@@ -890,6 +890,8 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // ---------------------------------------------------------
   app.get('/api/v1/openings', can('openings:view'), h(async (req, res) => {
     const db = ctx(req).db;
+    const ids = csv(req.query.ids);
+    if (ids.length > 0) return res.json({ success: true, openings: await db.listOpeningsByIds(ids) });
     await db.syncAcceptedOffers();
     res.json({ success: true, openings: await db.openings.list() });
   }));
@@ -977,7 +979,18 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // ---------------------------------------------------------
   app.get('/api/v1/candidates', can('candidates:view'), h(async (req, res) => {
     const ids = csv(req.query.ids);
-    res.json({ success: true, candidates: ids.length > 0 ? await ctx(req).db.listCandidatesByIds(ids) : await ctx(req).db.candidates.list() });
+    const pageRequested = req.query.page !== undefined || req.query.pageSize !== undefined || req.query.search !== undefined || req.query.includeArchived !== undefined;
+    if (ids.length > 0) return res.json({ success: true, candidates: await ctx(req).db.listCandidatesByIds(ids) });
+    if (pageRequested) {
+      const page = await ctx(req).db.getCandidatesPage({
+        search: String(req.query.search ?? ''),
+        includeArchived: req.query.includeArchived === 'true',
+        page: Number(req.query.page),
+        pageSize: Number(req.query.pageSize)
+      });
+      return res.json({ success: true, candidates: page.items, total: page.total, page: page.page, pageSize: page.pageSize });
+    }
+    res.json({ success: true, candidates: await ctx(req).db.candidates.list() });
   }));
 
   app.post('/api/v1/candidates', can('candidates:create'), h(async (req, res) => {
@@ -1147,7 +1160,10 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     // An organization whose contract has no AI module sees no AI evaluation at all (old ones stay stored; they come back if the module is turned on again)
     if (!tenant.enabledRoutines.includes('ai_evaluation')) return res.json({ success: true, evaluations: [] });
     const jobId = typeof req.query.jobId === 'string' ? req.query.jobId.trim() : '';
-    const evaluations = jobId ? await db.listAIEvaluationsForJob(jobId) : await db.aiEvaluations.list();
+    const candidateIds = csv(req.query.candidateIds);
+    const evaluations = jobId
+      ? await db.listAIEvaluationsForJob(jobId)
+      : candidateIds.length > 0 ? await db.listAIEvaluationsForCandidates(candidateIds) : await db.aiEvaluations.list();
     res.json({ success: true, evaluations: hideShadowingEstimates(evaluations) });
   }));
 
@@ -1269,7 +1285,17 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // ---------------------------------------------------------
   app.get('/api/v1/interviews', can('interviews:view'), h(async (req, res) => {
     const jobId = typeof req.query.jobId === 'string' ? req.query.jobId.trim() : '';
-    res.json({ success: true, interviews: jobId ? await ctx(req).db.listInterviewsForJob(jobId) : await ctx(req).db.interviews.list() });
+    const pageRequested = req.query.page !== undefined || req.query.pageSize !== undefined || req.query.status !== undefined;
+    if (jobId) return res.json({ success: true, interviews: await ctx(req).db.listInterviewsForJob(jobId) });
+    if (pageRequested) {
+      const page = await ctx(req).db.getInterviewsPage({
+        page: Number(req.query.page),
+        pageSize: Number(req.query.pageSize),
+        status: typeof req.query.status === 'string' ? req.query.status : undefined
+      });
+      return res.json({ success: true, interviews: page.items, total: page.total, page: page.page, pageSize: page.pageSize });
+    }
+    res.json({ success: true, interviews: await ctx(req).db.interviews.list() });
   }));
 
   app.post('/api/v1/interviews', can('interviews:create'), h(async (req, res) => {
@@ -2081,6 +2107,12 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     const indicators = await db.getIndicators();
     if (!indicators) throw new NotFoundError('Indicadores não disponíveis para este tenant.');
     res.json({ success: true, indicators });
+  }));
+
+  app.get('/api/v1/indicators/ai-governance', can('indicators:view'), h(async (req, res) => {
+    const { db, tenant } = ctx(req);
+    if (!tenant.enabledRoutines.includes('ai_evaluation')) return res.json({ success: true, governance: { reviewed: 0, overruled: 0 } });
+    res.json({ success: true, governance: await db.aiGovernanceSummary() });
   }));
 
   // ---------------------------------------------------------

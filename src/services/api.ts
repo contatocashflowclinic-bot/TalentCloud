@@ -475,7 +475,7 @@ export const TenantApi = {
   })).position,
 
   // 6. Vagas
-  getOpenings: async () => (await request<{ success: boolean; openings: JobOpening[] }>('/api/v1/openings')).openings,
+  getOpenings: async (q: { ids?: string[] } = {}) => (await request<{ success: boolean; openings: JobOpening[] }>(`/api/v1/openings${qs({ ids: q.ids?.join(',') })}`)).openings,
   updateOpening: async (id: string, payload: Record<string, unknown>) => (await request<{ success: boolean; opening: JobOpening }>(`/api/v1/openings/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(payload)
@@ -487,6 +487,10 @@ export const TenantApi = {
 
   // 7. Candidatos
   getCandidates: async (q: { ids?: string[] } = {}) => (await request<{ success: boolean; candidates: Candidate[] }>(`/api/v1/candidates${qs({ ids: q.ids?.join(',') })}`)).candidates,
+  getCandidatesPage: async (q: { search?: string; includeArchived?: boolean; page?: number; pageSize?: number } = {}) => {
+    const res = await request<{ success: boolean; candidates: Candidate[]; total: number; page: number; pageSize: number }>(`/api/v1/candidates${qs(q)}`);
+    return { items: res.candidates, total: res.total, page: res.page, pageSize: res.pageSize } as Page<Candidate>;
+  },
   updateCandidate: async (id: string, payload: Record<string, unknown>) => (await request<{ success: boolean; candidate: Candidate }>(`/api/v1/candidates/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(payload)
@@ -521,7 +525,7 @@ export const TenantApi = {
   })).application,
 
   // 9. Avaliação Assistida por IA
-  getAIEvaluations: async (q: { jobId?: string } = {}) => (await request<{ success: boolean; evaluations: AIAssistedEvaluation[] }>(`/api/v1/ai/evaluations${qs(q)}`)).evaluations,
+  getAIEvaluations: async (q: { jobId?: string; candidateIds?: string[] } = {}) => (await request<{ success: boolean; evaluations: AIAssistedEvaluation[] }>(`/api/v1/ai/evaluations${qs({ jobId: q.jobId, candidateIds: q.candidateIds?.join(',') })}`)).evaluations,
   /** `kept` = the AI could not answer and the evaluation that already existed was kept (`notice` says why). */
   evaluateCandidateWithAI: async (candidateId: string, jobOpeningId: string) => {
     const res = await request<{ success: boolean; evaluation: AIAssistedEvaluation; kept?: boolean; notice?: string }>('/api/v1/ai/evaluate-candidate', {
@@ -571,6 +575,10 @@ export const TenantApi = {
 
   // 10. Entrevistas
   getInterviews: async (q: { jobId?: string } = {}) => (await request<{ success: boolean; interviews: InterviewSession[] }>(`/api/v1/interviews${qs(q)}`)).interviews,
+  getInterviewsPage: async (q: { page?: number; pageSize?: number; status?: string } = {}) => {
+    const res = await request<{ success: boolean; interviews: InterviewSession[]; total: number; page: number; pageSize: number }>(`/api/v1/interviews${qs(q)}`);
+    return { items: res.interviews, total: res.total, page: res.page, pageSize: res.pageSize } as Page<InterviewSession>;
+  },
   createInterview: async (payload: Partial<InterviewSession>) => (await request<{ success: boolean; interview: InterviewSession }>('/api/v1/interviews', {
     method: 'POST',
     body: JSON.stringify(payload)
@@ -745,6 +753,7 @@ export const TenantApi = {
 
   // 15. Indicadores
   getIndicators: async () => (await request<{ success: boolean; indicators: TenantIndicators }>('/api/v1/indicators')).indicators,
+  getAiGovernanceSummary: async () => (await request<{ success: boolean; governance: { reviewed: number; overruled: number } }>('/api/v1/indicators/ai-governance')).governance,
 
   // 17. Agenda Corporativa
   getAgendaEvents: async () => (await request<{ success: boolean; events: AgendaEvent[] }>('/api/v1/agenda')).events,

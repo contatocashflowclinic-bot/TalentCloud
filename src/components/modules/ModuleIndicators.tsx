@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
-import { TenantIndicators, Department, JobOpening, AIAssistedEvaluation } from '../../types.js';
+import { TenantIndicators, Department, JobOpening } from '../../types.js';
 import { ExportButton } from '../ExportButton.js';
 import { exportIndicatorsToCSV, exportIndicatorsToPDF } from '../../utils/exportUtils.js';
 import { IndicatorsOverviewCharts } from '../indicators/IndicatorsOverviewCharts.js';
@@ -29,7 +29,7 @@ export const ModuleIndicators: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'overview' | 'governance'>('overview');
   const [openings, setOpenings] = useState<JobOpening[]>([]);
-  const [evaluations, setEvaluations] = useState<AIAssistedEvaluation[]>([]);
+  const [aiGovernance, setAiGovernance] = useState<{ reviewed: number; overruled: number }>({ reviewed: 0, overruled: 0 });
   const [dataWarnings, setDataWarnings] = useState<string[]>([]);
 
   useEffect(() => {
@@ -46,17 +46,17 @@ export const ModuleIndicators: React.FC = () => {
             return fallback;
           }
         };
-        const [indicatorsData, deptsData, openingsData, evaluationsData] = await Promise.all([
+        const [indicatorsData, deptsData, openingsData, governanceData] = await Promise.all([
           TenantApi.getIndicators(),
           optional('departamentos', TenantApi.getDepartments(), [] as Department[]),
           optional('vagas', TenantApi.getOpenings(), [] as JobOpening[]),
-          aiEnabled ? optional('avaliações de IA', TenantApi.getAIEvaluations(), [] as AIAssistedEvaluation[]) : Promise.resolve([] as AIAssistedEvaluation[])
+          aiEnabled ? optional('governança de IA', TenantApi.getAiGovernanceSummary(), { reviewed: 0, overruled: 0 }) : Promise.resolve({ reviewed: 0, overruled: 0 })
         ]);
         setDataWarnings(warnings);
         setIndicators(indicatorsData);
         setDepartments(deptsData || []);
         setOpenings(openingsData || []);
-        setEvaluations(evaluationsData || []);
+        setAiGovernance(governanceData);
       } catch (err) {
         console.error('Failed to load indicators:', err);
       } finally {
@@ -64,12 +64,12 @@ export const ModuleIndicators: React.FC = () => {
       }
     };
     load();
-  }, [activeTenant?.id]);
+  }, [activeTenant?.id, aiEnabled]);
 
-  // Human-vs-AI governance, computed from this organization's reviewed evaluations
-  const reviewed = evaluations.filter(e => e.humanReviewerDecision);
-  const overruled = reviewed.filter(e => e.humanReviewerDecision === 'OVERRIDDEN').length;
-  const overrulePct = reviewed.length ? (overruled / reviewed.length) * 100 : null;
+  // Human-vs-AI governance, computed on the server to avoid loading every evaluation into the dashboard.
+  const reviewed = aiGovernance.reviewed;
+  const overruled = aiGovernance.overruled;
+  const overrulePct = reviewed ? (overruled / reviewed) * 100 : null;
   const agreementPct = overrulePct === null ? null : 100 - overrulePct;
   const fmtPct = (v: number | null) => (v === null ? '—' : `${v.toFixed(1)}%`);
 
@@ -237,7 +237,7 @@ export const ModuleIndicators: React.FC = () => {
                 Auditoria de Princípios & Qualidade da Decisão
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Métricas de governança entre recomendações preditivas e o julgamento humano dos gestores ({reviewed.length} avaliações revisadas).
+                Métricas de governança entre recomendações preditivas e o julgamento humano dos gestores ({reviewed} avaliações revisadas).
               </p>
             </div>
             

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Calendar, Plus, Clock, Video, CheckCircle2, Star, User, MessageSquare, AlertTriangle } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
@@ -13,6 +13,9 @@ export const ModuleInterviews: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [activeSession, setActiveSession] = useState<InterviewSession | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [totalInterviews, setTotalInterviews] = useState(0);
+  const pageSize = 25;
 
   // Scorecard filling state
   const [scorecardScores, setScorecardScores] = useState<Record<string, number>>({});
@@ -20,21 +23,23 @@ export const ModuleInterviews: React.FC = () => {
   const [recommendation, setRecommendation] = useState('STRONG_HIRE');
   const [isSaving, setIsSaving] = useState(false);
 
-  const loadData = async () => {
+  const loadData = async (targetPage = page) => {
     try {
       setLoading(true);
       setLoadError(null);
-      const [ints, cands, ops] = await Promise.all([
-        TenantApi.getInterviews(),
-        TenantApi.getCandidates(),
-        TenantApi.getOpenings()
+      const interviewPage = await TenantApi.getInterviewsPage({ page: targetPage, pageSize });
+      const candidateIds = [...new Set(interviewPage.items.map(item => item.candidateId))];
+      const jobIds = [...new Set(interviewPage.items.map(item => item.jobOpeningId))];
+      const [cands, ops] = await Promise.all([
+        candidateIds.length > 0 ? TenantApi.getCandidates({ ids: candidateIds }) : Promise.resolve([] as Candidate[]),
+        jobIds.length > 0 ? TenantApi.getOpenings({ ids: jobIds }) : Promise.resolve([] as JobOpening[])
       ]);
-      setInterviews(ints);
+      setInterviews(interviewPage.items);
+      setTotalInterviews(interviewPage.total);
+      setPage(interviewPage.page);
       setCandidates(cands);
       setOpenings(ops);
-      if (ints.length > 0 && !activeSession) {
-        setActiveSession(ints[0]);
-      }
+      setActiveSession(current => current && interviewPage.items.some(item => item.id === current.id) ? current : (interviewPage.items[0] ?? null));
     } catch (err) {
       console.error('Failed to load interviews:', err);
       setLoadError('Não foi possível carregar as entrevistas e dados relacionados.');
@@ -44,8 +49,16 @@ export const ModuleInterviews: React.FC = () => {
   };
 
   useEffect(() => {
-    loadData();
+    void loadData(page);
+  }, [activeTenant?.id, page]);
+
+  useEffect(() => {
+    setPage(1);
   }, [activeTenant?.id]);
+
+  const totalPages = Math.max(1, Math.ceil(totalInterviews / pageSize));
+  const candidateById = useMemo(() => new Map(candidates.map(candidate => [candidate.id, candidate] as const)), [candidates]);
+  const openingById = useMemo(() => new Map(openings.map(opening => [opening.id, opening] as const)), [openings]);
 
   const handleSaveScorecard = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,7 +77,7 @@ export const ModuleInterviews: React.FC = () => {
         feedbackNotes
       );
       setActiveSession(res);
-      await loadData();
+      await loadData(page);
       alert('Scorecard e feedback registrados com sucesso!');
     } catch (err: any) {
       alert(`Erro ao salvar scorecard: ${err.message}`);
@@ -88,7 +101,7 @@ export const ModuleInterviews: React.FC = () => {
       {loadError && (
         <div className="flex items-center justify-between gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
           <span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 shrink-0" />{loadError}</span>
-          <button onClick={loadData} className="font-semibold underline">Tentar novamente</button>
+          <button onClick={() => loadData(page)} className="font-semibold underline">Tentar novamente</button>
         </div>
       )}
 
@@ -97,11 +110,16 @@ export const ModuleInterviews: React.FC = () => {
         {/* Left Col: Interview list */}
         <div className="space-y-3">
           <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-            Sessões Agendadas ({interviews.length})
+            Sessões Agendadas ({totalInterviews})
           </span>
+          {loading && interviews.length === 0 && (
+            <div className="p-6 text-center text-slate-400 text-xs animate-pulse rounded-2xl border border-slate-200 bg-white">
+              Carregando entrevistas...
+            </div>
+          )}
           {interviews.map((item) => {
-            const cand = candidates.find(c => c.id === item.candidateId);
-            const job = openings.find(j => j.id === item.jobOpeningId);
+            const cand = candidateById.get(item.candidateId);
+            const job = openingById.get(item.jobOpeningId);
             const isSelected = activeSession?.id === item.id;
 
             return (
@@ -134,6 +152,23 @@ export const ModuleInterviews: React.FC = () => {
               </div>
             );
           })}
+          <div className="flex items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page <= 1 || loading}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 font-semibold disabled:opacity-40"
+            >
+              Anterior
+            </button>
+            <span className="font-mono">{page}/{totalPages}</span>
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page >= totalPages || loading}
+              className="px-3 py-1.5 rounded-xl border border-slate-200 font-semibold disabled:opacity-40"
+            >
+              Próxima
+            </button>
+          </div>
         </div>
 
         {/* Right 2 Cols: Active Session Detail & Scorecard */}
@@ -146,7 +181,7 @@ export const ModuleInterviews: React.FC = () => {
                     {activeSession.stageName}
                   </span>
                   <h2 className="text-lg font-bold text-slate-900">
-                    {candidates.find(c => c.id === activeSession.candidateId)?.name}
+                    {candidateById.get(activeSession.candidateId)?.name}
                   </h2>
                 </div>
                 {activeSession.meetLink && (
