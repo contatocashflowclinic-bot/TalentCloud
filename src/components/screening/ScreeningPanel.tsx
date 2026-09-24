@@ -264,11 +264,14 @@ export const ScreeningPanel: React.FC<{
           <button disabled={busyAction} onClick={() => setArchiving(true)} className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 flex items-center gap-1 disabled:opacity-60">
             <Archive className="w-3.5 h-3.5" /> Arquivar
           </button>
-          {selectedFiles.length > 0 && (
-            <button disabled={busyAction || deleting} onClick={() => setDeleting(true)} className="px-3 py-1.5 rounded-xl bg-slate-700 hover:bg-slate-800 flex items-center gap-1 disabled:opacity-60">
-              <Trash2 className="w-3.5 h-3.5" /> Excluir
-            </button>
-          )}
+          <button
+            disabled={busyAction || deleting || selectedFiles.length === 0}
+            onClick={() => setDeleting(true)}
+            title={selectedFiles.length === 0 ? 'A seleção não contém currículo importado para excluir.' : 'Excluir currículo(s) importado(s) definitivamente'}
+            className={`px-3 py-1.5 rounded-xl flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-50 ${selectedFiles.length > 0 ? 'bg-rose-600 hover:bg-rose-700' : 'bg-slate-700'}`}
+          >
+            <Trash2 className="w-3.5 h-3.5" /> Excluir currículo
+          </button>
           {busyAction && <Loader2 className="w-4 h-4 animate-spin" />}
         </div>
       )}

@@ -303,10 +303,10 @@ export function registerScreeningApi(app: Express): void {
     if (!row) throw new NotFoundError('Arquivo não encontrado.');
     await db.resumeScreenings.delete(row.id);
     if (row.storagePath.startsWith(`${tenant.id}/resumes/`)) void removeFile(row.storagePath, RESUME_BUCKET);
-    await logAudit({
+    void logAudit({
       tenantId: tenant.id, userId: req.auth!.id, userName: req.auth!.name, action: 'RESUME_DELETED', category: 'CANDIDATE_DATA',
       details: `Currículo excluído (${row.fileName}). Motivo: ${reason}`, ipAddress: req.ip || '127.0.0.1', databaseAffected: tenant.dbConfig.dbName
-    });
+    }).catch(err => console.warn('[audit] falha ao registrar exclusão de currículo:', err));
     res.json({ success: true });
   }));
 
