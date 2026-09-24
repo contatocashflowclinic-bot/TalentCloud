@@ -547,7 +547,22 @@ export const TenantApi = {
     request(`/api/v1/screening/files/${fileId}/complete`, { method: 'POST', body: JSON.stringify({ name, email }) }),
   getScreeningDetail: async (fileId: string) => (await request<{ success: boolean; detail: ScreeningDetail }>(`/api/v1/screening/files/${fileId}`)).detail,
   downloadResume: (fileId: string, fileName: string) => downloadAuthenticatedFile(`/api/v1/screening/files/${fileId}/file`, fileName),
-  deleteResume: async (fileId: string, reason: string) => request<{ success: boolean }>(`/api/v1/screening/files/${fileId}`, { method: 'DELETE', body: JSON.stringify({ reason }) }),
+  deleteResume: async (fileId: string, reason: string) => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 20_000);
+    try {
+      return await request<{ success: boolean }>(`/api/v1/screening/files/${fileId}`, {
+        method: 'DELETE', body: JSON.stringify({ reason }), signal: controller.signal
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        throw new ApiError('A exclusão demorou mais que o esperado. Atualize a lista antes de tentar novamente.', 408);
+      }
+      throw err;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  },
   decideScreening: async (jobId: string, action: ScreeningDecisionAction, items: ScreeningDecisionItem[], reason?: string) =>
     (await request<{ success: boolean; results: ScreeningDecisionResult[] }>(`/api/v1/screening/jobs/${jobId}/decisions`, {
       method: 'POST',
