@@ -49,6 +49,7 @@ export const ScreeningPanel: React.FC<{
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [openFileId, setOpenFileId] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [busyAction, setBusyAction] = useState(false);
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'warn'; message: string } | null>(null);
@@ -123,7 +124,10 @@ export const ScreeningPanel: React.FC<{
   };
 
   const deleteSelected = async (reason: string) => {
-    if (selectedFiles.length === 0) return;
+    if (selectedFiles.length === 0) {
+      setDeleteModalOpen(false);
+      return;
+    }
     try {
       setDeleting(true);
       setFeedback(null);
@@ -137,7 +141,7 @@ export const ScreeningPanel: React.FC<{
           : `${deleted} currículo(s) excluído(s); ${failed} não puderam ser excluídos.`
       });
       setSelected(new Set());
-      setDeleting(false);
+      setDeleteModalOpen(false);
       refresh();
     } finally {
       setDeleting(false);
@@ -266,7 +270,7 @@ export const ScreeningPanel: React.FC<{
           </button>
           <button
             disabled={busyAction || deleting || selectedFiles.length === 0}
-            onClick={() => setDeleting(true)}
+            onClick={() => setDeleteModalOpen(true)}
             title={selectedFiles.length === 0 ? 'A seleção não contém currículo importado para excluir.' : 'Excluir currículo(s) importado(s) definitivamente'}
             className={`px-3 py-1.5 rounded-xl flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-50 ${selectedFiles.length > 0 ? 'bg-rose-600 hover:bg-rose-700' : 'bg-slate-700'}`}
           >
@@ -285,11 +289,11 @@ export const ScreeningPanel: React.FC<{
         />
       )}
 
-      {deleting && (
+      {deleteModalOpen && (
         <DeleteResumeModal
           count={selectedFiles.length}
           busy={deleting}
-          onCancel={() => setDeleting(false)}
+          onCancel={() => setDeleteModalOpen(false)}
           onConfirm={reason => void deleteSelected(reason)}
         />
       )}
