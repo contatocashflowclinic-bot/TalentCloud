@@ -57,7 +57,7 @@ export const MODULE_SECTIONS: ModuleSection[] = [
       { id: 16, name: 'Divulgação & Portal', icon: Globe, badge: 'Social', desc: 'Instagram, WhatsApp, LinkedIn' },
       { id: 7, name: 'Candidatos', icon: UserCheck, desc: 'Banco de Talentos Isolado' },
       { id: 8, name: 'Processo Seletivo', icon: GitBranch, desc: 'Kanban e Etapas' },
-      { id: 9, name: 'Avaliação Assistida por IA', icon: Sparkles, badge: 'Gemini', desc: 'Apoio à Decisão & Explicabilidade' },
+      { id: 9, name: 'Avaliação Assistida por IA', icon: Sparkles, desc: 'Apoio à Decisão & Explicabilidade' },
       { id: 10, name: 'Entrevistas', icon: Calendar, desc: 'Scorecards e Roteiro' }
     ]
   },
