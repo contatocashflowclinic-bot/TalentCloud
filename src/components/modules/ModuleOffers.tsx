@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, Gift, Pencil, CheckCircle2, Send, Calendar, Paperclip, AlertTriangle } from 'lucide-react';
 import { useTenant } from '../../context/TenantContext.js';
 import { TenantApi } from '../../services/api.js';
@@ -17,6 +17,7 @@ export const ModuleOffers: React.FC = () => {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [openings, setOpenings] = useState<JobOpening[]>([]);
   const [loading, setLoading] = useState(true);
+  const [formRefsLoaded, setFormRefsLoaded] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedOfferId, setSelectedOfferId] = useState<string | null>(null);
   const [editOfferId, setEditOfferId] = useState<string | null>(null);
@@ -69,10 +70,9 @@ export const ModuleOffers: React.FC = () => {
       setLoading(true);
       setDataWarnings([]);
       setLoadError(null);
-      const [offData, candData, opData] = await Promise.all([
+      setFormRefsLoaded(false);
+      const [offData] = await Promise.all([
         TenantApi.getOffers(),
-        TenantApi.getCandidates(),
-        TenantApi.getOpenings(),
         loadBenefits(),
         // Cargos só definem o pacote-padrão por nível; sem permissão de ver cargos a proposta segue funcionando.
         TenantApi.getPositions()
@@ -83,17 +83,36 @@ export const ModuleOffers: React.FC = () => {
             setDataWarnings(list => [...new Set([...list, 'cargos'])]);
           })
       ]);
+      const candidateIds = [...new Set(offData.map(offer => offer.candidateId))];
+      const jobIds = [...new Set(offData.map(offer => offer.jobOpeningId))];
+      const [candData, opData] = await Promise.all([
+        candidateIds.length > 0 ? TenantApi.getCandidates({ ids: candidateIds }) : Promise.resolve([] as Candidate[]),
+        jobIds.length > 0 ? TenantApi.getOpenings({ ids: jobIds }) : Promise.resolve([] as JobOpening[])
+      ]);
       setOffers(offData);
       setCandidates(candData);
       setOpenings(opData);
-      if (candData.length > 0) setCandidateId(candData[0].id);
-      if (opData.length > 0) setJobOpeningId(opData[0].id);
+      if (candData.length > 0) setCandidateId(current => current || candData[0].id);
+      if (opData.length > 0) setJobOpeningId(current => current || opData[0].id);
     } catch (err) {
       console.error('Failed to load offers:', err);
       setLoadError('Não foi possível carregar as propostas e dados relacionados.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const ensureOfferFormRefs = async () => {
+    if (formRefsLoaded) return;
+    const [candData, opData] = await Promise.all([
+      TenantApi.getCandidates(),
+      TenantApi.getOpenings()
+    ]);
+    setCandidates(candData);
+    setOpenings(opData);
+    setCandidateId(current => current || candData[0]?.id || '');
+    setJobOpeningId(current => current || opData[0]?.id || '');
+    setFormRefsLoaded(true);
   };
 
   useEffect(() => {
@@ -119,9 +138,11 @@ export const ModuleOffers: React.FC = () => {
     }
   };
 
+  const candidateById = useMemo(() => new Map(candidates.map(candidate => [candidate.id, candidate] as const)), [candidates]);
+  const openingById = useMemo(() => new Map(openings.map(opening => [opening.id, opening] as const)), [openings]);
   const selectedOffer = offers.find(o => o.id === selectedOfferId);
-  const selectedCandidate = candidates.find(c => c.id === selectedOffer?.candidateId);
-  const selectedJob = openings.find(j => j.id === selectedOffer?.jobOpeningId);
+  const selectedCandidate = selectedOffer ? candidateById.get(selectedOffer.candidateId) : undefined;
+  const selectedJob = selectedOffer ? openingById.get(selectedOffer.jobOpeningId) : undefined;
 
   const handleUpdateStatus = async (id: string, status: JobOffer['status']) => {
     try {
@@ -152,7 +173,7 @@ export const ModuleOffers: React.FC = () => {
             Benefícios
           </button>}
           {canCreate && <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={async () => { await ensureOfferFormRefs(); setIsModalOpen(true); }}
             className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs shadow-xs transition-colors flex items-center gap-2"
           >
             <Plus className="w-4 h-4" />
@@ -303,7 +324,7 @@ export const ModuleOffers: React.FC = () => {
       {editOfferId && offers.some(o => o.id === editOfferId) && (
         <OfferEditModal
           offer={offers.find(o => o.id === editOfferId)!}
-          candidateName={candidates.find(c => c.id === offers.find(o => o.id === editOfferId)!.candidateId)?.name}
+          candidateName={candidateById.get(offers.find(o => o.id === editOfferId)!.candidateId)?.name}
           onSaved={loadData}
           onClose={() => setEditOfferId(null)}
         />

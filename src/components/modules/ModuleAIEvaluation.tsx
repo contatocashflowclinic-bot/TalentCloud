@@ -75,20 +75,18 @@ export const ModuleAIEvaluation: React.FC<{
     try {
       setLoading(true);
       setActionError(null);
-      const [cands, ops, dnaData] = await Promise.all([
-        TenantApi.getCandidates(),
+      const [ops, dnaData] = await Promise.all([
         TenantApi.getOpenings(),
         TenantApi.getDNA()
       ]);
-      setCandidates(cands);
+      setCandidates([]);
       setOpenings(ops);
       setEvaluations([]);
       setDna(dnaData);
 
-      const targetCand = preselectedCandidateId || (cands[0]?.id ?? '');
       const targetJob = preselectedJobId || (ops[0]?.id ?? '');
-      setSelectedCandidateId(targetCand);
       setSelectedJobId(targetJob);
+      if (preselectedCandidateId) setSelectedCandidateId(preselectedCandidateId);
     } catch (err) {
       console.error('Failed to load AI evaluation data:', err);
       setActionError('Não foi possível carregar os dados da avaliação assistida. Atualize a página e tente novamente.');
@@ -106,23 +104,40 @@ export const ModuleAIEvaluation: React.FC<{
     if (preselectedJobId) setSelectedJobId(preselectedJobId);
   }, [preselectedCandidateId, preselectedJobId]);
 
-  const loadEvaluationsForSelectedJob = async (jobId = selectedJobId) => {
+  const loadJobContext = async (jobId = selectedJobId, preferredCandidateId = selectedCandidateId) => {
     if (!jobId) {
+      setCandidates([]);
       setEvaluations([]);
+      setSelectedCandidateId('');
       return;
     }
     try {
       setActionError(null);
-      setEvaluations(await TenantApi.getAIEvaluations({ jobId }));
+      const [apps, evals] = await Promise.all([
+        TenantApi.getApplications({ jobId }),
+        TenantApi.getAIEvaluations({ jobId })
+      ]);
+      const candidateIds = [...new Set([
+        ...apps.map(app => app.candidateId),
+        ...(preferredCandidateId ? [preferredCandidateId] : [])
+      ])];
+      const cands = candidateIds.length > 0 ? await TenantApi.getCandidates({ ids: candidateIds }) : [];
+      setCandidates(cands);
+      setEvaluations(evals);
+      setSelectedCandidateId(current => {
+        const wanted = preferredCandidateId || current;
+        if (wanted && cands.some(candidate => candidate.id === wanted)) return wanted;
+        return cands[0]?.id ?? '';
+      });
     } catch (err) {
-      console.error('Failed to load AI evaluations for selected job:', err);
-      setActionError('Não foi possível carregar as avaliações da vaga selecionada.');
+      console.error('Failed to load AI evaluation context for selected job:', err);
+      setActionError('Não foi possível carregar candidatos e avaliações da vaga selecionada.');
     }
   };
 
   useEffect(() => {
-    void loadEvaluationsForSelectedJob(selectedJobId);
-  }, [selectedJobId]);
+    void loadJobContext(selectedJobId, preselectedCandidateId || selectedCandidateId);
+  }, [activeTenant?.id, selectedJobId, preselectedCandidateId]);
 
   const activeCandidate = candidates.find(c => c.id === selectedCandidateId);
   const activeJob = openings.find(j => j.id === selectedJobId);
@@ -144,9 +159,7 @@ export const ModuleAIEvaluation: React.FC<{
       setNotice(null);
       const result = await TenantApi.evaluateCandidateWithAI(selectedCandidateId, selectedJobId);
       if (result.kept) setNotice(result.notice ?? 'A IA não foi usada desta vez. Mantivemos a avaliação anterior.');
-      // Reload evaluations
-      const updatedEvals = await TenantApi.getAIEvaluations({ jobId: selectedJobId });
-      setEvaluations(updatedEvals);
+      await loadJobContext(selectedJobId, selectedCandidateId);
     } catch (err: any) {
       // A limit set by the platform is not a failure: show its message as it is
       setActionError(err.status === 429 ? err.message : `Falha na avaliação com IA: ${err.message}`);
@@ -162,8 +175,7 @@ export const ModuleAIEvaluation: React.FC<{
       setIsSubmittingReview(true);
       setActionError(null);
       await TenantApi.submitHumanReview(activeEvaluation.id, humanDecision, humanNotes);
-      const updatedEvals = await TenantApi.getAIEvaluations({ jobId: selectedJobId });
-      setEvaluations(updatedEvals);
+      await loadJobContext(selectedJobId, selectedCandidateId);
       setHumanNotes('');
     } catch (err: any) {
       setActionError(`Erro ao registrar a decisão humana: ${err.message}`);
