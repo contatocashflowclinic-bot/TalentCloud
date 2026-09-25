@@ -514,7 +514,7 @@ export const TenantApi = {
   })).candidate,
 
   // 8. Processo Seletivo (Aplicações)
-  getApplications: async (q: { jobId?: string; candidateId?: string } = {}) => (await request<{ success: boolean; applications: SelectionApplication[] }>(`/api/v1/applications${qs(q)}`)).applications,
+  getApplications: async (q: { jobId?: string; candidateId?: string; candidateIds?: string[] } = {}) => (await request<{ success: boolean; applications: SelectionApplication[] }>(`/api/v1/applications${qs({ jobId: q.jobId, candidateId: q.candidateId, candidateIds: q.candidateIds?.join(',') })}`)).applications,
   createApplication: async (candidateId: string, jobOpeningId: string) => (await request<{ success: boolean; application: SelectionApplication }>('/api/v1/applications', {
     method: 'POST',
     body: JSON.stringify({ candidateId, jobOpeningId })
@@ -768,3 +768,4 @@ export const TenantApi = {
   })).event,
   deleteAgendaEvent: async (id: string) => { await request<{ success: boolean }>(`/api/v1/agenda/${id}`, { method: 'DELETE' }); }
 };
+

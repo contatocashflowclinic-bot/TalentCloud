@@ -304,6 +304,16 @@ export class TenantRepository {
     return rows.map(r => fromRow<Candidate>({}, r));
   }
 
+  async listApplicationsForCandidates(candidateIds: readonly string[], db: Queryable = getPool()): Promise<SelectionApplication[]> {
+    const unique = [...new Set(candidateIds.filter(Boolean))];
+    if (unique.length === 0) return [];
+    const { rows } = await db.query(
+      'select * from public.selection_applications where tenant_id = $1 and candidate_id = any($2::text[]) order by applied_at desc',
+      [this.tenantId, unique]
+    );
+    return rows.map(r => fromRow<SelectionApplication>({}, r));
+  }
+
   async listApplicationsForCandidate(candidateId: string, db: Queryable = getPool()): Promise<SelectionApplication[]> {
     const { rows } = await db.query(
       'select * from public.selection_applications where tenant_id = $1 and candidate_id = $2 order by applied_at desc',
@@ -1276,3 +1286,4 @@ export class TenantRepository {
     if (!(await this.surveyTemplates.delete(templateId))) throw new NotFoundError('Template não encontrado');
   }
 }
+

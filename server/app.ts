@@ -1128,9 +1128,12 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   app.get('/api/v1/applications', can('selection:view', 'candidates:view', 'interviews:view'), h(async (req, res) => {
     const jobId = typeof req.query.jobId === 'string' ? req.query.jobId.trim() : '';
     const candidateId = typeof req.query.candidateId === 'string' ? req.query.candidateId.trim() : '';
+    const candidateIds = csv(req.query.candidateIds);
     const applications = jobId
       ? await ctx(req).db.listApplicationsForJob(jobId)
-      : candidateId ? await ctx(req).db.listApplicationsForCandidate(candidateId) : await ctx(req).db.applications.list();
+      : candidateId ? await ctx(req).db.listApplicationsForCandidate(candidateId)
+      : candidateIds.length > 0 ? await ctx(req).db.listApplicationsForCandidates(candidateIds)
+      : await ctx(req).db.applications.list();
     res.json({ success: true, applications });
   }));
 
@@ -2233,3 +2236,4 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
 
   return app;
 }
+

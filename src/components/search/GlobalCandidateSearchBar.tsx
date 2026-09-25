@@ -72,26 +72,55 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
   const inputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
-  // Load organization-isolated candidates and processes only when the search palette is opened.
+  // Open the palette quickly: load only job scopes first, then fetch candidates in a bounded, contextual search.
   const loadSearchData = async () => {
     if (!activeTenant || loading) return;
     try {
       setLoading(true);
-      const [cands, ops, apps, evals] = await Promise.all([
-        TenantApi.getCandidates(),
-        TenantApi.getOpenings(),
-        TenantApi.getApplications(),
-        aiEnabled ? TenantApi.getAIEvaluations() : Promise.resolve([] as AIAssistedEvaluation[])
-      ]);
-      setCandidates(cands);
-      setOpenings(ops);
-      setApplications(apps);
-      setEvaluations(evals);
+      setOpenings(await TenantApi.getOpenings());
       setHasLoadedSearchData(true);
     } catch (err) {
-      console.error('Failed to load global search data for tenant:', err);
+      console.error('Failed to load global search scopes for tenant:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadCandidateSearchData = async () => {
+    if (!activeTenant) return;
+    const requestId = ++searchRequestRef.current;
+    try {
+      setLoading(true);
+      const query = searchTerm.trim();
+      let cands: Candidate[] = [];
+      let apps: SelectionApplication[] = [];
+
+      if (selectedJobScope !== 'all') {
+        apps = await TenantApi.getApplications({ jobId: selectedJobScope });
+        const scopedIds = [...new Set(apps.map(app => app.candidateId))];
+        cands = scopedIds.length > 0 ? await TenantApi.getCandidates({ ids: scopedIds }) : [];
+      } else {
+        const page = await TenantApi.getCandidatesPage({ search: query, includeArchived: false, page: 1, pageSize: 60 });
+        cands = page.items;
+        const ids = cands.map(candidate => candidate.id);
+        apps = ids.length > 0 ? await TenantApi.getApplications({ candidateIds: ids }) : [];
+      }
+
+      const ids = cands.map(candidate => candidate.id);
+      const evals = aiEnabled && ids.length > 0 ? await TenantApi.getAIEvaluations({ candidateIds: ids }) : [];
+      if (requestId !== searchRequestRef.current) return;
+      setCandidates(cands);
+      setApplications(apps);
+      setEvaluations(evals);
+    } catch (err) {
+      console.error('Failed to load global candidate search data for tenant:', err);
+      if (requestId === searchRequestRef.current) {
+        setCandidates([]);
+        setApplications([]);
+        setEvaluations([]);
+      }
+    } finally {
+      if (requestId === searchRequestRef.current) setLoading(false);
     }
   };
 
@@ -108,6 +137,12 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
   useEffect(() => {
     if (isOpen && !hasLoadedSearchData) void loadSearchData();
   }, [isOpen, hasLoadedSearchData, activeTenant?.id, aiEnabled]);
+
+  useEffect(() => {
+    if (!isOpen || !hasLoadedSearchData) return;
+    const timer = window.setTimeout(() => { void loadCandidateSearchData(); }, 250);
+    return () => window.clearTimeout(timer);
+  }, [isOpen, hasLoadedSearchData, activeTenant?.id, aiEnabled, searchTerm, selectedJobScope]);
 
   // Global keyboard shortcut (Cmd+K / Ctrl+K or '/')
   useEffect(() => {
@@ -400,7 +435,7 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
                   onChange={(e) => setSelectedJobScope(e.target.value)}
                   className="bg-white border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-semibold text-slate-700 focus:outline-hidden focus:border-indigo-500"
                 >
-                  <option value="all">Todas as Vagas da Organização ({openings.length})</option>
+                  <option value="all">Todas as Vagas ({openings.length})</option>
                   {openings.map(o => (
                     <option key={o.id} value={o.id}>{o.title}</option>
                   ))}
@@ -414,7 +449,7 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
               <div className="px-4 sm:px-6 py-3 bg-indigo-50/40 border-b border-indigo-100/50 flex flex-wrap items-center justify-between gap-2 text-xs">
                 <div className="flex items-center gap-2 text-slate-500">
                   <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                  <span className="font-semibold text-slate-700">Competências em Destaque no Tenant:</span>
+                  <span className="font-semibold text-slate-700">Competências nos resultados carregados:</span>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -438,7 +473,7 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3.5 divide-y divide-slate-100">
               {loading ? (
                 <div className="text-center py-12 text-slate-400 text-xs animate-pulse">
-                  Consultando banco de dados isolado da organização...
+                  Consultando resultados da organiza��o...
                 </div>
               ) : filteredCandidates.length === 0 ? (
                 <div className="text-center py-12 space-y-3">
@@ -743,3 +778,4 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
     </div>
   );
 };
+
