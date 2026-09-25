@@ -50,7 +50,7 @@ import { assertAlertRemovable, buildAlert, buildScopeData, normName, type AlertP
 import { isActiveAlert, sentimentOf } from '../../src/retention.js';
 import { buildChecklistItems, DEFAULT_INTEGRATION_TEMPLATES } from './integration.js';
 import { newId } from '../ids.js';
-import { ANALYSIS_LEASE_MS, summaryOf } from '../../src/screening.js';
+import { ANALYSIS_LEASE_MS, MAX_AUTO_ATTEMPTS, summaryOf } from '../../src/screening.js';
 import { candidateFromAnalysis, namesCompatible } from './screening.js';
 
 /** Generic CRUD bound to a single tenant and table. */
@@ -335,12 +335,16 @@ export class TenantRepository {
       where.push(`(lower(name) like ${p} or lower("current_role") like ${p} or lower(email) like ${p} or exists (select 1 from unnest(skills) as skill(skill_name) where lower(skill_name) like ${p}))`);
     }
     const whereSql = where.join(' and ');
-    const count = await db.query(`select count(*)::int as total from public.candidates where ${whereSql}`, params);
     const { rows } = await db.query(
-      `select * from public.candidates where ${whereSql} order by registered_at desc, seq desc limit $${params.length + 1} offset $${params.length + 2}`,
+      `select *, count(*) over ()::int as total_rows from public.candidates where ${whereSql} order by registered_at desc, seq desc limit $${params.length + 1} offset $${params.length + 2}`,
       [...params, pageSize, (page - 1) * pageSize]
     );
-    return { items: rows.map(r => fromRow<Candidate>({}, r)), total: Number(count.rows[0]?.total ?? 0), page, pageSize };
+    return {
+      items: rows.map(({ total_rows: _total, ...row }) => fromRow<Candidate>({}, row)),
+      total: Number(rows[0]?.total_rows ?? 0),
+      page,
+      pageSize
+    };
   }
 
   // ---- AI evaluations ---------------------------------------------------
@@ -432,6 +436,21 @@ export class TenantRepository {
       [this.tenantId, jobOpeningId]
     );
     return rows.map(r => fromRow<ResumeScreening>({}, r));
+  }
+
+  async listQueuedScreeningIds(limit: number): Promise<string[]> {
+    const safeLimit = Math.min(50, Math.max(1, Math.floor(limit)));
+    const { rows } = await getPool().query(
+      `select id
+         from public.resume_screenings
+        where tenant_id = $1
+          and ((status = 'uploaded') or (status = 'failed' and attempts < $2)
+               or (status = 'analyzing' and analyzing_since < now() - interval '90 seconds'))
+        order by seq asc
+        limit $3`,
+      [this.tenantId, MAX_AUTO_ATTEMPTS, safeLimit]
+    );
+    return rows.map(row => String(row.id));
   }
 
   async screeningUploadStatsForJob(jobOpeningId: string, contentHash: string, db: Queryable = getPool()): Promise<{ total: number; duplicate: boolean }> {

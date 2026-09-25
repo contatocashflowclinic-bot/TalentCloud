@@ -3,6 +3,7 @@ import { TenantConnectionRouter, TenantConnectionContext } from './tenant/Tenant
 import { evaluateCandidateWithAI } from './gemini.js';
 import { h, required } from './http.js';
 import { registerScreeningApi } from './screeningApi.js';
+import { processScreeningQueue } from './screeningWorker.js';
 import { assessAllowance, getAiSettings, getUsageOverview, isPeriod, recordUsage, setOrgLimit, updateAiSettings } from './aiUsage.js';
 import { hideShadowingEstimates, parseOrgLimit, parseSettingsPatch, shouldKeepPrevious } from './aiCost.js';
 import { getPool } from './db/pool.js';
@@ -154,6 +155,21 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
         database: 'unreachable',
         timestamp: new Date().toISOString()
       });
+    }
+  });
+
+  // Vercel Cron / worker interno: nunca expõe dados, apenas processa uma quantidade limitada de currículos.
+  app.get('/api/internal/screening/process', async (req, res) => {
+    const configuredSecret = process.env.CRON_SECRET;
+    const providedSecret = String(req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
+    if (!configuredSecret || providedSecret !== configuredSecret) return res.status(401).json({ success: false, error: 'Não autorizado.' });
+    try {
+      await ensureBootstrapped();
+      const result = await processScreeningQueue();
+      res.json({ success: true, ...result });
+    } catch (err) {
+      console.error('[screening-worker] falha ao processar fila:', err);
+      res.status(500).json({ success: false, error: 'Não foi possível processar a fila de currículos.' });
     }
   });
 

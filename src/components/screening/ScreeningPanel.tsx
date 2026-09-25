@@ -74,6 +74,16 @@ export const ScreeningPanel: React.FC<{
 
   useEffect(() => { setLoading(true); void load(); }, [job.id]);
 
+  const pendingSignature = board?.pending.map(file => `${file.id}:${file.status}`).join('|') ?? '';
+  useEffect(() => {
+    const hasQueuedFiles = board?.pending.some(file => file.status === 'uploaded' || file.status === 'analyzing') ?? false;
+    if (!hasQueuedFiles) return;
+    const timer = window.setInterval(() => { void load(); }, 5_000);
+    return () => window.clearInterval(timer);
+    // The signature restarts polling only when a queued file changes state or the board changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job.id, pendingSignature]);
+
   const refresh = () => { void load(); onDataChanged?.(); };
 
   const rows = useMemo(() => (board ? board.rows.filter(r => matchesFilter(r, filter)) : []), [board, filter]);

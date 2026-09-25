@@ -2,7 +2,6 @@ import React, { useCallback, useRef, useState } from 'react';
 import { UploadCloud, FileText, CheckCircle2, XCircle, Loader2, RotateCw, X } from 'lucide-react';
 import { TenantApi, ApiError } from '../../services/api.js';
 import { RESUME_LIMITS } from '../../types.js';
-import { STATUS_LABEL } from '../../screening.js';
 
 const ACCEPTED_EXTENSIONS = ['.pdf', '.docx'];
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -41,12 +40,7 @@ export const ResumeUploadZone: React.FC<{ jobId: string; disabled?: boolean; onF
     try {
       patch(item.key, { status: 'uploading' });
       const { file: uploaded } = await TenantApi.uploadResume(jobId, item.file);
-      patch(item.key, { status: 'analyzing' });
-      const result = await TenantApi.analyzeResume(uploaded.id);
-      if (result.file.status === 'needs_data') patch(item.key, { status: 'needs_data', message: 'Faltam dados para identificar o candidato.' });
-      else if (result.file.status === 'failed') patch(item.key, { status: 'error', message: result.file.failureMessage ?? STATUS_LABEL.failed });
-      else if (result.notice) patch(item.key, { status: 'queued', message: result.notice }); // IA indisponível: fica aguardando
-      else patch(item.key, { status: 'done' });
+      patch(item.key, { status: 'queued', message: `Na fila para análise (${uploaded.fileName})` });
     } catch (err) {
       patch(item.key, { status: 'error', message: err instanceof ApiError ? err.message : 'Falha ao enviar este arquivo.' });
     }

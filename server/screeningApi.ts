@@ -4,10 +4,9 @@ import { ConflictError, NotFoundError, TooManyRequestsError, ValidationError } f
 import { h, required } from './http.js';
 import { can } from './auth/middleware.js';
 import { logAudit } from './audit.js';
-import { assessAllowance, recordUsage } from './aiUsage.js';
+import { assessAllowance } from './aiUsage.js';
 import { isGeminiConfigured } from './gemini.js';
-import { analyzeResume, ResumeAiError, type ResumeInput } from './resumeAi.js';
-import { docxToText, PDF_MIME, sniffResume } from './resumeFile.js';
+import { sniffResume } from './resumeFile.js';
 import { getFile, MAX_FILE_BYTES, putFile, removeFile, RESUME_BUCKET, safeFileName } from './storage.js';
 import { newId } from './ids.js';
 import { consumeQuota } from './rateLimit.js';
@@ -15,6 +14,7 @@ import { withTransaction } from './db/pool.js';
 import { buildScreeningBoard, criteriaHashOf, criteriaOf, fileOf, planDecision, screeningCriteriaInfo } from './tenant/screening.js';
 import { deriveFlags, effectiveStatus, MAX_AUTO_ATTEMPTS, SCREENING_PERMISSIONS } from '../src/screening.js';
 import { RESUME_LIMITS, type ScreeningDecisionAction, type ScreeningDecisionResult } from '../src/types.js';
+import { processScreeningFile } from './screeningWorker.js';
 
 /**
  * Rotas de "Triagem Inteligente de Currículos". Reaproveita o middleware `/api/v1` já montado em `server/app.ts`
@@ -98,10 +98,10 @@ export function registerScreeningApi(app: Express): void {
       const contentHash = createHash('sha256').update(req.body as Buffer).digest('hex');
       const uploadStats = await db.screeningUploadStatsForJob(job.id, contentHash);
       if (uploadStats.total >= RESUME_LIMITS.perJob) {
-        throw new ValidationError(`Esta vaga j� atingiu o limite de ${RESUME_LIMITS.perJob} curr�culos enviados.`);
+        throw new ValidationError(`Esta vaga já atingiu o limite de ${RESUME_LIMITS.perJob} currículos enviados.`);
       }
       if (uploadStats.duplicate) {
-        throw new ConflictError('Este mesmo arquivo j� foi enviado para esta vaga.');
+        throw new ConflictError('Este mesmo arquivo já foi enviado para esta vaga.');
       }
       // Disjuntor simples contra envio em massa (mesmo mecanismo usado no login e no portal público de vagas).
       await consumeQuota(
@@ -137,89 +137,17 @@ export function registerScreeningApi(app: Express): void {
   app.post('/api/v1/screening/files/:id/analyze', ...canAll(SCREENING_PERMISSIONS.upload), h(async (req, res) => {
     const { db, tenant } = ctx(req);
     const force = req.body?.force === true;
-
     const existing = await db.resumeScreenings.get(req.params.id);
     if (!existing) throw new NotFoundError('Arquivo de currículo não encontrado.');
-    if (!force && effectiveStatus(existing) === 'analyzed') {
-      return res.json({ success: true, file: fileOf(existing) }); // já lido: não cobra de novo
-    }
-    if (!force && existing.attempts >= MAX_AUTO_ATTEMPTS) {
-      throw new ValidationError('Este arquivo já teve várias tentativas sem sucesso. Use "Reanalisar" para tentar de novo.');
-    }
-
-    const job = await db.openings.get(existing.jobOpeningId);
-    if (!job) throw new NotFoundError('Vaga não encontrada.');
-    const [position, dna] = await Promise.all([db.positions.get(job.positionId), db.getDna()]);
-    if (!position) throw new ValidationError('Esta vaga não tem um Cargo vinculado.');
-    if (!dna) throw new ValidationError('Configure o DNA Organizacional antes de usar a triagem de currículos.');
-    if (dna.pillars.length === 0) throw new ValidationError('O DNA Organizacional ainda não tem pilares cadastrados.');
-
-    const criteria = criteriaOf(job, position, dna);
-    const criteriaHash = criteriaHashOf(criteria);
-
-    // Sem a IA configurada, o arquivo fica como está (nunca uma nota inventada): nenhuma reserva é feita.
-    if (!isGeminiConfigured()) {
-      return res.json({
-        success: true, file: fileOf(existing),
-        notice: 'O Gemini não está configurado neste ambiente. O arquivo continua aguardando.'
-      });
-    }
-
-    const { decision, settings: aiSettings, model } = await assessAllowance(tenant.id);
-    const who = { tenantId: tenant.id, userId: req.auth!.id, userName: req.auth!.name, model };
-    if (decision.mode === 'block') {
-      await recordUsage({ ...who, outcome: 'blocked', reason: decision.reason }, aiSettings);
-      throw new TooManyRequestsError(decision.message);
-    }
-    if (decision.mode === 'estimate') {
-      // Não há estimativa local de currículo (evitaria uma nota inventada): o arquivo fica como está, aguardando.
-      await recordUsage({ ...who, outcome: 'blocked', reason: decision.reason }, aiSettings);
-      return res.json({ success: true, file: fileOf(existing), notice: decision.message });
-    }
-
-    await consumeQuota(
-      'resume-analyze', [tenant.id], { limit: ANALYZE_HOURLY_LIMIT, windowSeconds: 3600 },
-      'Muitas análises de currículo nesta hora. Tente novamente em instantes.'
-    );
-
-    const claimed = await db.claimScreening(existing.id, { force });
-    if (!claimed) throw new ConflictError('Este arquivo já está sendo analisado (ou acabou de ser lido). Atualize a lista.');
-
-    try {
-      const fileBuffer = await getFile(claimed.storagePath, RESUME_BUCKET);
-      const resume: ResumeInput =
-        claimed.mime === PDF_MIME
-          ? { kind: 'pdf', content: fileBuffer }
-          : (() => {
-              const { text, hiddenText, truncated } = docxToText(fileBuffer);
-              return { kind: 'docx', text, hiddenText, truncated };
-            })();
-
-      const { analysis, usage } = await analyzeResume({ criteria, criteriaHash, model, resume, seedHint: claimed.contentHash });
-      const result = await db.completeScreeningAnalysis(claimed.id, analysis, { model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens });
-
-      await recordUsage({
-        ...who, evaluationId: result.evaluation?.id, candidateId: result.candidate?.id, jobOpeningId: job.id,
-        outcome: 'ai', inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, durationMs: usage.durationMs
-      }, aiSettings);
-
-      if (result.evaluation && result.candidate) {
-        await logAudit({
-          tenantId: tenant.id, userId: req.auth!.id, userName: req.auth!.name, action: 'RESUME_SCREENING_ANALYZED', category: 'AI_EXECUTION',
-          details: `Currículo lido pela IA para a vaga '${job.title}': ${result.candidate.name} (${analysis.overallScore}%).`,
-          ipAddress: req.ip || '127.0.0.1', databaseAffected: tenant.dbConfig.dbName
-        });
-      }
-      res.json({ success: true, file: fileOf(result.screening) });
-    } catch (err) {
-      if (err instanceof ResumeAiError) {
-        await recordUsage({ ...who, outcome: 'failed', inputTokens: err.inputTokens, outputTokens: err.outputTokens, durationMs: err.durationMs }, aiSettings);
-        const released = await db.releaseScreeningAsFailed(claimed.id, err.message);
-        return res.json({ success: true, file: fileOf(released ?? claimed) });
-      }
-      await db.releaseScreeningAsFailed(claimed.id, 'Erro interno ao processar este currículo.').catch(() => undefined);
-      throw err;
-    }
+    if (!force && effectiveStatus(existing) === 'analyzed') return res.json({ success: true, file: fileOf(existing) });
+    const status = await processScreeningFile(tenant, db, existing.id, { force });
+    if (status === 'busy') throw new ConflictError('Este arquivo já está sendo analisado. Atualize a lista.');
+    const latest = await db.resumeScreenings.get(existing.id);
+    res.json({
+      success: true,
+      file: fileOf(latest ?? existing),
+      ...(status === 'waiting' ? { notice: 'O arquivo foi colocado na fila e será analisado assim que a IA estiver disponível.' } : {})
+    });
   }));
 
   // Sem e-mail, sem nome, ou nome incompatível com um candidato existente do mesmo e-mail: o RH confirma manualmente.
@@ -301,7 +229,7 @@ export function registerScreeningApi(app: Express): void {
     const reason = required(req.body?.reason, 'reason');
     const deleted = await withTransaction(async tx => {
       const row = await db.resumeScreenings.get(req.params.id, tx);
-      if (!row) throw new NotFoundError('Arquivo nao encontrado.');
+      if (!row) throw new NotFoundError('Arquivo não encontrado.');
       const storagePaths = [row.storagePath];
       const counts = { screenings: 0, applications: 0, evaluations: 0, interviews: 0, offers: 0, onboardings: 0, candidates: 0 };
 
@@ -348,7 +276,7 @@ export function registerScreeningApi(app: Express): void {
     }
     void logAudit({
       tenantId: tenant.id, userId: req.auth!.id, userName: req.auth!.name, action: 'RESUME_DELETED', category: 'CANDIDATE_DATA',
-      details: `Curriculo excluido (${deleted.row.fileName}). Motivo: ${reason}. Registros removidos: ${JSON.stringify(deleted.counts)}`,
+      details: `Currículo excluído (${deleted.row.fileName}). Motivo: ${reason}. Registros removidos: ${JSON.stringify(deleted.counts)}`,
       ipAddress: req.ip || '127.0.0.1', databaseAffected: tenant.dbConfig.dbName
     }).catch(err => console.warn('[audit] falha ao registrar exclusao de curriculo:', err));
     res.json({ success: true });

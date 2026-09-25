@@ -3,6 +3,7 @@ import path from 'node:path';
 import express from 'express';
 import { closePool } from './db/pool.js';
 import { createApp, ensureBootstrapped } from './app.js';
+import { processScreeningQueue } from './screeningWorker.js';
 
 /**
  * Local / self-hosted entry point (`npm run dev`, `npm start`). On Vercel this file is NOT used: the static site is
@@ -43,8 +44,13 @@ async function start() {
     console.log(`[Vértice 360] (0.0.0.0 é só o endereço em que o servidor escuta; não digite 0.0.0.0 no navegador)`);
     console.log(`[Vértice 360] Multi-tenancy routing active - database: Supabase Postgres`);
   });
+  const workerTimer = setInterval(() => {
+    void processScreeningQueue().catch(err => console.error('[screening-worker] falha no processamento local:', err));
+  }, 60_000);
+  workerTimer.unref();
 
   const shutdown = () => {
+    clearInterval(workerTimer);
     server.close(() => closePool().finally(() => process.exit(0)));
   };
   process.on('SIGTERM', shutdown);
