@@ -65,27 +65,24 @@ export async function processScreeningFile(
 
     const { analysis, usage } = await analyzeResume({ criteria, criteriaHash, model, resume, seedHint: claimed.contentHash });
     const result = await db.completeScreeningAnalysis(claimed.id, analysis, { model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens });
-    await Promise.all([
-      recordUsage({
-        ...who, evaluationId: result.evaluation?.id, candidateId: result.candidate?.id, jobOpeningId: job.id,
-        outcome: 'ai', inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, durationMs: usage.durationMs
-      }, aiSettings),
-      result.evaluation && result.candidate
-        ? logAudit({
-            tenantId: tenant.id, userId: existing.uploadedById, userName: existing.uploadedByName,
-            action: 'RESUME_SCREENING_ANALYZED', category: 'AI_EXECUTION',
-            details: `Currículo lido pela IA para a vaga '${job.title}': ${result.candidate.name} (${analysis.overallScore}%).`,
-            ipAddress: '127.0.0.1', databaseAffected: tenant.dbConfig.dbName
-          })
-        : Promise.resolve()
-    ]);
+    void recordUsage({
+      ...who, evaluationId: result.evaluation?.id, candidateId: result.candidate?.id, jobOpeningId: job.id,
+      outcome: 'ai', inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, durationMs: usage.durationMs
+    }, aiSettings).catch(err => console.warn('[ai-usage] falha ao registrar consumo da triagem:', err));
+    if (result.evaluation && result.candidate) {
+      void logAudit({
+        tenantId: tenant.id, userId: existing.uploadedById, userName: existing.uploadedByName,
+        action: 'RESUME_SCREENING_ANALYZED', category: 'AI_EXECUTION',
+        details: `Currículo lido pela IA para a vaga '${job.title}': ${result.candidate.name} (${analysis.overallScore}%).`,
+        ipAddress: '127.0.0.1', databaseAffected: tenant.dbConfig.dbName
+      }).catch(err => console.warn('[audit] falha ao registrar análise de currículo:', err));
+    }
     return result.screening.status === 'needs_data' ? 'needs_data' : 'completed';
   } catch (err) {
     if (err instanceof ResumeAiError) {
-      const [released] = await Promise.all([
-        db.releaseScreeningAsFailed(claimed.id, err.message),
-        recordUsage({ ...who, outcome: 'failed', inputTokens: err.inputTokens, outputTokens: err.outputTokens, durationMs: err.durationMs }, aiSettings)
-      ]);
+      const released = await db.releaseScreeningAsFailed(claimed.id, err.message);
+      void recordUsage({ ...who, outcome: 'failed', inputTokens: err.inputTokens, outputTokens: err.outputTokens, durationMs: err.durationMs }, aiSettings)
+        .catch(usageErr => console.warn('[ai-usage] falha ao registrar falha da triagem:', usageErr));
       return released ? 'failed' : 'failed';
     }
     await db.releaseScreeningAsFailed(claimed.id, 'Erro interno ao processar este currículo.').catch(() => undefined);
@@ -94,7 +91,7 @@ export async function processScreeningFile(
 }
 
 export function screeningWorkerBatchSize(): number {
-  return Math.min(5, Math.max(1, Math.floor(Number(process.env.SCREENING_WORKER_BATCH_SIZE) || 3)));
+  return Math.min(5, Math.max(1, Math.floor(Number(process.env.SCREENING_WORKER_BATCH_SIZE) || 5)));
 }
 
 export async function processScreeningQueue(limit = screeningWorkerBatchSize()): Promise<{ processed: number; completed: number; failed: number; waiting: number }> {
@@ -106,23 +103,32 @@ export async function processScreeningQueue(limit = screeningWorkerBatchSize()):
 
     const tenants = await getPool().query("select id from public.tenants where status = 'active' order by id");
     const router = TenantConnectionRouter.getInstance();
-    const tasks: Array<{ tenant: Tenant; db: TenantRepository; fileId: string }> = [];
+    const queues: Array<{ tenant: Tenant; db: TenantRepository; fileIds: string[] }> = [];
 
     for (const row of tenants.rows) {
-      if (tasks.length >= safeLimit) break;
       const tenant = await router.getTenantById(String(row.id));
       if (!tenant) continue;
       const db = new TenantRepository(tenant.id);
-      for (const fileId of await db.listQueuedScreeningIds(safeLimit - tasks.length)) {
-        tasks.push({ tenant, db, fileId });
-      }
+      const fileIds = await db.listQueuedScreeningIds(safeLimit);
+      if (fileIds.length > 0) queues.push({ tenant, db, fileIds });
+    }
+
+    const tasks: Array<{ tenant: Tenant; db: TenantRepository; fileId: string }> = [];
+    let cursor = 0;
+    while (tasks.length < safeLimit && queues.length > 0) {
+      const queue = queues[cursor];
+      const fileId = queue.fileIds.shift();
+      if (fileId) tasks.push({ tenant: queue.tenant, db: queue.db, fileId });
+      if (queue.fileIds.length === 0) queues.splice(cursor, 1);
+      else cursor = (cursor + 1) % queues.length;
+      if (queues.length > 0 && cursor >= queues.length) cursor = 0;
     }
 
     const results = await Promise.allSettled(tasks.map(task => processScreeningFile(task.tenant, task.db, task.fileId)));
     return {
       processed: results.length,
       completed: results.filter(result => result.status === 'fulfilled' && (result.value === 'completed' || result.value === 'needs_data')).length,
-      failed: results.filter(result => result.status === 'fulfilled' && result.value === 'failed').length,
+      failed: results.filter(result => result.status === 'rejected' || (result.status === 'fulfilled' && result.value === 'failed')).length,
       waiting: results.filter(result => result.status === 'fulfilled' && result.value === 'waiting').length
     };
   } finally {

@@ -119,10 +119,10 @@ export function registerScreeningApi(app: Express): void {
           status: 'uploaded', attempts: 0, inputTokens: 0, outputTokens: 0,
           uploadedById: req.auth!.id, uploadedByName: req.auth!.name, uploadedAt: new Date().toISOString()
         });
-        await logAudit({
+          void logAudit({
           tenantId: tenant.id, userId: req.auth!.id, userName: req.auth!.name, action: 'RESUME_UPLOADED', category: 'CANDIDATE_DATA',
           details: `Currículo enviado para a vaga '${job.title}' (${name}).`, ipAddress: req.ip || '127.0.0.1', databaseAffected: tenant.dbConfig.dbName
-        });
+          }).catch(err => console.warn('[audit] falha ao registrar upload de currículo:', err));
         res.status(201).json({ success: true, file: fileOf(screening) });
       } catch (err) {
         await removeFile(storagePath, RESUME_BUCKET);
