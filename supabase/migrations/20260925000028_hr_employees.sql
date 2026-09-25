@@ -1,4 +1,4 @@
--- Módulo RH / Colaboradores: base mestre por organização, sem dados sensíveis no v1.
+-- MÃ³dulo RH / Colaboradores: base mestre por organizaÃ§Ã£o, sem dados sensÃ­veis no v1.
 create table public.employees (
   seq              bigint generated always as identity,
   tenant_id        text not null references public.tenants (id) on delete cascade,
@@ -51,7 +51,7 @@ create index onboarding_journeys_employee_idx on public.onboarding_journeys (ten
 create index collaborator_development_employee_idx on public.collaborator_development (tenant_id, employee_id);
 create index turnover_alerts_employee_idx on public.turnover_alerts (tenant_id, employee_id);
 
--- Backfill idempotente: contratações existentes viram colaboradores canônicos.
+-- Backfill idempotente: contrataÃ§Ãµes existentes viram colaboradores canÃ´nicos.
 insert into public.employees (
   tenant_id, id, name, email, phone, status, origin, candidate_id, onboarding_id, position_id,
   job_title, department_id, manager_id, hire_date, created_at, updated_at, created_by_name
@@ -73,7 +73,7 @@ select
   o.hire_date,
   now(),
   now(),
-  'Migração automática'
+  'MigraÃ§Ã£o automÃ¡tica'
 from public.onboarding_journeys o
 left join public.candidates c on c.tenant_id = o.tenant_id and c.id = o.candidate_id
 left join public.job_offers jf on jf.tenant_id = o.tenant_id and jf.candidate_id = o.candidate_id and jf.status = 'accepted'
@@ -114,4 +114,3 @@ update public.turnover_alerts a
  where e.tenant_id = a.tenant_id
    and (e.candidate_id = a.collaborator_id or e.user_id = a.collaborator_id)
    and a.employee_id is null;
-

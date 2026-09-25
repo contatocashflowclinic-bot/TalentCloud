@@ -190,7 +190,7 @@ export class TenantRepository {
     }
     const relatedAlerts = alerts.filter(a => a.employeeId === employee.id || a.collaboratorId === employee.candidateId || a.collaboratorId === employee.userId);
     for (const alert of relatedAlerts) {
-      add({ id: `retention-${alert.id}`, kind: 'retention', at: alert.createdAt ?? employee.createdAt, title: `Alerta de retenÁ„o: ${alert.riskLevel}`, description: alert.lastActionTaken || alert.earlyWarningSignals.join(', '), tone: alert.status === 'resolved' ? 'success' : alert.status === 'dismissed' || alert.status === 'left' ? 'warn' : 'danger', refId: alert.id });
+      add({ id: `retention-${alert.id}`, kind: 'retention', at: alert.createdAt ?? employee.createdAt, title: `Alerta de reten√ß√£o: ${alert.riskLevel}`, description: alert.lastActionTaken || alert.earlyWarningSignals.join(', '), tone: alert.status === 'resolved' ? 'success' : alert.status === 'dismissed' || alert.status === 'left' ? 'warn' : 'danger', refId: alert.id });
       for (const h of alert.history ?? []) {
         add({ id: `retention-${alert.id}-${h.at}`, kind: 'retention', at: h.at, title: 'Historico do alerta', description: h.text, refId: alert.id });
       }
@@ -777,7 +777,7 @@ export class TenantRepository {
       milestones30DaysDone: false,
       milestones60DaysDone: false,
       milestones90DaysDone: false,
-      notes: `Jornada aberta automaticamente apÛs o aceite da proposta (${offer.contractType}).`
+      notes: `Jornada aberta automaticamente ap√≥s o aceite da proposta (${offer.contractType}).`
     }, tx);
 
     // Development: the hire gets an empty PDI, so goals and 1:1s can start as soon as the person joins.
@@ -1397,4 +1397,3 @@ export class TenantRepository {
     if (!(await this.surveyTemplates.delete(templateId))) throw new NotFoundError('Template n√£o encontrado');
   }
 }
-
