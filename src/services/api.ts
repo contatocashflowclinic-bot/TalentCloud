@@ -657,6 +657,7 @@ export const TenantApi = {
   })).onboarding,
   downloadAdmissionFile: (journeyId: string, itemId: string, fileName: string) =>
     downloadAuthenticatedFile(`/api/v1/onboardings/${journeyId}/admission/${itemId}/file`, fileName),
+  deleteAdmissionFile: async (journeyId: string, itemId: string) => (await request<{ success: boolean; onboarding: OnboardingJourney }>(`/api/v1/onboardings/${journeyId}/admission/${itemId}/file`, { method: 'DELETE' })).onboarding,
 
   // 12.2 Checklist de Integração
   getIntegrationTemplates: async () => (await request<{ success: boolean; templates: IntegrationTemplate[] }>('/api/v1/integration-templates')).templates,
@@ -699,6 +700,15 @@ export const TenantApi = {
     method: 'PATCH',
     body: JSON.stringify(payload)
   })).document,
+  deleteHrDocument: async (id: string) => { await request<{ success: boolean }>(`/api/v1/hr/documents/${id}`, { method: 'DELETE' }); },
+  uploadHrDocumentFile: async (id: string, file: File) => (await request<{ success: boolean; document: HrDocument }>(`/api/v1/hr/documents/${id}/file${qs({ name: file.name })}`, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type },
+    body: file
+  })).document,
+  downloadHrDocumentFile: (id: string, fileName: string) =>
+    downloadAuthenticatedFile(`/api/v1/hr/documents/${id}/file`, fileName),
+  deleteHrDocumentFile: async (id: string) => (await request<{ success: boolean; document: HrDocument }>(`/api/v1/hr/documents/${id}/file`, { method: 'DELETE' })).document,
   getHrVacations: async (employeeId?: string) => (await request<{ success: boolean; vacations: HrVacationPeriod[] }>(`/api/v1/hr/vacations${qs({ employeeId })}`)).vacations,
   createHrVacation: async (payload: Partial<HrVacationPeriod>) => (await request<{ success: boolean; vacation: HrVacationPeriod }>('/api/v1/hr/vacations', {
     method: 'POST',
@@ -708,6 +718,7 @@ export const TenantApi = {
     method: 'PATCH',
     body: JSON.stringify(payload)
   })).vacation,
+  deleteHrVacation: async (id: string) => { await request<{ success: boolean }>(`/api/v1/hr/vacations/${id}`, { method: 'DELETE' }); },
   getHrPayroll: async (employeeId?: string) => (await request<{ success: boolean; payroll: HrPayrollRecord[] }>(`/api/v1/hr/payroll${qs({ employeeId })}`)).payroll,
   createHrPayroll: async (payload: Partial<HrPayrollRecord>) => (await request<{ success: boolean; record: HrPayrollRecord }>('/api/v1/hr/payroll', {
     method: 'POST',
@@ -717,6 +728,7 @@ export const TenantApi = {
     method: 'PATCH',
     body: JSON.stringify(payload)
   })).record,
+  deleteHrPayroll: async (id: string) => { await request<{ success: boolean }>(`/api/v1/hr/payroll/${id}`, { method: 'DELETE' }); },
   // 12. Onboarding
   getOnboardings: async () => (await request<{ success: boolean; onboardings: OnboardingJourney[] }>('/api/v1/onboardings')).onboardings,
   updateChecklistItem: async (journeyId: string, itemId: string, status: string) => (await request<{ success: boolean; onboarding: OnboardingJourney }>(`/api/v1/onboardings/${journeyId}/checklist/${itemId}`, {

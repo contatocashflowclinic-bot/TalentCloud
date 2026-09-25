@@ -960,6 +960,67 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     res.json({ success: true, document: doc });
   }));
 
+  app.delete('/api/v1/hr/documents/:id', can('hr:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const existing = await db.hrDocuments.get(req.params.id);
+    if (!existing) throw new NotFoundError('Documento de RH não encontrado.');
+    await db.hrDocuments.delete(req.params.id);
+    if (existing.filePath) void removeFile(existing.filePath);
+    res.json({ success: true });
+  }));
+
+  // Anexo do documento de RH (PDF/JPG/PNG). Upload: corpo bruto, nome do arquivo em ?name=.
+  app.post(
+    '/api/v1/hr/documents/:id/file',
+    can('hr:edit'),
+    express.raw({ type: () => true, limit: MAX_FILE_BYTES + 64 * 1024 }),
+    h(async (req, res) => {
+      const { db, tenant } = ctx(req);
+      const document = await db.hrDocuments.get(req.params.id);
+      if (!document) throw new NotFoundError('Documento de RH não encontrado.');
+      const mime = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+      const content = assertValidFile(req.body, mime);
+      const name = safeFileName(String(req.query.name ?? 'documento'));
+      const storagePath = `${tenant.id}/hr-documents/${document.id}/${newId('f')}-${name}`;
+      await putFile(storagePath, content, mime);
+      try {
+        const updated = await db.hrDocuments.update(document.id, {
+          fileName: name, fileMime: mime, fileSize: content.length, filePath: storagePath, updatedAt: new Date().toISOString()
+        }) as HrDocument;
+        if (document.filePath) void removeFile(document.filePath);
+        res.status(201).json({ success: true, document: { ...updated, fileUploaded: true } });
+      } catch (err) {
+        void removeFile(storagePath);
+        throw err;
+      }
+    })
+  );
+
+  app.get('/api/v1/hr/documents/:id/file', can('hr:view'), h(async (req, res) => {
+    const { db, tenant } = ctx(req);
+    const document = await db.hrDocuments.get(req.params.id);
+    if (!document || !document.filePath || !document.filePath.startsWith(`${tenant.id}/hr-documents/${document.id}/`)) throw new NotFoundError('Documento não encontrado');
+    const content = await getFile(document.filePath);
+    res.setHeader('Content-Type', document.fileMime || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(document.fileName || document.name)}`);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(content);
+  }));
+
+  // Remove apenas o arquivo anexado (o documento continua cadastrado, sem anexo). Útil para corrigir um envio errado.
+  app.delete('/api/v1/hr/documents/:id/file', can('hr:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const document = await db.hrDocuments.get(req.params.id);
+    if (!document) throw new NotFoundError('Documento de RH não encontrado.');
+    if (!document.filePath) throw new NotFoundError('Este documento não tem arquivo anexado.');
+    const updated = await db.hrDocuments.update(document.id, {
+      fileName: null, fileMime: null, fileSize: null, filePath: null, updatedAt: new Date().toISOString()
+    }) as HrDocument;
+    void removeFile(document.filePath);
+    res.json({ success: true, document: { ...updated, fileUploaded: false } });
+  }));
+
   app.get('/api/v1/hr/vacations', can('hr:view'), h(async (req, res) => {
     const employeeId = req.query.employeeId ? String(req.query.employeeId) : undefined;
     res.json({ success: true, vacations: await ctx(req).db.listHrVacations(employeeId) });
@@ -979,6 +1040,13 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     res.json({ success: true, vacation });
   }));
 
+  app.delete('/api/v1/hr/vacations/:id', can('hr:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    if (!(await db.hrVacations.get(req.params.id))) throw new NotFoundError('Período de férias não encontrado.');
+    await db.hrVacations.delete(req.params.id);
+    res.json({ success: true });
+  }));
+
   app.get('/api/v1/hr/payroll', can('hr:view'), h(async (req, res) => {
     const employeeId = req.query.employeeId ? String(req.query.employeeId) : undefined;
     res.json({ success: true, payroll: await ctx(req).db.listHrPayroll(employeeId) });
@@ -996,6 +1064,13 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     if (!(await db.hrPayroll.get(req.params.id))) throw new NotFoundError('Registro de folha não encontrado.');
     const record = await db.hrPayroll.update(req.params.id, await hrPayrollPatch(req.body ?? {}, db, true)) as HrPayrollRecord;
     res.json({ success: true, record });
+  }));
+
+  app.delete('/api/v1/hr/payroll/:id', can('hr:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    if (!(await db.hrPayroll.get(req.params.id))) throw new NotFoundError('Registro de folha não encontrado.');
+    await db.hrPayroll.delete(req.params.id);
+    res.json({ success: true });
   }));
   app.get('/api/v1/dna', can('dna:view'), h(async (req, res) => {
     const dna = await ctx(req).db.getDna();
@@ -2028,6 +2103,25 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);
     res.setHeader('Cache-Control', 'private, no-store');
     res.send(content);
+  }));
+
+  // Remove apenas o arquivo enviado (o item volta a 'pending', pedindo novo envio). Útil para corrigir um envio errado.
+  app.delete('/api/v1/onboardings/:id/admission/:itemId/file', can('onboarding:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const journey = await db.onboardings.get(req.params.id);
+    const current = journey?.admission.find(i => i.id === req.params.itemId);
+    if (!journey || !current) throw new NotFoundError('Item de admissão não encontrado');
+    if (!current.file) throw new NotFoundError('Este item não tem arquivo enviado.');
+    const previousPath = current.file.path;
+    const onboarding = await db.updateAdmissionItem(journey.id, current.id, item => {
+      const removedName = item.file?.name;
+      item.file = undefined;
+      item.status = 'pending';
+      item.reviewNote = undefined;
+      item.history.push({ at: new Date().toISOString(), by: req.auth!.name, action: `Anexo removido: ${removedName}` });
+    });
+    void removeFile(previousPath);
+    res.json({ success: true, onboarding });
   }));
 
   // ---------------------------------------------------------

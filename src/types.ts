@@ -178,6 +178,9 @@ export interface HrDocument {
   expiresAt?: string;
   status: HrDocumentStatus;
   fileName?: string;
+  fileMime?: string;
+  fileSize?: number;
+  filePath?: string;
   notes?: string;
   createdAt: string;
   updatedAt: string;

@@ -238,10 +238,13 @@ export class TenantRepository {
 
   private async admissionDocumentsAsHr(employeeId: string | undefined, db: Queryable): Promise<HrDocument[]> {
     const [employees, onboardings] = await Promise.all([this.employees.list(db), this.onboardings.list(db)]);
+    const employeeByOnboarding = new Map(employees.filter(e => e.onboardingId).map(e => [e.onboardingId!, e]));
     const employeeByCandidate = new Map(employees.filter(e => e.candidateId).map(e => [e.candidateId!, e]));
     const out: HrDocument[] = [];
     for (const journey of onboardings) {
-      const employee = journey.employeeId ? employees.find(e => e.id === journey.employeeId) : employeeByCandidate.get(journey.candidateId);
+      const employee = employeeByOnboarding.get(journey.id)
+        ?? (journey.employeeId ? employees.find(e => e.id === journey.employeeId) : undefined)
+        ?? employeeByCandidate.get(journey.candidateId);
       if (!employee || (employeeId && employee.id !== employeeId)) continue;
       for (const item of journey.admission ?? []) {
         const lastHistory = [...(item.history ?? [])].sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
@@ -274,7 +277,7 @@ export class TenantRepository {
     const rows = await this.hrDocuments.list(db);
     const direct = employeeId ? rows.filter(r => r.employeeId === employeeId) : rows;
     const admission = await this.admissionDocumentsAsHr(employeeId, db);
-    return [...admission, ...direct.map(d => ({ ...d, source: d.source ?? 'hr' as const }))]
+    return [...admission, ...direct.map(d => ({ ...d, source: d.source ?? 'hr' as const, fileUploaded: !!d.filePath }))]
       .sort((a, b) => Date.parse(b.updatedAt || b.createdAt) - Date.parse(a.updatedAt || a.createdAt));
   }
 

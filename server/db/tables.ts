@@ -18,7 +18,7 @@ export const TABLES = {
   },
   hrDocuments: {
     table: 'hr_documents',
-    columns: ['id', 'employeeId', 'name', 'category', 'issueDate', 'expiresAt', 'status', 'fileName', 'notes', 'createdAt', 'updatedAt', 'createdById', 'createdByName']
+    columns: ['id', 'employeeId', 'name', 'category', 'issueDate', 'expiresAt', 'status', 'fileName', 'fileMime', 'fileSize', 'filePath', 'notes', 'createdAt', 'updatedAt', 'createdById', 'createdByName']
   },
   hrVacations: {
     table: 'hr_vacation_periods',
