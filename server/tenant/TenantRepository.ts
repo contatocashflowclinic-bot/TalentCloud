@@ -16,6 +16,9 @@ import {
   Department,
   Employee,
   EmployeeTimelineEvent,
+  HrDocument,
+  HrPayrollRecord,
+  HrVacationPeriod,
   DevelopmentLookups,
   DevelopmentPerson,
   InterviewSession,
@@ -103,6 +106,9 @@ export interface ScreeningMaterializeResult {
 export class TenantRepository {
   readonly users: Entity<TenantUser>;
   readonly employees: Entity<Employee>;
+  readonly hrDocuments: Entity<HrDocument>;
+  readonly hrVacations: Entity<HrVacationPeriod>;
+  readonly hrPayroll: Entity<HrPayrollRecord>;
   readonly departments: Entity<Department>;
   readonly positions: Entity<JobPosition>;
   readonly openings: Entity<JobOpening>;
@@ -127,6 +133,9 @@ export class TenantRepository {
   constructor(public readonly tenantId: string) {
     this.users = new Entity(TABLES.users, tenantId);
     this.employees = new Entity(TABLES.employees, tenantId);
+    this.hrDocuments = new Entity(TABLES.hrDocuments, tenantId);
+    this.hrVacations = new Entity(TABLES.hrVacations, tenantId);
+    this.hrPayroll = new Entity(TABLES.hrPayroll, tenantId);
     this.departments = new Entity(TABLES.departments, tenantId);
     this.positions = new Entity(TABLES.positions, tenantId);
     this.openings = new Entity(TABLES.openings, tenantId);
@@ -159,6 +168,21 @@ export class TenantRepository {
     return this.employees.get(id, db);
   }
 
+  async listHrDocuments(employeeId?: string, db: Queryable = getPool()): Promise<HrDocument[]> {
+    const rows = await this.hrDocuments.list(db);
+    return employeeId ? rows.filter(r => r.employeeId === employeeId) : rows;
+  }
+
+  async listHrVacations(employeeId?: string, db: Queryable = getPool()): Promise<HrVacationPeriod[]> {
+    const rows = await this.hrVacations.list(db);
+    return employeeId ? rows.filter(r => r.employeeId === employeeId) : rows;
+  }
+
+  async listHrPayroll(employeeId?: string, db: Queryable = getPool()): Promise<HrPayrollRecord[]> {
+    const rows = await this.hrPayroll.list(db);
+    return employeeId ? rows.filter(r => r.employeeId === employeeId) : rows;
+  }
+
   async employeeTimeline(employeeId: string, db: Queryable = getPool()): Promise<EmployeeTimelineEvent[]> {
     const employee = await this.employees.get(employeeId, db);
     if (!employee) throw new NotFoundError('Colaborador nao encontrado.');
@@ -166,8 +190,9 @@ export class TenantRepository {
     const add = (event: EmployeeTimelineEvent) => events.push(event);
     add({ id: `profile-${employee.id}`, kind: 'profile', at: employee.createdAt, title: 'Perfil de colaborador criado', description: employee.createdByName ? `Criado por ${employee.createdByName}.` : undefined });
 
-    const [offers, onboardings, developments, alerts] = await Promise.all([
-      this.offers.list(db), this.onboardings.list(db), this.development.list(db), this.turnoverAlerts.list(db)
+    const [offers, onboardings, developments, alerts, hrDocuments, vacations, payroll] = await Promise.all([
+      this.offers.list(db), this.onboardings.list(db), this.development.list(db), this.turnoverAlerts.list(db),
+      this.listHrDocuments(employee.id, db), this.listHrVacations(employee.id, db), this.listHrPayroll(employee.id, db)
     ]);
     for (const offer of offers.filter(o => employee.candidateId && o.candidateId === employee.candidateId && o.status === 'accepted')) {
       add({ id: `hire-${offer.id}`, kind: 'hire', at: offer.respondedAt ?? employee.hireDate ?? employee.createdAt, title: 'Proposta aceita', description: `Contrato ${offer.contractType} com inicio em ${offer.startDate}.`, tone: 'success', refId: offer.id });
@@ -181,6 +206,17 @@ export class TenantRepository {
         }
       }
     }
+    for (const doc of hrDocuments) {
+      const at = doc.expiresAt || doc.updatedAt || doc.createdAt;
+      add({ id: `hr-doc-${doc.id}`, kind: 'profile', at, title: doc.expiresAt ? `Documento vence: ${doc.name}` : `Documento registrado: ${doc.name}`, description: doc.notes || doc.category, tone: doc.status === 'expired' ? 'danger' : doc.status === 'archived' ? 'warn' : 'info', refId: doc.id });
+    }
+    for (const vacation of vacations) {
+      add({ id: `vacation-${vacation.id}`, kind: 'profile', at: vacation.startDate || vacation.acquisitionEnd, title: `Férias: ${vacation.status}`, description: vacation.startDate ? `${vacation.days} dia(s), início em ${vacation.startDate}` : `Período aquisitivo até ${vacation.acquisitionEnd}`, tone: vacation.status === 'cancelled' ? 'warn' : vacation.status === 'completed' ? 'success' : 'info', refId: vacation.id });
+    }
+    for (const record of payroll) {
+      add({ id: `payroll-${record.id}`, kind: 'profile', at: record.closedAt || record.updatedAt || record.createdAt, title: `Folha ${record.period}: ${record.status}`, description: record.notes || record.variableNotes || record.overtimeNotes, tone: record.status === 'closed' ? 'success' : 'info', refId: record.id });
+    }
+
     const relatedDevelopment = developments.filter(d => d.employeeId === employee.id || d.id === employee.developmentId || d.collaboratorId === employee.candidateId || d.collaboratorId === employee.userId);
     for (const record of relatedDevelopment) {
       add({ id: `development-${record.id}`, kind: 'development', at: record.hireDate || employee.createdAt, title: 'PDI criado', description: record.jobTitle, refId: record.id });

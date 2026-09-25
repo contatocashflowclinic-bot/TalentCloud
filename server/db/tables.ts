@@ -15,7 +15,20 @@ export const TABLES = {
       'id', 'name', 'email', 'phone', 'status', 'origin', 'candidateId', 'userId', 'onboardingId', 'developmentId',
       'positionId', 'jobTitle', 'departmentId', 'managerId', 'hireDate', 'createdAt', 'updatedAt', 'createdById', 'createdByName'
     ]
-  },  departments: {
+  },
+  hrDocuments: {
+    table: 'hr_documents',
+    columns: ['id', 'employeeId', 'name', 'category', 'issueDate', 'expiresAt', 'status', 'fileName', 'notes', 'createdAt', 'updatedAt', 'createdById', 'createdByName']
+  },
+  hrVacations: {
+    table: 'hr_vacation_periods',
+    columns: ['id', 'employeeId', 'acquisitionStart', 'acquisitionEnd', 'startDate', 'endDate', 'returnDate', 'days', 'status', 'notes', 'createdAt', 'updatedAt', 'createdById', 'createdByName']
+  },
+  hrPayroll: {
+    table: 'hr_payroll_records',
+    columns: ['id', 'employeeId', 'period', 'status', 'admissionEvent', 'vacationEvent', 'leaveEvent', 'overtimeNotes', 'variableNotes', 'notes', 'closedAt', 'createdAt', 'updatedAt', 'createdById', 'createdByName']
+  },
+  departments: {
     table: 'departments',
     columns: ['id', 'name', 'code', 'parentId', 'managerId', 'costCenter', 'headcountTarget', 'currentHeadcount']
   },

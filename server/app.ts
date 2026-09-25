@@ -39,10 +39,16 @@ import {
   CANDIDATE_DECLARED_FIELDS,
   EMPLOYEE_ORIGINS,
   EMPLOYEE_STATUSES,
+  HR_DOCUMENT_STATUSES,
+  HR_PAYROLL_STATUSES,
+  HR_VACATION_STATUSES,
   OFFER_DOCUMENT_CATEGORIES,
   type AdmissionItem,
   type CollaboratorDevelopment,
   type Employee,
+  type HrDocument,
+  type HrPayrollRecord,
+  type HrVacationPeriod,
   type OfferDocumentCategory,
   type OneOnOneMeeting,
   type OnboardingChecklistItem,
@@ -737,6 +743,29 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // MÓDULO 3: DNA Organizacional
   // ---------------------------------------------------------
   // MODULO 18: RH / Colaboradores (base mestre)
+  const ymd = (value: unknown, field: string, requiredField = false) => {
+    const text = String(value ?? '').trim();
+    if (!text) {
+      if (requiredField) throw new ValidationError(field + ' obrigatória.');
+      return undefined;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new ValidationError(field + ' inválida.');
+    return text;
+  };
+
+  const ym = (value: unknown, field: string) => {
+    const text = String(value ?? '').trim();
+    if (!/^\d{4}-\d{2}$/.test(text)) throw new ValidationError(field + ' inválida. Use AAAA-MM.');
+    return text;
+  };
+
+  const ensureHrEmployee = async (db: TenantConnectionContext['db'], employeeId: unknown) => {
+    const id = String(employeeId ?? '').trim();
+    if (!id) throw new ValidationError('Colaborador obrigatório.');
+    if (!(await db.getEmployee(id))) throw new ValidationError('Colaborador não encontrado nesta organização.');
+    return id;
+  };
+
   const employeePatch = async (body: Record<string, unknown>, db: TenantConnectionContext['db'], partial: boolean) => {
     const out: Record<string, unknown> = { updatedAt: new Date().toISOString() };
     const has = (key: string) => body[key] !== undefined;
@@ -833,6 +862,123 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
 
   app.get('/api/v1/hr/employees/:id/timeline', can('hr:view'), h(async (req, res) => {
     res.json({ success: true, events: await ctx(req).db.employeeTimeline(req.params.id) });
+  }));
+  const hrDocumentPatch = async (body: Record<string, unknown>, db: TenantConnectionContext['db'], partial: boolean) => {
+    const out: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+    const has = (key: string) => body[key] !== undefined;
+    if (!partial || has('employeeId')) out.employeeId = await ensureHrEmployee(db, body.employeeId);
+    if (!partial || has('name')) out.name = required(body.name, 'name');
+    if (!partial || has('category')) out.category = String(body.category ?? 'Geral').trim() || 'Geral';
+    if (has('issueDate')) out.issueDate = ymd(body.issueDate, 'Data de emissão') ?? null;
+    if (has('expiresAt')) out.expiresAt = ymd(body.expiresAt, 'Data de vencimento') ?? null;
+    if (!partial || has('status')) {
+      const status = String(body.status ?? 'valid');
+      if (!(HR_DOCUMENT_STATUSES as readonly string[]).includes(status)) throw new ValidationError('Status de documento inválido.');
+      out.status = status;
+    }
+    if (has('fileName')) out.fileName = String(body.fileName ?? '').trim() || null;
+    if (has('notes')) out.notes = String(body.notes ?? '').trim() || null;
+    return out;
+  };
+
+  const hrVacationPatch = async (body: Record<string, unknown>, db: TenantConnectionContext['db'], partial: boolean) => {
+    const out: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+    const has = (key: string) => body[key] !== undefined;
+    if (!partial || has('employeeId')) out.employeeId = await ensureHrEmployee(db, body.employeeId);
+    if (!partial || has('acquisitionStart')) out.acquisitionStart = ymd(body.acquisitionStart, 'Início aquisitivo', true);
+    if (!partial || has('acquisitionEnd')) out.acquisitionEnd = ymd(body.acquisitionEnd, 'Fim aquisitivo', true);
+    if (has('startDate')) out.startDate = ymd(body.startDate, 'Início das férias') ?? null;
+    if (has('endDate')) out.endDate = ymd(body.endDate, 'Fim das férias') ?? null;
+    if (has('returnDate')) out.returnDate = ymd(body.returnDate, 'Retorno') ?? null;
+    if (!partial || has('days')) {
+      const days = Number(body.days ?? 30);
+      if (!Number.isInteger(days) || days < 0 || days > 60) throw new ValidationError('Dias de férias inválido.');
+      out.days = days;
+    }
+    if (!partial || has('status')) {
+      const status = String(body.status ?? 'accrued');
+      if (!(HR_VACATION_STATUSES as readonly string[]).includes(status)) throw new ValidationError('Status de férias inválido.');
+      out.status = status;
+    }
+    if (has('notes')) out.notes = String(body.notes ?? '').trim() || null;
+    return out;
+  };
+
+  const hrPayrollPatch = async (body: Record<string, unknown>, db: TenantConnectionContext['db'], partial: boolean) => {
+    const out: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+    const has = (key: string) => body[key] !== undefined;
+    if (!partial || has('employeeId')) out.employeeId = await ensureHrEmployee(db, body.employeeId);
+    if (!partial || has('period')) out.period = ym(body.period, 'Competência');
+    if (!partial || has('status')) {
+      const status = String(body.status ?? 'open');
+      if (!(HR_PAYROLL_STATUSES as readonly string[]).includes(status)) throw new ValidationError('Status de folha inválido.');
+      out.status = status;
+      if (status === 'closed') out.closedAt = new Date().toISOString();
+    }
+    if (has('admissionEvent')) out.admissionEvent = !!body.admissionEvent;
+    if (has('vacationEvent')) out.vacationEvent = !!body.vacationEvent;
+    if (has('leaveEvent')) out.leaveEvent = !!body.leaveEvent;
+    if (has('overtimeNotes')) out.overtimeNotes = String(body.overtimeNotes ?? '').trim() || null;
+    if (has('variableNotes')) out.variableNotes = String(body.variableNotes ?? '').trim() || null;
+    if (has('notes')) out.notes = String(body.notes ?? '').trim() || null;
+    return out;
+  };
+
+  app.get('/api/v1/hr/documents', can('hr:view'), h(async (req, res) => {
+    const employeeId = req.query.employeeId ? String(req.query.employeeId) : undefined;
+    res.json({ success: true, documents: await ctx(req).db.listHrDocuments(employeeId) });
+  }));
+
+  app.post('/api/v1/hr/documents', can('hr:create'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const patch = await hrDocumentPatch(req.body ?? {}, db, false);
+    const doc = await db.hrDocuments.insert({ id: newId('hrd'), ...patch, createdAt: patch.updatedAt, createdById: req.auth!.id, createdByName: req.auth!.name }) as HrDocument;
+    res.status(201).json({ success: true, document: doc });
+  }));
+
+  app.patch('/api/v1/hr/documents/:id', can('hr:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    if (!(await db.hrDocuments.get(req.params.id))) throw new NotFoundError('Documento de RH não encontrado.');
+    const doc = await db.hrDocuments.update(req.params.id, await hrDocumentPatch(req.body ?? {}, db, true)) as HrDocument;
+    res.json({ success: true, document: doc });
+  }));
+
+  app.get('/api/v1/hr/vacations', can('hr:view'), h(async (req, res) => {
+    const employeeId = req.query.employeeId ? String(req.query.employeeId) : undefined;
+    res.json({ success: true, vacations: await ctx(req).db.listHrVacations(employeeId) });
+  }));
+
+  app.post('/api/v1/hr/vacations', can('hr:create'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const patch = await hrVacationPatch(req.body ?? {}, db, false);
+    const vacation = await db.hrVacations.insert({ id: newId('vac'), ...patch, createdAt: patch.updatedAt, createdById: req.auth!.id, createdByName: req.auth!.name }) as HrVacationPeriod;
+    res.status(201).json({ success: true, vacation });
+  }));
+
+  app.patch('/api/v1/hr/vacations/:id', can('hr:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    if (!(await db.hrVacations.get(req.params.id))) throw new NotFoundError('Período de férias não encontrado.');
+    const vacation = await db.hrVacations.update(req.params.id, await hrVacationPatch(req.body ?? {}, db, true)) as HrVacationPeriod;
+    res.json({ success: true, vacation });
+  }));
+
+  app.get('/api/v1/hr/payroll', can('hr:view'), h(async (req, res) => {
+    const employeeId = req.query.employeeId ? String(req.query.employeeId) : undefined;
+    res.json({ success: true, payroll: await ctx(req).db.listHrPayroll(employeeId) });
+  }));
+
+  app.post('/api/v1/hr/payroll', can('hr:create'), h(async (req, res) => {
+    const { db } = ctx(req);
+    const patch = await hrPayrollPatch(req.body ?? {}, db, false);
+    const record = await db.hrPayroll.insert({ id: newId('pay'), admissionEvent: false, vacationEvent: false, leaveEvent: false, ...patch, createdAt: patch.updatedAt, createdById: req.auth!.id, createdByName: req.auth!.name }) as HrPayrollRecord;
+    res.status(201).json({ success: true, record });
+  }));
+
+  app.patch('/api/v1/hr/payroll/:id', can('hr:edit'), h(async (req, res) => {
+    const { db } = ctx(req);
+    if (!(await db.hrPayroll.get(req.params.id))) throw new NotFoundError('Registro de folha não encontrado.');
+    const record = await db.hrPayroll.update(req.params.id, await hrPayrollPatch(req.body ?? {}, db, true)) as HrPayrollRecord;
+    res.json({ success: true, record });
   }));
   app.get('/api/v1/dna', can('dna:view'), h(async (req, res) => {
     const dna = await ctx(req).db.getDna();

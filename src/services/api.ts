@@ -43,6 +43,9 @@ import {
   AuthUser,
   Employee,
   EmployeeTimelineEvent,
+  HrDocument,
+  HrPayrollRecord,
+  HrVacationPeriod,
   AiSettings,
   AiUsageOverview,
   AiUsagePeriod,
@@ -687,6 +690,33 @@ export const TenantApi = {
     body: JSON.stringify(payload)
   })).employee,
   getEmployeeTimeline: async (id: string) => (await request<{ success: boolean; events: EmployeeTimelineEvent[] }>(`/api/v1/hr/employees/${id}/timeline`)).events,
+  getHrDocuments: async (employeeId?: string) => (await request<{ success: boolean; documents: HrDocument[] }>(`/api/v1/hr/documents${qs({ employeeId })}`)).documents,
+  createHrDocument: async (payload: Partial<HrDocument>) => (await request<{ success: boolean; document: HrDocument }>('/api/v1/hr/documents', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })).document,
+  updateHrDocument: async (id: string, payload: Partial<HrDocument>) => (await request<{ success: boolean; document: HrDocument }>(`/api/v1/hr/documents/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).document,
+  getHrVacations: async (employeeId?: string) => (await request<{ success: boolean; vacations: HrVacationPeriod[] }>(`/api/v1/hr/vacations${qs({ employeeId })}`)).vacations,
+  createHrVacation: async (payload: Partial<HrVacationPeriod>) => (await request<{ success: boolean; vacation: HrVacationPeriod }>('/api/v1/hr/vacations', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })).vacation,
+  updateHrVacation: async (id: string, payload: Partial<HrVacationPeriod>) => (await request<{ success: boolean; vacation: HrVacationPeriod }>(`/api/v1/hr/vacations/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).vacation,
+  getHrPayroll: async (employeeId?: string) => (await request<{ success: boolean; payroll: HrPayrollRecord[] }>(`/api/v1/hr/payroll${qs({ employeeId })}`)).payroll,
+  createHrPayroll: async (payload: Partial<HrPayrollRecord>) => (await request<{ success: boolean; record: HrPayrollRecord }>('/api/v1/hr/payroll', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })).record,
+  updateHrPayroll: async (id: string, payload: Partial<HrPayrollRecord>) => (await request<{ success: boolean; record: HrPayrollRecord }>(`/api/v1/hr/payroll/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).record,
   // 12. Onboarding
   getOnboardings: async () => (await request<{ success: boolean; onboardings: OnboardingJourney[] }>('/api/v1/onboardings')).onboardings,
   updateChecklistItem: async (journeyId: string, itemId: string, status: string) => (await request<{ success: boolean; onboarding: OnboardingJourney }>(`/api/v1/onboardings/${journeyId}/checklist/${itemId}`, {

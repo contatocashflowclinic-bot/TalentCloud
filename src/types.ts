@@ -166,6 +166,64 @@ export interface EmployeeTimelineEvent {
   tone?: 'info' | 'success' | 'warn' | 'danger';
   refId?: string;
 }
+
+export const HR_DOCUMENT_STATUSES = ['pending', 'valid', 'expired', 'archived'] as const;
+export type HrDocumentStatus = (typeof HR_DOCUMENT_STATUSES)[number];
+export interface HrDocument {
+  id: string;
+  employeeId: string;
+  name: string;
+  category: string;
+  issueDate?: string;
+  expiresAt?: string;
+  status: HrDocumentStatus;
+  fileName?: string;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdById?: string;
+  createdByName?: string;
+}
+
+export const HR_VACATION_STATUSES = ['accrued', 'scheduled', 'approved', 'in_progress', 'completed', 'cancelled'] as const;
+export type HrVacationStatus = (typeof HR_VACATION_STATUSES)[number];
+export interface HrVacationPeriod {
+  id: string;
+  employeeId: string;
+  acquisitionStart: string;
+  acquisitionEnd: string;
+  startDate?: string;
+  endDate?: string;
+  returnDate?: string;
+  days: number;
+  status: HrVacationStatus;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdById?: string;
+  createdByName?: string;
+}
+
+export const HR_PAYROLL_STATUSES = ['open', 'collecting', 'review', 'closed'] as const;
+export type HrPayrollStatus = (typeof HR_PAYROLL_STATUSES)[number];
+export interface HrPayrollRecord {
+  id: string;
+  employeeId: string;
+  period: string;
+  status: HrPayrollStatus;
+  admissionEvent: boolean;
+  vacationEvent: boolean;
+  leaveEvent: boolean;
+  overtimeNotes?: string;
+  variableNotes?: string;
+  notes?: string;
+  closedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdById?: string;
+  createdByName?: string;
+}
+
 // 3. DNA Organizacional
 export interface CulturePillar {
   id: string;
