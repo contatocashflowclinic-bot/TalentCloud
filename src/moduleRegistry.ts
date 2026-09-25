@@ -15,6 +15,7 @@ import {
   Rocket,
   TrendingUp,
   HeartHandshake,
+  UserCog,
   BarChart3,
   Globe
 } from 'lucide-react';
@@ -66,6 +67,7 @@ export const MODULE_SECTIONS: ModuleSection[] = [
     modules: [
       { id: 11, name: 'Proposta', icon: FileCheck, desc: 'Oferta e Aprovação' },
       { id: 12, name: 'Onboarding', icon: Rocket, desc: 'Checklist 30-60-90 dias' },
+      { id: 18, name: 'RH / Colaboradores', icon: UserCog, desc: 'Base mestre e historico' },
       { id: 13, name: 'Desenvolvimento', icon: TrendingUp, desc: 'PDI e Reuniões 1:1' },
       { id: 14, name: 'Retenção', icon: HeartHandshake, desc: 'eNPS & Risco de Turnover' },
       { id: 15, name: 'Indicadores', icon: BarChart3, desc: 'People Analytics' }

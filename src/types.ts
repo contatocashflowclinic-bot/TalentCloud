@@ -127,6 +127,45 @@ export interface TenantUser {
   permissions?: string[];
 }
 
+
+// RH / Colaboradores (base mestre)
+export const EMPLOYEE_STATUSES = ['active', 'onboarding', 'inactive'] as const;
+export type EmployeeStatus = (typeof EMPLOYEE_STATUSES)[number];
+export const EMPLOYEE_ORIGINS = ['hired_candidate', 'tenant_user', 'manual'] as const;
+export type EmployeeOrigin = (typeof EMPLOYEE_ORIGINS)[number];
+
+export interface Employee {
+  id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  status: EmployeeStatus;
+  origin: EmployeeOrigin;
+  candidateId?: string;
+  userId?: string;
+  onboardingId?: string;
+  developmentId?: string;
+  positionId?: string;
+  jobTitle: string;
+  departmentId?: string;
+  managerId?: string;
+  hireDate?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdById?: string;
+  createdByName?: string;
+}
+
+export type EmployeeTimelineKind = 'hire' | 'onboarding' | 'admission' | 'development' | 'one_on_one' | 'retention' | 'profile';
+export interface EmployeeTimelineEvent {
+  id: string;
+  kind: EmployeeTimelineKind;
+  at: string;
+  title: string;
+  description?: string;
+  tone?: 'info' | 'success' | 'warn' | 'danger';
+  refId?: string;
+}
 // 3. DNA Organizacional
 export interface CulturePillar {
   id: string;
@@ -783,6 +822,7 @@ export interface OnboardingJourney {
   status: 'preparing' | 'in_progress' | 'completed';
   checklists: OnboardingChecklistItem[];
   admission: AdmissionItem[];
+  employeeId?: string;
   milestones30DaysDone: boolean;
   milestones60DaysDone: boolean;
   milestones90DaysDone: boolean;
@@ -847,6 +887,7 @@ export interface CollaboratorDevelopment {
   lastReviewDate: string;
   /** Date agreed for the next 1:1 ('' when nothing is scheduled). */
   nextReviewDate: string;
+  employeeId?: string;
 }
 
 /** Someone who can get a PDI: a hire in onboarding or a member of the organization without a PDI yet. */
@@ -986,6 +1027,7 @@ export interface TurnoverRiskAlert {
   updatedAt?: string;
   resolvedAt?: string;
   resolutionNote?: string;
+  employeeId?: string;
 }
 
 /** Someone an alert can be opened for: a PDI collaborator, a hire in onboarding or an active member. */

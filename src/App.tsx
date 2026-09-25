@@ -31,6 +31,7 @@ const ModuleAIEvaluation = lazy(() => import('./components/modules/ModuleAIEvalu
 const ModuleInterviews = lazy(() => import('./components/modules/ModuleInterviews.js').then(m => ({ default: m.ModuleInterviews })));
 const ModuleOffers = lazy(() => import('./components/modules/ModuleOffers.js').then(m => ({ default: m.ModuleOffers })));
 const ModuleOnboarding = lazy(() => import('./components/modules/ModuleOnboarding.js').then(m => ({ default: m.ModuleOnboarding })));
+const ModuleHR = lazy(() => import('./components/modules/ModuleHR.js').then(m => ({ default: m.ModuleHR })));
 const ModuleDevelopment = lazy(() => import('./components/modules/ModuleDevelopment.js').then(m => ({ default: m.ModuleDevelopment })));
 const ModuleRetention = lazy(() => import('./components/modules/ModuleRetention.js').then(m => ({ default: m.ModuleRetention })));
 const ModuleIndicators = lazy(() => import('./components/modules/ModuleIndicators.js').then(m => ({ default: m.ModuleIndicators })));
@@ -217,6 +218,7 @@ const MainLayout: React.FC = () => {
               {activeModule === 10 && <ModuleInterviews />}
               {activeModule === 11 && <ModuleOffers />}
               {activeModule === 12 && <ModuleOnboarding />}
+              {activeModule === 18 && <ModuleHR />}
               {activeModule === 13 && <ModuleDevelopment initialRecordId={targetDevelopmentId} />}
               {activeModule === 14 && <ModuleRetention onOpenDevelopment={handleNavigateToDevelopment} />}
               {activeModule === 15 && <ModuleIndicators />}

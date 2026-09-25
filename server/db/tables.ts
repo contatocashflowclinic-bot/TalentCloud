@@ -9,7 +9,13 @@ export const TABLES = {
       'grantedPermissions', 'revokedPermissions'
     ]
   },
-  departments: {
+  employees: {
+    table: 'employees',
+    columns: [
+      'id', 'name', 'email', 'phone', 'status', 'origin', 'candidateId', 'userId', 'onboardingId', 'developmentId',
+      'positionId', 'jobTitle', 'departmentId', 'managerId', 'hireDate', 'createdAt', 'updatedAt', 'createdById', 'createdByName'
+    ]
+  },  departments: {
     table: 'departments',
     columns: ['id', 'name', 'code', 'parentId', 'managerId', 'costCenter', 'headcountTarget', 'currentHeadcount']
   },

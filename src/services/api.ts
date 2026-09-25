@@ -41,6 +41,8 @@ import {
   AgendaEvent,
   AgendaDirectoryMember,
   AuthUser,
+  Employee,
+  EmployeeTimelineEvent,
   AiSettings,
   AiUsageOverview,
   AiUsagePeriod,
@@ -673,7 +675,18 @@ export const TenantApi = {
     body: JSON.stringify(payload)
   })).onboarding,
   removeChecklistItem: async (journeyId: string, itemId: string) => (await request<{ success: boolean; onboarding: OnboardingJourney }>(`/api/v1/onboardings/${journeyId}/checklist/${itemId}`, { method: 'DELETE' })).onboarding,
-
+  // 18. RH / Colaboradores
+  getEmployees: async () => (await request<{ success: boolean; employees: Employee[] }>('/api/v1/hr/employees')).employees,
+  getEmployee: async (id: string) => (await request<{ success: boolean; employee: Employee }>(`/api/v1/hr/employees/${id}`)).employee,
+  createEmployee: async (payload: Partial<Employee>) => (await request<{ success: boolean; employee: Employee }>('/api/v1/hr/employees', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })).employee,
+  updateEmployee: async (id: string, payload: Partial<Employee>) => (await request<{ success: boolean; employee: Employee }>(`/api/v1/hr/employees/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  })).employee,
+  getEmployeeTimeline: async (id: string) => (await request<{ success: boolean; events: EmployeeTimelineEvent[] }>(`/api/v1/hr/employees/${id}/timeline`)).events,
   // 12. Onboarding
   getOnboardings: async () => (await request<{ success: boolean; onboardings: OnboardingJourney[] }>('/api/v1/onboardings')).onboardings,
   updateChecklistItem: async (journeyId: string, itemId: string, status: string) => (await request<{ success: boolean; onboarding: OnboardingJourney }>(`/api/v1/onboardings/${journeyId}/checklist/${itemId}`, {

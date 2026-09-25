@@ -14,6 +14,8 @@ import {
   ClimateSurveyResponse,
   CollaboratorDevelopment,
   Department,
+  Employee,
+  EmployeeTimelineEvent,
   DevelopmentLookups,
   DevelopmentPerson,
   InterviewSession,
@@ -100,6 +102,7 @@ export interface ScreeningMaterializeResult {
  */
 export class TenantRepository {
   readonly users: Entity<TenantUser>;
+  readonly employees: Entity<Employee>;
   readonly departments: Entity<Department>;
   readonly positions: Entity<JobPosition>;
   readonly openings: Entity<JobOpening>;
@@ -123,6 +126,7 @@ export class TenantRepository {
 
   constructor(public readonly tenantId: string) {
     this.users = new Entity(TABLES.users, tenantId);
+    this.employees = new Entity(TABLES.employees, tenantId);
     this.departments = new Entity(TABLES.departments, tenantId);
     this.positions = new Entity(TABLES.positions, tenantId);
     this.openings = new Entity(TABLES.openings, tenantId);
@@ -145,6 +149,89 @@ export class TenantRepository {
     this.resumeScreenings = new Entity(TABLES.resumeScreenings, tenantId);
   }
 
+
+  // ---- RH / Employees ---------------------------------------------------------
+  async listEmployees(db: Queryable = getPool()): Promise<Employee[]> {
+    return this.employees.list(db);
+  }
+
+  async getEmployee(id: string, db: Queryable = getPool()): Promise<Employee | undefined> {
+    return this.employees.get(id, db);
+  }
+
+  async employeeTimeline(employeeId: string, db: Queryable = getPool()): Promise<EmployeeTimelineEvent[]> {
+    const employee = await this.employees.get(employeeId, db);
+    if (!employee) throw new NotFoundError('Colaborador nao encontrado.');
+    const events: EmployeeTimelineEvent[] = [];
+    const add = (event: EmployeeTimelineEvent) => events.push(event);
+    add({ id: `profile-${employee.id}`, kind: 'profile', at: employee.createdAt, title: 'Perfil de colaborador criado', description: employee.createdByName ? `Criado por ${employee.createdByName}.` : undefined });
+
+    const [offers, onboardings, developments, alerts] = await Promise.all([
+      this.offers.list(db), this.onboardings.list(db), this.development.list(db), this.turnoverAlerts.list(db)
+    ]);
+    for (const offer of offers.filter(o => employee.candidateId && o.candidateId === employee.candidateId && o.status === 'accepted')) {
+      add({ id: `hire-${offer.id}`, kind: 'hire', at: offer.respondedAt ?? employee.hireDate ?? employee.createdAt, title: 'Proposta aceita', description: `Contrato ${offer.contractType} com inicio em ${offer.startDate}.`, tone: 'success', refId: offer.id });
+    }
+    const relatedOnboardings = onboardings.filter(o => o.employeeId === employee.id || o.id === employee.onboardingId || (employee.candidateId && o.candidateId === employee.candidateId));
+    for (const journey of relatedOnboardings) {
+      add({ id: `onboarding-${journey.id}`, kind: 'onboarding', at: journey.hireDate, title: 'Jornada de onboarding aberta', description: journey.notes || journey.jobTitle, tone: journey.status === 'completed' ? 'success' : 'info', refId: journey.id });
+      for (const item of journey.admission ?? []) {
+        for (const h of item.history ?? []) {
+          add({ id: `admission-${item.id}-${h.at}`, kind: 'admission', at: h.at, title: item.title, description: h.action, tone: item.status === 'rejected' ? 'danger' : item.status === 'approved' ? 'success' : 'info', refId: item.id });
+        }
+      }
+    }
+    const relatedDevelopment = developments.filter(d => d.employeeId === employee.id || d.id === employee.developmentId || d.collaboratorId === employee.candidateId || d.collaboratorId === employee.userId);
+    for (const record of relatedDevelopment) {
+      add({ id: `development-${record.id}`, kind: 'development', at: record.hireDate || employee.createdAt, title: 'PDI criado', description: record.jobTitle, refId: record.id });
+      for (const m of record.oneOnOnes ?? []) {
+        add({ id: `one-on-one-${m.id}`, kind: 'one_on_one', at: `${m.date}T12:00:00.000Z`, title: '1:1 registrada', description: m.keyTakeaways, refId: m.id });
+      }
+    }
+    const relatedAlerts = alerts.filter(a => a.employeeId === employee.id || a.collaboratorId === employee.candidateId || a.collaboratorId === employee.userId);
+    for (const alert of relatedAlerts) {
+      add({ id: `retention-${alert.id}`, kind: 'retention', at: alert.createdAt ?? employee.createdAt, title: `Alerta de retenção: ${alert.riskLevel}`, description: alert.lastActionTaken || alert.earlyWarningSignals.join(', '), tone: alert.status === 'resolved' ? 'success' : alert.status === 'dismissed' || alert.status === 'left' ? 'warn' : 'danger', refId: alert.id });
+      for (const h of alert.history ?? []) {
+        add({ id: `retention-${alert.id}-${h.at}`, kind: 'retention', at: h.at, title: 'Historico do alerta', description: h.text, refId: alert.id });
+      }
+    }
+    return events.sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  }
+
+  private async employeeBy(field: 'candidate_id' | 'user_id', value: string, db: Queryable): Promise<Employee | undefined> {
+    const { rows } = await db.query(`select * from public.employees where tenant_id = $1 and ${field} = $2 order by seq asc limit 1`, [this.tenantId, value]);
+    return rows[0] ? fromRow<Employee>({}, rows[0]) : undefined;
+  }
+
+  private async ensureEmployeeForHire(
+    offer: JobOffer,
+    candidate: Candidate | undefined,
+    job: JobOpening | undefined,
+    position: JobPosition | undefined,
+    links: { onboardingId: string; developmentId?: string },
+    tx: Queryable
+  ): Promise<Employee> {
+    const existing = await this.employeeBy('candidate_id', offer.candidateId, tx);
+    const started = offer.startDate <= new Date().toISOString().split('T')[0];
+    const patch = {
+      name: candidate?.name ?? 'Candidato',
+      email: candidate?.email || undefined,
+      phone: candidate?.phone || undefined,
+      status: started ? 'active' : 'onboarding',
+      origin: 'hired_candidate',
+      candidateId: offer.candidateId,
+      onboardingId: links.onboardingId,
+      developmentId: links.developmentId,
+      positionId: position?.id,
+      jobTitle: position?.title ?? job?.title ?? 'Cargo a definir',
+      departmentId: job?.departmentId,
+      managerId: job?.hiringManagerId,
+      hireDate: offer.startDate,
+      updatedAt: new Date().toISOString()
+    };
+    if (existing) return (await this.employees.update(existing.id, patch, tx))!;
+    return this.employees.insert({ id: newId('emp'), ...patch, createdAt: patch.updatedAt, createdByName: 'Sistema' }, tx);
+  }
   // ---- DNA (one row per tenant) -------------------------------------
   async getDna(db: Queryable = getPool()): Promise<OrganizationalDNA | undefined> {
     const { rows } = await db.query('select * from public.organizational_dna where tenant_id = $1', [this.tenantId]);
@@ -668,13 +755,19 @@ export class TenantRepository {
       this.candidates.get(offer.candidateId, tx),
       this.openings.get(offer.jobOpeningId, tx)
     ]);
+    const position = job?.positionId ? await this.positions.get(job.positionId, tx) : undefined;
     const started = offer.startDate <= new Date().toISOString().split('T')[0];
+    const onboardingId = `onb-${offer.id}`;
+    const developmentId = `dev-${offer.id}`;
+    const hasDevelopment = (await this.development.list(tx)).some(r => r.collaboratorId === offer.candidateId);
+    const employee = await this.ensureEmployeeForHire(offer, candidate, job, position, { onboardingId, developmentId: hasDevelopment ? undefined : developmentId }, tx);
 
     await this.onboardings.insert({
-      id: `onb-${offer.id}`,
+      id: onboardingId,
+      employeeId: employee.id,
       candidateId: offer.candidateId,
       candidateName: candidate?.name ?? 'Candidato',
-      jobTitle: job?.title ?? 'Cargo a definir',
+      jobTitle: position?.title ?? job?.title ?? 'Cargo a definir',
       departmentId: job?.departmentId,
       mentorId: job?.hiringManagerId,
       hireDate: offer.startDate,
@@ -684,14 +777,14 @@ export class TenantRepository {
       milestones30DaysDone: false,
       milestones60DaysDone: false,
       milestones90DaysDone: false,
-      notes: `Jornada aberta automaticamente apÃ³s o aceite da proposta (${offer.contractType}).`
+      notes: `Jornada aberta automaticamente após o aceite da proposta (${offer.contractType}).`
     }, tx);
 
     // Development: the hire gets an empty PDI, so goals and 1:1s can start as soon as the person joins.
-    if (!(await this.development.list(tx)).some(r => r.collaboratorId === offer.candidateId)) {
-      const position = job?.positionId ? await this.positions.get(job.positionId, tx) : undefined;
+    if (!hasDevelopment) {
       await this.development.insert({
-        id: `dev-${offer.id}`,
+        id: developmentId,
+        employeeId: employee.id,
         collaboratorId: offer.candidateId,
         collaboratorName: candidate?.name ?? 'Candidato',
         jobTitle: position?.title ?? job?.title ?? 'Cargo a definir',
@@ -705,7 +798,6 @@ export class TenantRepository {
         nextReviewDate: ''
       }, tx);
     }
-
     // Selection pipeline: the candidate's application ends on the last stage of its own funnel.
     // No stage template in this codebase actually has type 'hired' (the 5-stage default ends in 'proposal'), so
     // looking for one always failed silently: the application kept its `status` correctly as 'hired', but

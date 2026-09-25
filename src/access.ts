@@ -40,6 +40,7 @@ export const ROUTINES: Routine[] = [
   { key: 'interviews', label: 'Entrevistas', description: 'Agendamento e preenchimento de scorecards.', moduleId: 10, actions: ['view', 'create', 'edit'] },
   { key: 'offers', label: 'Propostas', description: 'Ofertas, aprovação e aceite.', moduleId: 11, actions: ['view', 'create', 'edit'] },
   { key: 'onboarding', label: 'Onboarding', description: 'Checklists de integração.', moduleId: 12, actions: ['view', 'edit'] },
+  { key: 'hr', label: 'RH / Colaboradores', description: 'Base mestre de colaboradores e historico do ciclo de vida.', moduleId: 18, actions: ['view', 'create', 'edit'] },
   { key: 'development', label: 'Desenvolvimento', description: 'PDI e metas.', moduleId: 13, actions: ['view', 'edit'] },
   { key: 'retention', label: 'Retenção', description: 'Alertas de turnover e gestão das pesquisas de clima.', moduleId: 14, actions: ['view', 'edit'] },
   { key: 'retention_all', label: 'Alertas de toda a organização', description: 'Ver todos os alertas de risco de turnover. Sem esta permissão, a pessoa vê só os alertas da própria equipe (que ela gerencia, dos quais é responsável ou que ela abriu).', moduleId: 14, actions: ['view'] },
@@ -111,7 +112,7 @@ export const ALL_ROUTINE_KEYS: string[] = ROUTINES.map(r => r.key);
 export const PLAN_ROUTINES: Record<'Starter' | 'Scale' | 'Enterprise', string[]> = {
   Starter: [
     ...CORE_ROUTINES, 'dna', 'structure', 'positions', 'openings', 'candidates', 'selection', 'interviews', 'offers',
-    'onboarding', 'careers', 'agenda'
+    'onboarding', 'hr', 'careers', 'agenda'
   ],
   Scale: ALL_ROUTINE_KEYS,
   Enterprise: ALL_ROUTINE_KEYS
@@ -162,7 +163,7 @@ export const DEFAULT_PROFILES: DefaultProfile[] = [
     permissions: normalizePermissions([
       ...BASE_VIEW, 'users:view', 'openings:create', 'openings:edit', 'candidates:create', 'candidates:edit', 'selection:create', 'selection:edit',
       'ai_evaluation:create', 'ai_evaluation:edit', 'interviews:create', 'interviews:edit', 'offers:create',
-      'offers:edit', 'onboarding:edit', 'development:edit', 'retention:edit', 'retention_all:view', 'indicators:view', 'careers:view', ...BASE_AGENDA
+      'offers:edit', 'onboarding:edit', 'hr:create', 'hr:edit', 'development:edit', 'retention:edit', 'retention_all:view', 'indicators:view', 'careers:view', ...BASE_AGENDA
     ]).permissions
   },
   {
@@ -172,7 +173,7 @@ export const DEFAULT_PROFILES: DefaultProfile[] = [
     isAdmin: false,
     permissions: normalizePermissions([
       ...BASE_VIEW, 'users:view', 'candidates:view', 'selection:edit', 'ai_evaluation:edit', 'interviews:edit',
-      'offers:edit', 'onboarding:edit', 'development:edit', 'retention:edit', 'indicators:view', 'careers:view', ...BASE_AGENDA
+      'offers:edit', 'onboarding:edit', 'hr:create', 'hr:edit', 'development:edit', 'retention:edit', 'indicators:view', 'careers:view', ...BASE_AGENDA
     ]).permissions
   },
   {

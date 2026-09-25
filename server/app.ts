@@ -37,9 +37,12 @@ import { ALERT_STATUS_LABEL, isActiveAlert } from '../src/retention.js';
 import type { NextMeetingRequest } from './tenant/TenantRepository.js';
 import {
   CANDIDATE_DECLARED_FIELDS,
+  EMPLOYEE_ORIGINS,
+  EMPLOYEE_STATUSES,
   OFFER_DOCUMENT_CATEGORIES,
   type AdmissionItem,
   type CollaboratorDevelopment,
+  type Employee,
   type OfferDocumentCategory,
   type OneOnOneMeeting,
   type OnboardingChecklistItem,
@@ -733,6 +736,104 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
   // ---------------------------------------------------------
   // MÓDULO 3: DNA Organizacional
   // ---------------------------------------------------------
+  // MODULO 18: RH / Colaboradores (base mestre)
+  const employeePatch = async (body: Record<string, unknown>, db: TenantConnectionContext['db'], partial: boolean) => {
+    const out: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+    const has = (key: string) => body[key] !== undefined;
+    if (!partial || has('name')) out.name = required(body.name, 'name');
+    if (has('email')) {
+      const email = String(body.email ?? '').trim().toLowerCase();
+      if (email && !/^\S+@\S+\.\S+$/.test(email)) throw new ValidationError('E-mail invalido.');
+      out.email = email || null;
+    }
+    if (has('phone')) out.phone = String(body.phone ?? '').trim() || null;
+    if (!partial || has('status')) {
+      const status = String(body.status ?? 'active');
+      if (!(EMPLOYEE_STATUSES as readonly string[]).includes(status)) throw new ValidationError('Status de colaborador invalido.');
+      out.status = status;
+    }
+    if (!partial || has('origin')) {
+      const origin = String(body.origin ?? 'manual');
+      if (!(EMPLOYEE_ORIGINS as readonly string[]).includes(origin)) throw new ValidationError('Origem de colaborador invalida.');
+      out.origin = origin;
+    }
+    if (has('candidateId')) {
+      const id = String(body.candidateId ?? '').trim();
+      if (id && !(await db.candidates.get(id))) throw new ValidationError('Candidato nao encontrado nesta organizacao.');
+      out.candidateId = id || null;
+    }
+    if (has('userId')) {
+      const id = String(body.userId ?? '').trim();
+      if (id && !(await db.users.get(id))) throw new ValidationError('Usuario nao encontrado nesta organizacao.');
+      out.userId = id || null;
+    }
+    if (has('onboardingId')) {
+      const id = String(body.onboardingId ?? '').trim();
+      if (id && !(await db.onboardings.get(id))) throw new ValidationError('Jornada de onboarding nao encontrada nesta organizacao.');
+      out.onboardingId = id || null;
+    }
+    if (has('developmentId')) {
+      const id = String(body.developmentId ?? '').trim();
+      if (id && !(await db.development.get(id))) throw new ValidationError('PDI nao encontrado nesta organizacao.');
+      out.developmentId = id || null;
+    }
+    if (has('positionId')) {
+      const id = String(body.positionId ?? '').trim();
+      const position = id ? await db.positions.get(id) : undefined;
+      if (id && (!position || position.status === 'archived')) throw new ValidationError('Cargo nao encontrado no cadastro de Cargos desta organizacao (ou arquivado).');
+      out.positionId = id || null;
+      if (position) out.jobTitle = position.title;
+    }
+    if (!partial && out.jobTitle === undefined) out.jobTitle = String(body.jobTitle ?? '').trim() || 'Sem cargo cadastrado';
+    if (has('departmentId')) {
+      const id = String(body.departmentId ?? '').trim();
+      if (id && !(await db.departments.get(id))) throw new ValidationError('Departamento nao encontrado nesta organizacao.');
+      out.departmentId = id || null;
+    }
+    if (has('managerId')) {
+      const id = String(body.managerId ?? '').trim();
+      if (id && !(await db.users.get(id))) throw new ValidationError('Gestor nao encontrado nesta organizacao.');
+      out.managerId = id || null;
+    }
+    if (has('hireDate')) {
+      const value = String(body.hireDate ?? '').trim();
+      if (value && !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new ValidationError('Data de admissao invalida.');
+      out.hireDate = value || null;
+    }
+    return out;
+  };
+
+  app.get('/api/v1/hr/employees', can('hr:view'), h(async (req, res) => {
+    res.json({ success: true, employees: await ctx(req).db.listEmployees() });
+  }));
+
+  app.post('/api/v1/hr/employees', can('hr:create'), h(async (req, res) => {
+    const { db, tenant } = ctx(req);
+    const patch = await employeePatch(req.body ?? {}, db, false);
+    const employee = await db.employees.insert({ id: newId('emp'), ...patch, createdAt: patch.updatedAt, createdById: req.auth!.id, createdByName: req.auth!.name }) as Employee;
+    await logAudit({ tenantId: tenant.id, userId: req.auth!.id, userName: req.auth!.name, action: 'EMPLOYEE_CREATED', category: 'PEOPLE_DATA', details: `Colaborador criado: ${employee.name}.`, ipAddress: req.ip || '127.0.0.1', databaseAffected: tenant.dbConfig.dbName });
+    res.status(201).json({ success: true, employee });
+  }));
+
+  app.get('/api/v1/hr/employees/:id', can('hr:view'), h(async (req, res) => {
+    const employee = await ctx(req).db.getEmployee(req.params.id);
+    if (!employee) throw new NotFoundError('Colaborador nao encontrado.');
+    res.json({ success: true, employee });
+  }));
+
+  app.patch('/api/v1/hr/employees/:id', can('hr:edit'), h(async (req, res) => {
+    const { db, tenant } = ctx(req);
+    const current = await db.getEmployee(req.params.id);
+    if (!current) throw new NotFoundError('Colaborador nao encontrado.');
+    const patch = await employeePatch(req.body ?? {}, db, true);
+    const employee = await db.employees.update(req.params.id, patch) as Employee;
+    await logAudit({ tenantId: tenant.id, userId: req.auth!.id, userName: req.auth!.name, action: 'EMPLOYEE_UPDATED', category: 'PEOPLE_DATA', details: `Colaborador atualizado: ${employee.name}.`, ipAddress: req.ip || '127.0.0.1', databaseAffected: tenant.dbConfig.dbName });
+    res.json({ success: true, employee });
+  }));
+
+  app.get('/api/v1/hr/employees/:id/timeline', can('hr:view'), h(async (req, res) => {
+    res.json({ success: true, events: await ctx(req).db.employeeTimeline(req.params.id) });
+  }));
   app.get('/api/v1/dna', can('dna:view'), h(async (req, res) => {
     const dna = await ctx(req).db.getDna();
     if (!dna) throw new NotFoundError('DNA organizacional não configurado.');
