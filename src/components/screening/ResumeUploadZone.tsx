@@ -40,7 +40,20 @@ export const ResumeUploadZone: React.FC<{ jobId: string; disabled?: boolean; onF
     try {
       patch(item.key, { status: 'uploading' });
       const { file: uploaded } = await TenantApi.uploadResume(jobId, item.file);
-      patch(item.key, { status: 'queued', message: `Na fila para análise (${uploaded.fileName})` });
+      patch(item.key, { status: 'analyzing', message: `Lendo ${uploaded.fileName}` });
+      const analyzed = await TenantApi.analyzeResume(uploaded.id);
+      if (analyzed.file.status === 'analyzed') {
+        patch(item.key, { status: 'done', message: analyzed.file.fileName });
+      } else if (analyzed.file.status === 'needs_data') {
+        patch(item.key, { status: 'needs_data', message: analyzed.file.failureMessage });
+      } else if (analyzed.file.status === 'failed') {
+        patch(item.key, { status: 'error', message: analyzed.file.failureMessage || 'Não foi possível ler este currículo.' });
+      } else {
+        patch(item.key, {
+          status: 'queued',
+          message: analyzed.notice || `Na fila para análise (${analyzed.file.fileName})`
+        });
+      }
     } catch (err) {
       patch(item.key, { status: 'error', message: err instanceof ApiError ? err.message : 'Falha ao enviar este arquivo.' });
     }

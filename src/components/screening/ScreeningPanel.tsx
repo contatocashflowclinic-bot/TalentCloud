@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Filter, CheckSquare, Square, ChevronRight, PauseCircle, Archive, Trash2, Loader2, AlertTriangle, UserCheck, CheckCircle2, X } from 'lucide-react';
+import { Filter, CheckSquare, Square, ChevronRight, PauseCircle, Archive, Trash2, Loader2, AlertTriangle, UserCheck, CheckCircle2, RotateCw, X } from 'lucide-react';
 import { TenantApi, ApiError } from '../../services/api.js';
 import type { JobOpening, ScreeningBoard, ScreeningRow, ScreeningDecisionAction } from '../../types.js';
 import { FLAG_LABEL, matchesFilter, type ScreeningFilter } from '../../screening.js';
@@ -52,6 +52,7 @@ export const ScreeningPanel: React.FC<{
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [busyAction, setBusyAction] = useState(false);
+  const [analyzingPending, setAnalyzingPending] = useState<Set<string>>(new Set());
   const [feedback, setFeedback] = useState<{ tone: 'success' | 'warn'; message: string } | null>(null);
 
   const load = async () => {
@@ -98,6 +99,28 @@ export const ScreeningPanel: React.FC<{
 
   const selectedRows = rows.filter(r => selected.has(r.applicationId));
   const selectedFiles = selectedRows.filter(row => row.file);
+
+  const analyzePending = async (fileId: string, force = false) => {
+    setAnalyzingPending(prev => new Set(prev).add(fileId));
+    setFeedback(null);
+    try {
+      const result = await TenantApi.analyzeResume(fileId, force);
+      if (result.file.status === 'analyzed') {
+        setFeedback({ tone: 'success', message: `Curriculo lido: ${result.file.fileName}.` });
+      } else if (result.file.status === 'needs_data') {
+        setFeedback({ tone: 'warn', message: 'A leitura terminou, mas e preciso completar nome/e-mail para criar a candidatura.' });
+      } else if (result.file.status === 'failed') {
+        setFeedback({ tone: 'warn', message: result.file.failureMessage || 'Nao foi possivel ler este curriculo.' });
+      } else {
+        setFeedback({ tone: 'warn', message: result.notice || 'O arquivo continua aguardando disponibilidade da IA.' });
+      }
+      refresh();
+    } catch (err) {
+      setFeedback({ tone: 'warn', message: err instanceof ApiError ? err.message : 'Falha ao iniciar a leitura deste curriculo.' });
+    } finally {
+      setAnalyzingPending(prev => { const next = new Set(prev); next.delete(fileId); return next; });
+    }
+  };
 
   const runDecision = async (action: ScreeningDecisionAction, reason?: string) => {
     if (selectedRows.length === 0) return;
@@ -259,7 +282,13 @@ export const ScreeningPanel: React.FC<{
             {board.pending.map(f => (
               <li key={f.id} className="flex items-center justify-between text-slate-500">
                 <span className="truncate">{f.fileName}</span>
-                <PendingBadge status={f.status} failureMessage={f.failureMessage} onComplete={f.status === 'needs_data' ? () => setOpenFileId(f.id) : undefined} />
+                <PendingBadge
+                  status={f.status}
+                  failureMessage={f.failureMessage}
+                  busy={analyzingPending.has(f.id)}
+                  onComplete={f.status === 'needs_data' ? () => setOpenFileId(f.id) : undefined}
+                  onAnalyze={canUpload && (f.status === 'uploaded' || f.status === 'failed') ? () => void analyzePending(f.id, f.status === 'failed') : undefined}
+                />
               </li>
             ))}
           </ul>
@@ -360,7 +389,14 @@ const ScreeningTableRow: React.FC<{
   );
 };
 
-const PendingBadge: React.FC<{ status: string; failureMessage?: string; onComplete?: () => void }> = ({ status, failureMessage, onComplete }) => {
+const PendingBadge: React.FC<{
+  status: string;
+  failureMessage?: string;
+  busy?: boolean;
+  onComplete?: () => void;
+  onAnalyze?: () => void;
+}> = ({ status, failureMessage, busy, onComplete, onAnalyze }) => {
+  if (busy) return <span className="flex items-center gap-1 text-indigo-600"><Loader2 className="w-3.5 h-3.5 animate-spin" />Lendo...</span>;
   if (status === 'needs_data' && onComplete) {
     return (
       <button onClick={onComplete} className="text-amber-600 hover:underline flex items-center gap-1 font-semibold">
@@ -368,7 +404,14 @@ const PendingBadge: React.FC<{ status: string; failureMessage?: string; onComple
       </button>
     );
   }
-  return <span title={failureMessage} className="text-slate-400">{status === 'failed' ? 'Não foi possível ler' : status === 'analyzing' ? 'Lendo…' : 'Aguardando'}</span>;
+  if (onAnalyze) {
+    return (
+      <button onClick={onAnalyze} title={failureMessage} className="text-indigo-600 hover:underline flex items-center gap-1 font-semibold">
+        <RotateCw className="w-3 h-3" /> {status === 'failed' ? 'Tentar de novo' : 'Ler agora'}
+      </button>
+    );
+  }
+  return <span title={failureMessage} className="text-slate-400">{status === 'failed' ? 'Nao foi possivel ler' : status === 'analyzing' ? 'Lendo...' : 'Aguardando'}</span>;
 };
 
 const ArchiveReasonModal: React.FC<{ count: number; busy: boolean; onCancel: () => void; onConfirm: (reason: string) => void }> = ({ count, busy, onCancel, onConfirm }) => {
