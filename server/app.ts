@@ -793,8 +793,22 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
     }
     if (has('userId')) {
       const id = String(body.userId ?? '').trim();
-      if (id && !(await db.users.get(id))) throw new ValidationError('Usuario nao encontrado nesta organizacao.');
+      const linkedUser = id ? await db.users.get(id) : undefined;
+      if (id && !linkedUser) throw new ValidationError('Usuário não encontrado nesta organização.');
       out.userId = id || null;
+      if (linkedUser) {
+        if (!has('name')) out.name = linkedUser.name;
+        if (!has('email')) out.email = linkedUser.email;
+        if (!has('departmentId') && linkedUser.departmentId) out.departmentId = linkedUser.departmentId;
+        if (!has('positionId') && linkedUser.positionId) {
+          const userPosition = await db.positions.get(linkedUser.positionId);
+          if (userPosition && userPosition.status !== 'archived') {
+            out.positionId = userPosition.id;
+            out.jobTitle = userPosition.title;
+            if (!has('departmentId')) out.departmentId = userPosition.departmentId;
+          }
+        }
+      }
     }
     if (has('onboardingId')) {
       const id = String(body.onboardingId ?? '').trim();
@@ -811,7 +825,10 @@ export function createApp({ isProd }: { isProd: boolean }): express.Express {
       const position = id ? await db.positions.get(id) : undefined;
       if (id && (!position || position.status === 'archived')) throw new ValidationError('Cargo nao encontrado no cadastro de Cargos desta organizacao (ou arquivado).');
       out.positionId = id || null;
-      if (position) out.jobTitle = position.title;
+      if (position) {
+        out.jobTitle = position.title;
+        if (!has('departmentId')) out.departmentId = position.departmentId;
+      }
     }
     if (!partial && out.jobTitle === undefined) out.jobTitle = String(body.jobTitle ?? '').trim() || 'Sem cargo cadastrado';
     if (has('departmentId')) {

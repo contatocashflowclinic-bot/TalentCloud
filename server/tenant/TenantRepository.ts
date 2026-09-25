@@ -86,6 +86,21 @@ export interface NextMeetingRequest {
 /** Cap on the templates an organization keeps (the system library does not count). */
 const MAX_ORG_TEMPLATES = 50;
 
+function addYearsDate(date: string, years: number, subtractDays = 0): string {
+  const d = new Date(date + 'T00:00:00.000Z');
+  d.setUTCFullYear(d.getUTCFullYear() + years);
+  if (subtractDays) d.setUTCDate(d.getUTCDate() - subtractDays);
+  return d.toISOString().slice(0, 10);
+}
+
+function currentPeriod(): string {
+  return new Date().toISOString().slice(0, 7);
+}
+
+function samePeriod(date: string | undefined, period: string): boolean {
+  return !!date && date.slice(0, 7) === period;
+}
+
 const INDICATOR_FIELDS = [
   'period', 'timeToHireDays', 'costPerHire', 'earlyTurnover90DaysRate', 'averageCulturalFit', 'openPositionsCount',
   'totalHiresThisQuarter', 'retentionRate12Months', 'candidateNPS', 'recruitmentFunnel'
@@ -160,7 +175,33 @@ export class TenantRepository {
 
 
   // ---- RH / Employees ---------------------------------------------------------
+  private async reconcileEmployeesFromUsers(db: Queryable = getPool()): Promise<void> {
+    const [employees, users, positions] = await Promise.all([this.employees.list(db), this.users.list(db), this.positions.list(db)]);
+    const byUser = new Map(employees.filter(e => e.userId).map(e => [e.userId!, e]));
+    const now = new Date().toISOString();
+    for (const user of users.filter(u => u.active)) {
+      const position = user.positionId ? positions.find(p => p.id === user.positionId) : undefined;
+      const patch = {
+        name: user.name,
+        email: user.email,
+        status: 'active',
+        origin: 'tenant_user',
+        userId: user.id,
+        positionId: user.positionId || undefined,
+        jobTitle: position?.title ?? user.jobTitle ?? 'Sem cargo cadastrado',
+        departmentId: user.departmentId || position?.departmentId || undefined,
+        updatedAt: now
+      };
+      const current = byUser.get(user.id);
+      if (!current) {
+        await this.employees.insert({ id: newId('emp'), ...patch, createdAt: now, createdByName: 'Sistema' }, db);
+      } else if (current.origin === 'tenant_user') {
+        await this.employees.update(current.id, patch, db);
+      }
+    }
+  }
   async listEmployees(db: Queryable = getPool()): Promise<Employee[]> {
+    await this.reconcileEmployeesFromUsers(db);
     return this.employees.list(db);
   }
 
@@ -168,21 +209,86 @@ export class TenantRepository {
     return this.employees.get(id, db);
   }
 
+  private async ensureHrOperationalBaseline(db: Queryable = getPool()): Promise<void> {
+    const [employees, vacations, payroll] = await Promise.all([this.employees.list(db), this.hrVacations.list(db), this.hrPayroll.list(db)]);
+    const now = new Date().toISOString();
+    for (const employee of employees.filter(e => e.status !== 'inactive')) {
+      if (employee.hireDate && !vacations.some(v => v.employeeId === employee.id)) {
+        const acquisitionStart = employee.hireDate;
+        await db.query(
+          `insert into public.hr_vacation_periods
+             (tenant_id, id, employee_id, acquisition_start, acquisition_end, days, status, notes, created_at, updated_at, created_by_name)
+           values ($1, $2, $3, $4, $5, 30, 'accrued', 'Criado automaticamente a partir da data de admissão.', $6, $6, 'Sistema')
+           on conflict (tenant_id, employee_id, acquisition_start, acquisition_end) do nothing`,
+          [this.tenantId, newId('vac'), employee.id, acquisitionStart, addYearsDate(acquisitionStart, 1, 1), now]
+        );
+      }
+      const period = currentPeriod();
+      if (!payroll.some(p => p.employeeId === employee.id && p.period === period)) {
+        await db.query(
+          `insert into public.hr_payroll_records
+             (tenant_id, id, employee_id, period, status, admission_event, vacation_event, leave_event, notes, created_at, updated_at, created_by_name)
+           values ($1, $2, $3, $4, 'open', $5, $6, false, 'Competência aberta automaticamente para controle operacional do RH.', $7, $7, 'Sistema')
+           on conflict (tenant_id, employee_id, period) do nothing`,
+          [this.tenantId, newId('pay'), employee.id, period, samePeriod(employee.hireDate, period), vacations.some(v => v.employeeId === employee.id && v.startDate?.slice(0, 7) === period), now]
+        );
+      }
+    }
+  }
+
+  private async admissionDocumentsAsHr(employeeId: string | undefined, db: Queryable): Promise<HrDocument[]> {
+    const [employees, onboardings] = await Promise.all([this.employees.list(db), this.onboardings.list(db)]);
+    const employeeByCandidate = new Map(employees.filter(e => e.candidateId).map(e => [e.candidateId!, e]));
+    const out: HrDocument[] = [];
+    for (const journey of onboardings) {
+      const employee = journey.employeeId ? employees.find(e => e.id === journey.employeeId) : employeeByCandidate.get(journey.candidateId);
+      if (!employee || (employeeId && employee.id !== employeeId)) continue;
+      for (const item of journey.admission ?? []) {
+        const lastHistory = [...(item.history ?? [])].sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
+        const due = item.dueDate;
+        const overdue = item.status !== 'approved' && Date.parse(due + 'T00:00:00') < Date.parse(todaySP() + 'T00:00:00');
+        out.push({
+          id: 'admission-' + journey.id + '-' + item.id,
+          employeeId: employee.id,
+          name: item.title,
+          category: 'Admissão / ' + item.category,
+          expiresAt: due,
+          dueDate: due,
+          status: item.status === 'approved' ? 'valid' : overdue ? 'expired' : 'pending',
+          fileName: item.file?.name,
+          fileUploaded: !!item.file,
+          notes: item.reviewNote || (item.requiresDocument ? 'Item da Pasta de Admissão.' : 'Etapa admissional.'),
+          createdAt: item.history?.[0]?.at ?? journey.hireDate,
+          updatedAt: lastHistory?.at ?? item.file?.uploadedAt ?? journey.hireDate,
+          createdByName: lastHistory?.by ?? 'Pasta de Admissão',
+          source: 'admission',
+          sourceId: item.id,
+          onboardingId: journey.id
+        });
+      }
+    }
+    return out;
+  }
+
   async listHrDocuments(employeeId?: string, db: Queryable = getPool()): Promise<HrDocument[]> {
     const rows = await this.hrDocuments.list(db);
-    return employeeId ? rows.filter(r => r.employeeId === employeeId) : rows;
+    const direct = employeeId ? rows.filter(r => r.employeeId === employeeId) : rows;
+    const admission = await this.admissionDocumentsAsHr(employeeId, db);
+    return [...admission, ...direct.map(d => ({ ...d, source: d.source ?? 'hr' as const }))]
+      .sort((a, b) => Date.parse(b.updatedAt || b.createdAt) - Date.parse(a.updatedAt || a.createdAt));
   }
 
   async listHrVacations(employeeId?: string, db: Queryable = getPool()): Promise<HrVacationPeriod[]> {
+    await this.ensureHrOperationalBaseline(db);
     const rows = await this.hrVacations.list(db);
     return employeeId ? rows.filter(r => r.employeeId === employeeId) : rows;
   }
 
   async listHrPayroll(employeeId?: string, db: Queryable = getPool()): Promise<HrPayrollRecord[]> {
+    await this.ensureHrOperationalBaseline(db);
     const rows = await this.hrPayroll.list(db);
     return employeeId ? rows.filter(r => r.employeeId === employeeId) : rows;
   }
-
   async employeeTimeline(employeeId: string, db: Queryable = getPool()): Promise<EmployeeTimelineEvent[]> {
     const employee = await this.employees.get(employeeId, db);
     if (!employee) throw new NotFoundError('Colaborador nao encontrado.');

@@ -183,6 +183,11 @@ export interface HrDocument {
   updatedAt: string;
   createdById?: string;
   createdByName?: string;
+  source?: 'hr' | 'admission';
+  sourceId?: string;
+  onboardingId?: string;
+  dueDate?: string;
+  fileUploaded?: boolean;
 }
 
 export const HR_VACATION_STATUSES = ['accrued', 'scheduled', 'approved', 'in_progress', 'completed', 'cancelled'] as const;

@@ -7,7 +7,7 @@ import { formatDateSP, formatDateTimeSP } from '../../utils/dateUtils.js';
 import { useBackdropClose } from '../../hooks/useBackdropClose.js';
 
 const STATUS_LABEL: Record<EmployeeStatus, string> = { active: 'Ativo', onboarding: 'Onboarding', inactive: 'Inativo' };
-const ORIGIN_LABEL: Record<EmployeeOrigin, string> = { hired_candidate: 'Contratacao', tenant_user: 'Usuario', manual: 'Manual' };
+const ORIGIN_LABEL: Record<EmployeeOrigin, string> = { hired_candidate: 'Contratação', tenant_user: 'Usuário', manual: 'Manual' };
 const STATUS_CLASS: Record<EmployeeStatus, string> = {
   active: 'bg-emerald-100 text-emerald-800',
   onboarding: 'bg-indigo-100 text-indigo-800',
@@ -59,7 +59,7 @@ export const ModuleHR: React.FC = () => {
       setPositions(pos);
       setUsers(members);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Nao foi possível carregar colaboradores.');
+      setError(err instanceof ApiError ? err.message : 'Não foi possível carregar colaboradores.');
     } finally {
       setLoading(false);
     }
@@ -121,7 +121,7 @@ export const ModuleHR: React.FC = () => {
             <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar por nome, email ou cargo" className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200" />
           </div>
           <Select value={status} onChange={setStatus} options={[['all', 'Todos status'], ['active', 'Ativos'], ['onboarding', 'Onboarding'], ['inactive', 'Inativos']]} />
-          <Select value={origin} onChange={setOrigin} options={[['all', 'Todas origens'], ['hired_candidate', 'Contratacao'], ['tenant_user', 'Usuario'], ['manual', 'Manual']]} />
+          <Select value={origin} onChange={setOrigin} options={[['all', 'Todas origens'], ['hired_candidate', 'Contratação'], ['tenant_user', 'Usuário'], ['manual', 'Manual']]} />
           <select value={departmentId} onChange={e => setDepartmentId(e.target.value)} className="px-3 py-2 rounded-xl border border-slate-200 bg-white">
             <option value="all">Todos departamentos</option>
             {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
@@ -197,7 +197,7 @@ const employeeNameOf = (employees: Employee[], id?: string) => employees.find(e 
 const HrDocumentsTable: React.FC<{ documents: HrDocument[]; employees: Employee[]; onOpen: (id: string) => void }> = ({ documents, employees, onOpen }) => (
   <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden">
     <table className="w-full text-xs"><thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-400"><tr><th className="text-left px-4 py-3">Documento</th><th className="text-left px-4 py-3">Colaborador</th><th className="text-left px-4 py-3">Vencimento</th><th className="text-left px-4 py-3">Status</th></tr></thead>
-      <tbody className="divide-y divide-slate-100">{documents.map(d => <tr key={d.id} onClick={() => onOpen(d.employeeId)} className="hover:bg-slate-50 cursor-pointer"><td className="px-4 py-3"><div className="font-semibold text-slate-900">{d.name}</div><div className="text-slate-400">{d.category}</div></td><td className="px-4 py-3 text-slate-600">{employeeNameOf(employees, d.employeeId)}</td><td className="px-4 py-3 text-slate-600">{d.expiresAt ? formatDateSP(d.expiresAt) : 'Sem vencimento'}</td><td className="px-4 py-3"><HrBadge tone={isExpired(d) ? 'danger' : isExpiring(d) ? 'warn' : d.status === 'valid' ? 'ok' : 'muted'}>{isExpiring(d) ? 'Vencendo' : d.status}</HrBadge></td></tr>)}{documents.length === 0 && <tr><td colSpan={4} className="py-8 text-center text-slate-400">Nenhum documento cadastrado.</td></tr>}</tbody>
+      <tbody className="divide-y divide-slate-100">{documents.map(d => <tr key={d.id} onClick={() => onOpen(d.employeeId)} className="hover:bg-slate-50 cursor-pointer"><td className="px-4 py-3"><div className="font-semibold text-slate-900">{d.name}</div><div className="text-slate-400">{d.category}{d.source === 'admission' ? ' · Pasta de Admissão' : ''}{d.fileUploaded ? ' · com arquivo' : ''}</div></td><td className="px-4 py-3 text-slate-600">{employeeNameOf(employees, d.employeeId)}</td><td className="px-4 py-3 text-slate-600">{d.expiresAt ? formatDateSP(d.expiresAt) : 'Sem vencimento'}</td><td className="px-4 py-3"><HrBadge tone={isExpired(d) ? 'danger' : isExpiring(d) ? 'warn' : d.status === 'valid' ? 'ok' : 'muted'}>{d.source === 'admission' && d.status === 'pending' ? 'Pendente admissão' : isExpiring(d) ? 'Vencendo' : d.status}</HrBadge></td></tr>)}{documents.length === 0 && <tr><td colSpan={4} className="py-8 text-center text-slate-400">Nenhum documento cadastrado.</td></tr>}</tbody>
     </table>
   </div>
 );
@@ -253,7 +253,7 @@ const EmployeeModal: React.FC<{
       setForm(saved);
       if (employee) setTimeline(await TenantApi.getEmployeeTimeline(saved.id));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Nao foi possível salvar o colaborador.');
+      setError(err instanceof ApiError ? err.message : 'Não foi possível salvar o colaborador.');
     } finally {
       setBusy(false);
     }
@@ -322,7 +322,7 @@ const EmployeeModal: React.FC<{
               <Field label="Telefone" value={form.phone ?? ''} disabled={readonly} onChange={v => setForm({ ...form, phone: v })} icon={<Phone className="w-3.5 h-3.5" />} />
               <Field label="Admissao" type="date" value={form.hireDate ?? ''} disabled={readonly} onChange={v => setForm({ ...form, hireDate: v })} icon={<CalendarDays className="w-3.5 h-3.5" />} />
               <label className="block"><span className="block font-semibold text-slate-600 mb-1">Status</span><select disabled={readonly} value={form.status ?? 'active'} onChange={e => setForm({ ...form, status: e.target.value as EmployeeStatus })} className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white disabled:bg-slate-50"><option value="active">Ativo</option><option value="onboarding">Onboarding</option><option value="inactive">Inativo</option></select></label>
-              <label className="block"><span className="block font-semibold text-slate-600 mb-1">Origem</span><select disabled={readonly} value={form.origin ?? 'manual'} onChange={e => setForm({ ...form, origin: e.target.value as EmployeeOrigin })} className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white disabled:bg-slate-50"><option value="manual">Manual</option><option value="tenant_user">Usuario</option><option value="hired_candidate">Contratacao</option></select></label>
+              <label className="block"><span className="block font-semibold text-slate-600 mb-1">Origem</span><select disabled={readonly} value={form.origin ?? 'manual'} onChange={e => setForm({ ...form, origin: e.target.value as EmployeeOrigin })} className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white disabled:bg-slate-50"><option value="manual">Manual</option><option value="tenant_user">Usuário</option><option value="hired_candidate">Contratação</option></select></label>
               <label className="block"><span className="block font-semibold text-slate-600 mb-1">Cargo</span><select disabled={readonly} value={form.positionId ?? ''} onChange={e => setForm({ ...form, positionId: e.target.value || undefined })} className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white disabled:bg-slate-50"><option value="">Sem cargo cadastrado</option>{positions.filter(p => p.status === 'active').map(p => <option key={p.id} value={p.id}>{p.title}</option>)}</select></label>
               <label className="block"><span className="block font-semibold text-slate-600 mb-1">Departamento</span><select disabled={readonly} value={form.departmentId ?? ''} onChange={e => setForm({ ...form, departmentId: e.target.value || undefined })} className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white disabled:bg-slate-50"><option value="">Sem departamento</option>{departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
               <label className="block"><span className="block font-semibold text-slate-600 mb-1">Gestor</span><select disabled={readonly} value={form.managerId ?? ''} onChange={e => setForm({ ...form, managerId: e.target.value || undefined })} className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white disabled:bg-slate-50"><option value="">Sem gestor</option>{users.filter(u => u.active).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}</select></label>
