@@ -4,9 +4,6 @@
   "installCommand": "npm ci",
   "buildCommand": "npm run build:web",
   "outputDirectory": "dist",
-  "crons": [
-    { "path": "/api/internal/screening/process", "schedule": "* * * * *" }
-  ],
   "env": {
     "NODEJS_HELPERS": "0"
   },

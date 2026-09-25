@@ -72,7 +72,7 @@ Google (sem uso dos dados para treino) antes de habilitar o recurso para organiz
 | `SUPERADMIN_EMAIL` / `SUPERADMIN_PASSWORD` | só em banco novo | credenciais da Conta Mãe (seção 1.3) |
 | `GEMINI_API_KEY` | opcional | sem ela a avaliação de IA usa a estimativa local, rotulada como tal |
 | `GEMINI_MODEL` | opcional | padrão `gemini-3.8-flash` |
-| `CRON_SECRET` | ✅ (triagem em fila) | segredo usado pelo Vercel Cron para autorizar o worker de análise de currículos |
+| `CRON_SECRET` | ✅ (triagem em fila) | segredo usado pelo scheduler externo para autorizar o worker de análise de currículos |
 | `NODEJS_HELPERS` | recomendado | `0` (garante que o corpo das requisições chegue ao Express; o `vercel.json` já define no runtime) |
 | `PUBLIC_APPLY_LIMIT` | opcional | candidaturas públicas por IP por hora (padrão 10) |
 | `DB_POOL_MAX` | opcional | conexões por instância (padrão 5 na Vercel) |
@@ -81,7 +81,7 @@ Google (sem uso dos dados para treino) antes de habilitar o recurso para organiz
 4. **Settings → Functions → Function Region:** escolha a **mesma região do seu projeto Supabase** (ex.: *São Paulo (gru1)* se o Supabase está em `sa-east-1`). Cada tela faz várias consultas; região diferente deixa o sistema visivelmente lento.
 5. Clique em **Deploy**.
 
-O `vercel.json` agenda o worker da triagem a cada minuto. O Vercel envia `CRON_SECRET` no cabeçalho de autorização; sem essa variável, os uploads continuam sendo salvos, mas permanecem aguardando análise.
+O worker da triagem é acionado pelo GitHub Actions a cada cinco minutos, pois o plano Hobby da Vercel não permite Cron a cada minuto. Cadastre `CRON_SECRET` também como secret do GitHub e `APP_URL` com a URL pública da aplicação. Sem esses secrets, os uploads continuam sendo salvos, mas permanecem aguardando análise.
 
 > ⚠️ **Preview deployments** (cada branch/PR) usam as variáveis do escopo *Preview*. **Não** aponte o *Preview* para o banco de produção: use um projeto Supabase separado ou deixe as variáveis só em *Production*. Mantenha a *Deployment Protection* (login da Vercel) ligada nos previews.
 
