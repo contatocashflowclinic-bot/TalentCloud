@@ -71,6 +71,7 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
 
   const inputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  const searchRequestRef = useRef(0);
 
   // Open the palette quickly: load only job scopes first, then fetch candidates in a bounded, contextual search.
   const loadSearchData = async () => {
@@ -473,7 +474,7 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3.5 divide-y divide-slate-100">
               {loading ? (
                 <div className="text-center py-12 text-slate-400 text-xs animate-pulse">
-                  Consultando resultados da organização...
+                  Consultando resultados da organizaÃ§Ã£o...
                 </div>
               ) : filteredCandidates.length === 0 ? (
                 <div className="text-center py-12 space-y-3">
@@ -774,7 +775,6 @@ export const GlobalCandidateSearchBar: React.FC<GlobalCandidateSearchBarProps> =
           </div>
         </div>
       )}
-
     </div>
   );
 };
