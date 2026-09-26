@@ -7,7 +7,7 @@ import { SalesBookingForm } from './sales/SalesBookingForm.js';
 const revealViewport = { once: true, amount: 0.2 } as const;
 
 export const SalesLandingPage: React.FC = () => (
-  <div className='min-h-screen overflow-x-hidden bg-white text-slate-950'>
+  <div className='font-sales min-h-screen overflow-x-hidden bg-white text-slate-950'>
     <header className='sticky top-0 z-50 border-b border-slate-200/70 bg-white/85 backdrop-blur-xl'>
       <div className='mx-auto flex h-20 max-w-7xl items-center justify-between px-5 sm:h-24 sm:px-8'>
         <BrandLogo width={160} />
@@ -23,7 +23,7 @@ export const SalesLandingPage: React.FC = () => (
         <div className='relative mx-auto grid max-w-7xl gap-16 px-5 py-20 sm:px-8 sm:py-28 lg:grid-cols-[1.05fr_.95fr] lg:items-center lg:gap-20 lg:py-32'>
           <motion.div initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7, ease: 'easeOut' }}>
             <p className='mb-7 inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-white/80 px-4 py-2 text-xs font-bold text-indigo-700 shadow-sm backdrop-blur'><ShieldCheck className='h-4 w-4' /> Gest&atilde;o de pessoas com contexto, n&atilde;o com improviso</p>
-            <h1 className='max-w-3xl text-balance text-4xl font-black leading-[1.06] tracking-[-0.045em] sm:text-6xl lg:text-[4rem]'>Sua empresa cresceu. A gest&atilde;o de pessoas precisa acompanhar.</h1>
+            <h1 className='max-w-3xl text-balance text-4xl font-black leading-[1.06] tracking-[-0.045em] text-[#1c2b4d] sm:text-6xl lg:text-[4rem]'>Sua empresa cresceu. A gest&atilde;o de pessoas precisa acompanhar.</h1>
             <p className='mt-7 max-w-2xl text-lg leading-8 text-slate-600 sm:text-xl'>Organize a jornada dos seus talentos, d&ecirc; clareza aos gestores e tome decis&otilde;es melhores, sem depender de planilhas, mem&oacute;ria ou processos espalhados.</p>
             <a href='#agendar' className='group mt-10 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-4 text-sm font-bold text-white shadow-xl shadow-indigo-200 transition-all duration-300 hover:-translate-y-1 hover:bg-indigo-700 hover:shadow-2xl hover:shadow-indigo-200'>Agendar uma demonstra&ccedil;&atilde;o <ArrowRight className='h-4 w-4 transition-transform duration-300 group-hover:translate-x-1' /></a>
             <div className='mt-8 flex flex-wrap gap-3 text-sm text-slate-600'>{['Menos retrabalho', 'Decisoes mais seguras', 'Jornada conectada'].map(item => <span key={item} className='inline-flex items-center gap-2 rounded-full border border-slate-200/80 bg-white/75 px-3.5 py-2 shadow-sm backdrop-blur'><CheckCircle2 className='h-4 w-4 text-emerald-500' />{item}</span>)}</div>
@@ -53,29 +53,29 @@ export const SalesLandingPage: React.FC = () => (
           <div className='mt-14 grid gap-6 md:grid-cols-3 lg:mt-16'>
             <motion.article initial={{ opacity: 0, y: 32 }} whileInView={{ opacity: 1, y: 0 }} whileHover={{ y: -10 }} viewport={revealViewport} transition={{ duration: 0.5 }} className='group rounded-[1.75rem] border border-white/80 bg-white p-7 text-left shadow-[0_18px_50px_-24px_rgba(49,46,129,0.3)] transition-shadow duration-300 hover:shadow-[0_28px_65px_-25px_rgba(49,46,129,0.4)] sm:p-8'>
               <div className='flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-400 to-violet-500 text-xl font-light text-white shadow-lg shadow-indigo-200 transition-transform duration-300 group-hover:rotate-3 group-hover:scale-110'>AI</div>
-              <h4 className='mt-7 text-base font-bold text-slate-950'>IA que filtra em minutos</h4>
-              <p className='mt-4 text-base leading-7 text-slate-600'>Descreva o perfil e a IA pontua e pr&eacute;-seleciona os melhores candidatos automaticamente.</p>
+              <h3 className='mt-7 text-lg font-bold text-slate-950'>IA que filtra em minutos</h3>
+              <p className='mt-4 text-sm leading-6 text-slate-600'>Descreva o perfil e a IA pontua e pr&eacute;-seleciona os melhores candidatos automaticamente.</p>
             </motion.article>
 
             <motion.article initial={{ opacity: 0, y: 32 }} whileInView={{ opacity: 1, y: 0 }} whileHover={{ y: -10 }} viewport={revealViewport} transition={{ duration: 0.5, delay: 0.1 }} className='group rounded-[1.75rem] border border-white/80 bg-white p-7 text-left shadow-[0_18px_50px_-24px_rgba(49,46,129,0.3)] transition-shadow duration-300 hover:shadow-[0_28px_65px_-25px_rgba(49,46,129,0.4)] sm:p-8'>
               <div className='flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-400 to-violet-500 text-white shadow-lg shadow-indigo-200 transition-transform duration-300 group-hover:-rotate-3 group-hover:scale-110'>
                 <Paperclip className='h-7 w-7' />
               </div>
-              <h4 className='mt-7 text-base font-bold text-slate-950'>Pipeline com visibilidade total</h4>
-              <p className='mt-4 text-base leading-7 text-slate-600'>Vagas ativas, candidatos em cada etapa e time-to-hire em tempo real.</p>
+              <h3 className='mt-7 text-lg font-bold text-slate-950'>Pipeline com visibilidade total</h3>
+              <p className='mt-4 text-sm leading-6 text-slate-600'>Vagas ativas, candidatos em cada etapa e time-to-hire em tempo real.</p>
             </motion.article>
 
             <motion.article initial={{ opacity: 0, y: 32 }} whileInView={{ opacity: 1, y: 0 }} whileHover={{ y: -10 }} viewport={revealViewport} transition={{ duration: 0.5, delay: 0.2 }} className='group rounded-[1.75rem] border border-white/80 bg-white p-7 text-left shadow-[0_18px_50px_-24px_rgba(49,46,129,0.3)] transition-shadow duration-300 hover:shadow-[0_28px_65px_-25px_rgba(49,46,129,0.4)] sm:p-8'>
               <div className='flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-400 to-violet-500 text-white shadow-lg shadow-indigo-200 transition-transform duration-300 group-hover:rotate-3 group-hover:scale-110'>
                 <ListChecks className='h-7 w-7' />
               </div>
-              <h4 className='mt-7 text-base font-bold text-slate-950'>LGPD sem complica&ccedil;&atilde;o</h4>
-              <p className='mt-4 text-base leading-7 text-slate-600'>Consentimentos, reten&ccedil;&atilde;o de dados e conformidade com a LGPD gerenciados automaticamente.</p>
+              <h3 className='mt-7 text-lg font-bold text-slate-950'>LGPD sem complica&ccedil;&atilde;o</h3>
+              <p className='mt-4 text-sm leading-6 text-slate-600'>Consentimentos, reten&ccedil;&atilde;o de dados e conformidade com a LGPD gerenciados automaticamente.</p>
             </motion.article>
           </div>
 
           <motion.div initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={revealViewport} transition={{ duration: 0.6 }} className='mx-auto mt-16 max-w-4xl text-center sm:mt-20'>
-            <h3 className='text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl'>Tudo o que muda quando voc&ecirc; para de revisar curr&iacute;culos um a um</h3>
+            <h3 className='text-2xl font-bold tracking-tight text-[#1c2b4d] sm:text-3xl'>Tudo o que muda quando voc&ecirc; para de revisar curr&iacute;culos um a um</h3>
             <a href='#agendar' className='group mt-9 inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-7 py-4 text-sm font-bold text-white shadow-xl shadow-indigo-200 transition-all duration-300 hover:-translate-y-1 hover:bg-indigo-700 hover:shadow-2xl'>Acesse a demo <ArrowRight className='h-4 w-4 transition-transform duration-300 group-hover:translate-x-1' /></a>
           </motion.div>
         </div>
@@ -129,7 +129,7 @@ export const SalesLandingPage: React.FC = () => (
         <div aria-hidden='true' className='absolute inset-0 bg-[linear-gradient(115deg,rgba(255,255,255,0.08),transparent_45%)]' />
         <motion.div initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={revealViewport} transition={{ duration: 0.6 }} className='relative mx-auto flex max-w-6xl flex-col items-start justify-between gap-10 px-5 sm:px-8 lg:flex-row lg:items-center'>
           <div className='max-w-2xl'>
-            <p className='text-sm font-bold text-indigo-200'>Tecnologia para apoiar. Pessoas para decidir.</p>
+            <p className='text-xs font-bold uppercase tracking-widest text-indigo-200'>Tecnologia para apoiar. Pessoas para decidir.</p>
             <h2 className='sales-heading mt-3'>A IA organiza sinais relevantes. A decis&atilde;o continua humana.</h2>
           </div>
           <a href='#agendar' className='group inline-flex shrink-0 items-center gap-2 rounded-xl bg-amber-400 px-7 py-4 text-sm font-bold text-slate-950 shadow-xl shadow-indigo-950/20 transition-all duration-300 hover:-translate-y-1 hover:bg-amber-300 hover:shadow-2xl'>Quero ver na pr&aacute;tica <ArrowRight className='h-4 w-4 transition-transform duration-300 group-hover:translate-x-1' /></a>
