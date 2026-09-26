@@ -1,5 +1,29 @@
 @import "tailwindcss";
 
+.sales-heading {
+  font-family: 'Manrope', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-weight: 700;
+  font-size: 25.6px;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+}
+@media (min-width: 640px) {
+  .sales-heading { font-size: 30px; }
+}
+@media (min-width: 768px) {
+  .sales-heading { font-size: 40px; }
+}
+
+.sales-paragraph {
+  font-family: 'Manrope', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.625;
+  color: #475569;
+}
+@media (min-width: 768px) {
+  .sales-paragraph { font-size: 17px; }
+}
+
 /* Mobile: 16px fields stop iOS Safari from zooming the page on focus; no auto text inflation */
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 @media (max-width: 767px) {

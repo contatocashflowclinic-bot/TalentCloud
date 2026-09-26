@@ -46,8 +46,8 @@ export const SalesLandingPage: React.FC = () => (
         <div aria-hidden='true' className='absolute left-1/2 top-24 h-72 w-72 -translate-x-1/2 rounded-full bg-indigo-200/30 blur-3xl' />
         <div className='relative mx-auto max-w-7xl px-5 sm:px-8'>
           <motion.div initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={revealViewport} transition={{ duration: 0.6 }} className='mx-auto max-w-4xl text-center'>
-            <h2 className='text-3xl font-black tracking-tight text-slate-950 sm:text-5xl'>Recrutamento inteligente</h2>
-            <p className='mx-auto mt-5 max-w-2xl text-base leading-7 text-slate-600 sm:text-lg'>Descubra como contratar o melhor candidato sem perder horas em triagens manuais.</p>
+            <h2 className='sales-heading text-[#1c2b4d]'>Recrutamento inteligente</h2>
+            <p className='sales-paragraph mx-auto mt-7 max-w-[600px]'>Descubra como contratar o melhor candidato sem perder horas em triagens manuais.</p>
           </motion.div>
 
           <div className='mt-14 grid gap-6 md:grid-cols-3 lg:mt-16'>
@@ -86,7 +86,7 @@ export const SalesLandingPage: React.FC = () => (
         <div className='relative mx-auto max-w-6xl px-5 sm:px-8'>
           <motion.div initial={{ opacity: 0, x: -24 }} whileInView={{ opacity: 1, x: 0 }} viewport={revealViewport} transition={{ duration: 0.6 }} className='max-w-3xl'>
             <p className='text-xs font-bold uppercase tracking-widest text-indigo-600'>O problema n&atilde;o &eacute; falta de esfor&ccedil;o</p>
-            <h2 className='mt-5 text-3xl font-black tracking-tight sm:text-5xl'>Quando a jornada fica desconectada, sua equipe trabalha muito para enxergar pouco.</h2>
+            <h2 className='sales-heading mt-5 text-[#1c2b4d]'>Quando a jornada fica desconectada, sua equipe trabalha muito para enxergar pouco.</h2>
           </motion.div>
           <div className='mt-14 grid gap-6 md:grid-cols-3 lg:mt-16'>
             {[
@@ -109,8 +109,8 @@ export const SalesLandingPage: React.FC = () => (
         <div className='mx-auto grid max-w-6xl gap-14 px-5 sm:px-8 lg:grid-cols-2 lg:items-center lg:gap-20'>
           <motion.div initial={{ opacity: 0, x: -28 }} whileInView={{ opacity: 1, x: 0 }} viewport={revealViewport} transition={{ duration: 0.65 }}>
             <p className='text-xs font-bold uppercase tracking-widest text-indigo-600'>Uma jornada, o contexto inteiro</p>
-            <h2 className='mt-5 text-3xl font-black tracking-tight sm:text-5xl'>Da primeira conversa ao desenvolvimento de quem ficou.</h2>
-            <p className='mt-6 text-base leading-7 text-slate-600'>O V&eacute;rtice 360 conecta cada etapa para que RH, gestores e lideran&ccedil;a saibam o que aconteceu, o que precisa acontecer e onde agir primeiro.</p>
+            <h2 className='sales-heading mt-5 text-[#1c2b4d]'>Da primeira conversa ao desenvolvimento de quem ficou.</h2>
+            <p className='sales-paragraph mt-7 max-w-[600px]'>O V&eacute;rtice 360 conecta cada etapa para que RH, gestores e lideran&ccedil;a saibam o que aconteceu, o que precisa acontecer e onde agir primeiro.</p>
           </motion.div>
           <motion.div initial={{ opacity: 0, x: 28 }} whileInView={{ opacity: 1, x: 0 }} viewport={revealViewport} transition={{ duration: 0.65 }} className='relative grid gap-4 rounded-[2rem] border border-slate-100 bg-slate-50/80 p-5 shadow-[0_25px_70px_-35px_rgba(15,23,42,0.25)] sm:p-7'>
             <div aria-hidden='true' className='absolute bottom-8 left-10 top-8 w-px bg-gradient-to-b from-transparent via-indigo-200 to-transparent' />
@@ -130,7 +130,7 @@ export const SalesLandingPage: React.FC = () => (
         <motion.div initial={{ opacity: 0, y: 24 }} whileInView={{ opacity: 1, y: 0 }} viewport={revealViewport} transition={{ duration: 0.6 }} className='relative mx-auto flex max-w-6xl flex-col items-start justify-between gap-10 px-5 sm:px-8 lg:flex-row lg:items-center'>
           <div className='max-w-2xl'>
             <p className='text-sm font-bold text-indigo-200'>Tecnologia para apoiar. Pessoas para decidir.</p>
-            <h2 className='mt-3 text-3xl font-black leading-tight sm:text-4xl'>A IA organiza sinais relevantes. A decis&atilde;o continua humana.</h2>
+            <h2 className='sales-heading mt-3'>A IA organiza sinais relevantes. A decis&atilde;o continua humana.</h2>
           </div>
           <a href='#agendar' className='group inline-flex shrink-0 items-center gap-2 rounded-xl bg-amber-400 px-7 py-4 text-sm font-bold text-slate-950 shadow-xl shadow-indigo-950/20 transition-all duration-300 hover:-translate-y-1 hover:bg-amber-300 hover:shadow-2xl'>Quero ver na pr&aacute;tica <ArrowRight className='h-4 w-4 transition-transform duration-300 group-hover:translate-x-1' /></a>
         </motion.div>
