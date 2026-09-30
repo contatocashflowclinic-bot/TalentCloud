@@ -13,29 +13,75 @@ import { AppFooter } from './components/AppFooter.js';
 import { ClimatePendingBanner } from './components/retention/ClimatePendingBanner.js';
 import { SalesLandingPage } from './components/SalesLandingPage.js';
 
-// Each screen is its own chunk: the browser only downloads the modules (and heavy libs such as charts / PDF) that are opened.
-const PlatformLayout = lazy(() => import('./components/platform/PlatformLayout.js').then(m => ({ default: m.PlatformLayout })));
-const CareersPortalPage = lazy(() => import('./components/careers/CareersPortalPage.js').then(m => ({ default: m.CareersPortalPage })));
+// Each screen is its own chunk. After the workspace opens, chunks are warmed in idle time so routine switches feel instant.
+const loadPlatformLayout = () => import('./components/platform/PlatformLayout.js').then(m => ({ default: m.PlatformLayout }));
+const loadCareersPortalPage = () => import('./components/careers/CareersPortalPage.js').then(m => ({ default: m.CareersPortalPage }));
+const loadModuleWelcome = () => import('./components/modules/ModuleWelcome.js').then(m => ({ default: m.ModuleWelcome }));
+const loadModuleAgenda = () => import('./components/modules/ModuleAgenda.js').then(m => ({ default: m.ModuleAgenda }));
+const loadModuleUsers = () => import('./components/modules/ModuleUsers.js').then(m => ({ default: m.ModuleUsers }));
+const loadModuleDNA = () => import('./components/modules/ModuleDNA.js').then(m => ({ default: m.ModuleDNA }));
+const loadModuleStructure = () => import('./components/modules/ModuleStructure.js').then(m => ({ default: m.ModuleStructure }));
+const loadModulePositions = () => import('./components/modules/ModulePositions.js').then(m => ({ default: m.ModulePositions }));
+const loadModuleOpenings = () => import('./components/modules/ModuleOpenings.js').then(m => ({ default: m.ModuleOpenings }));
+const loadModuleCandidates = () => import('./components/modules/ModuleCandidates.js').then(m => ({ default: m.ModuleCandidates }));
+const loadModuleSelectionProcess = () => import('./components/modules/ModuleSelectionProcess.js').then(m => ({ default: m.ModuleSelectionProcess }));
+const loadModuleAIEvaluation = () => import('./components/modules/ModuleAIEvaluation.js').then(m => ({ default: m.ModuleAIEvaluation }));
+const loadModuleInterviews = () => import('./components/modules/ModuleInterviews.js').then(m => ({ default: m.ModuleInterviews }));
+const loadModuleOffers = () => import('./components/modules/ModuleOffers.js').then(m => ({ default: m.ModuleOffers }));
+const loadModuleOnboarding = () => import('./components/modules/ModuleOnboarding.js').then(m => ({ default: m.ModuleOnboarding }));
+const loadModuleHR = () => import('./components/modules/ModuleHR.js').then(m => ({ default: m.ModuleHR }));
+const loadModuleDevelopment = () => import('./components/modules/ModuleDevelopment.js').then(m => ({ default: m.ModuleDevelopment }));
+const loadModuleRetention = () => import('./components/modules/ModuleRetention.js').then(m => ({ default: m.ModuleRetention }));
+const loadModuleIndicators = () => import('./components/modules/ModuleIndicators.js').then(m => ({ default: m.ModuleIndicators }));
 
-// Feature Modules 1 to 15 (+ Agenda)
-const ModuleWelcome = lazy(() => import('./components/modules/ModuleWelcome.js').then(m => ({ default: m.ModuleWelcome })));
-const ModuleAgenda = lazy(() => import('./components/modules/ModuleAgenda.js').then(m => ({ default: m.ModuleAgenda })));
-const ModuleUsers = lazy(() => import('./components/modules/ModuleUsers.js').then(m => ({ default: m.ModuleUsers })));
-const ModuleDNA = lazy(() => import('./components/modules/ModuleDNA.js').then(m => ({ default: m.ModuleDNA })));
-const ModuleStructure = lazy(() => import('./components/modules/ModuleStructure.js').then(m => ({ default: m.ModuleStructure })));
-const ModulePositions = lazy(() => import('./components/modules/ModulePositions.js').then(m => ({ default: m.ModulePositions })));
-const ModuleOpenings = lazy(() => import('./components/modules/ModuleOpenings.js').then(m => ({ default: m.ModuleOpenings })));
-const ModuleCandidates = lazy(() => import('./components/modules/ModuleCandidates.js').then(m => ({ default: m.ModuleCandidates })));
-const ModuleSelectionProcess = lazy(() => import('./components/modules/ModuleSelectionProcess.js').then(m => ({ default: m.ModuleSelectionProcess })));
-const ModuleAIEvaluation = lazy(() => import('./components/modules/ModuleAIEvaluation.js').then(m => ({ default: m.ModuleAIEvaluation })));
-const ModuleInterviews = lazy(() => import('./components/modules/ModuleInterviews.js').then(m => ({ default: m.ModuleInterviews })));
-const ModuleOffers = lazy(() => import('./components/modules/ModuleOffers.js').then(m => ({ default: m.ModuleOffers })));
-const ModuleOnboarding = lazy(() => import('./components/modules/ModuleOnboarding.js').then(m => ({ default: m.ModuleOnboarding })));
-const ModuleHR = lazy(() => import('./components/modules/ModuleHR.js').then(m => ({ default: m.ModuleHR })));
-const ModuleDevelopment = lazy(() => import('./components/modules/ModuleDevelopment.js').then(m => ({ default: m.ModuleDevelopment })));
-const ModuleRetention = lazy(() => import('./components/modules/ModuleRetention.js').then(m => ({ default: m.ModuleRetention })));
-const ModuleIndicators = lazy(() => import('./components/modules/ModuleIndicators.js').then(m => ({ default: m.ModuleIndicators })));
+const PlatformLayout = lazy(loadPlatformLayout);
+const CareersPortalPage = lazy(loadCareersPortalPage);
+const ModuleWelcome = lazy(loadModuleWelcome);
+const ModuleAgenda = lazy(loadModuleAgenda);
+const ModuleUsers = lazy(loadModuleUsers);
+const ModuleDNA = lazy(loadModuleDNA);
+const ModuleStructure = lazy(loadModuleStructure);
+const ModulePositions = lazy(loadModulePositions);
+const ModuleOpenings = lazy(loadModuleOpenings);
+const ModuleCandidates = lazy(loadModuleCandidates);
+const ModuleSelectionProcess = lazy(loadModuleSelectionProcess);
+const ModuleAIEvaluation = lazy(loadModuleAIEvaluation);
+const ModuleInterviews = lazy(loadModuleInterviews);
+const ModuleOffers = lazy(loadModuleOffers);
+const ModuleOnboarding = lazy(loadModuleOnboarding);
+const ModuleHR = lazy(loadModuleHR);
+const ModuleDevelopment = lazy(loadModuleDevelopment);
+const ModuleRetention = lazy(loadModuleRetention);
+const ModuleIndicators = lazy(loadModuleIndicators);
 
+const WORKSPACE_SCREEN_LOADERS = [
+  loadModuleAgenda,
+  loadModuleUsers,
+  loadModuleDNA,
+  loadModuleStructure,
+  loadModulePositions,
+  loadModuleOpenings,
+  loadModuleCandidates,
+  loadModuleSelectionProcess,
+  loadModuleAIEvaluation,
+  loadModuleInterviews,
+  loadModuleOffers,
+  loadModuleOnboarding,
+  loadModuleHR,
+  loadModuleDevelopment,
+  loadModuleRetention,
+  loadModuleIndicators
+];
+let workspaceScreensPreloaded = false;
+function preloadWorkspaceScreens() {
+  if (workspaceScreensPreloaded) return;
+  workspaceScreensPreloaded = true;
+  const warm = () => {
+    for (const load of WORKSPACE_SCREEN_LOADERS) void load();
+  };
+  if ('requestIdleCallback' in window) window.requestIdleCallback(warm, { timeout: 4000 });
+  else globalThis.setTimeout(warm, 800);
+}
 const ScreenFallback: React.FC = () => (
   <div className="flex items-center justify-center h-64 text-slate-400 text-xs animate-pulse">Carregando...</div>
 );
@@ -73,6 +119,10 @@ const MainLayout: React.FC = () => {
       // safe fallback
     }
   }, []);
+
+  useEffect(() => {
+    if (!isLoading && activeTenant && !isCareersView) preloadWorkspaceScreens();
+  }, [activeTenant?.id, isLoading, isCareersView]);
 
   const handleNavigateToProcess = (jobId: string, candidateId?: string) => {
     setTargetJobId(jobId);

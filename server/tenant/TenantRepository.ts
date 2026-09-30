@@ -237,15 +237,30 @@ export class TenantRepository {
   }
 
   private async admissionDocumentsAsHr(employeeId: string | undefined, db: Queryable): Promise<HrDocument[]> {
-    const [employees, onboardings] = await Promise.all([this.employees.list(db), this.onboardings.list(db)]);
+    const employee = employeeId ? await this.employees.get(employeeId, db) : undefined;
+    const employees = employeeId ? (employee ? [employee] : []) : await this.employees.list(db);
+    if (employees.length === 0) return [];
+
+    const onboardingIds = [...new Set(employees.map(e => e.onboardingId).filter(Boolean))] as string[];
+    const candidateIds = [...new Set(employees.map(e => e.candidateId).filter(Boolean))] as string[];
+    const employeeIds = employees.map(e => e.id);
+    const { rows } = await db.query(
+      `select * from public.onboarding_journeys
+        where tenant_id = $1
+          and (employee_id = any($2::text[]) or id = any($3::text[]) or candidate_id = any($4::text[]))
+        order by seq asc`,
+      [this.tenantId, employeeIds, onboardingIds, candidateIds]
+    );
+    const onboardings = rows.map(r => fromRow<OnboardingJourney>({}, r));
     const employeeByOnboarding = new Map(employees.filter(e => e.onboardingId).map(e => [e.onboardingId!, e]));
     const employeeByCandidate = new Map(employees.filter(e => e.candidateId).map(e => [e.candidateId!, e]));
+    const employeeById = new Map(employees.map(e => [e.id, e]));
     const out: HrDocument[] = [];
     for (const journey of onboardings) {
       const employee = employeeByOnboarding.get(journey.id)
-        ?? (journey.employeeId ? employees.find(e => e.id === journey.employeeId) : undefined)
+        ?? (journey.employeeId ? employeeById.get(journey.employeeId) : undefined)
         ?? employeeByCandidate.get(journey.candidateId);
-      if (!employee || (employeeId && employee.id !== employeeId)) continue;
+      if (!employee) continue;
       for (const item of journey.admission ?? []) {
         const lastHistory = [...(item.history ?? [])].sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
         const due = item.dueDate;
@@ -274,8 +289,9 @@ export class TenantRepository {
   }
 
   async listHrDocuments(employeeId?: string, db: Queryable = getPool()): Promise<HrDocument[]> {
-    const rows = await this.hrDocuments.list(db);
-    const direct = employeeId ? rows.filter(r => r.employeeId === employeeId) : rows;
+    const direct = employeeId
+      ? (await db.query('select * from public.hr_documents where tenant_id = $1 and employee_id = $2 order by seq asc', [this.tenantId, employeeId])).rows.map(r => fromRow<HrDocument>({}, r))
+      : await this.hrDocuments.list(db);
     const admission = await this.admissionDocumentsAsHr(employeeId, db);
     return [...admission, ...direct.map(d => ({ ...d, source: d.source ?? 'hr' as const, fileUploaded: !!d.filePath }))]
       .sort((a, b) => Date.parse(b.updatedAt || b.createdAt) - Date.parse(a.updatedAt || a.createdAt));
@@ -283,15 +299,18 @@ export class TenantRepository {
 
   async listHrVacations(employeeId?: string, db: Queryable = getPool()): Promise<HrVacationPeriod[]> {
     await this.ensureHrOperationalBaseline(db);
-    const rows = await this.hrVacations.list(db);
-    return employeeId ? rows.filter(r => r.employeeId === employeeId) : rows;
+    if (!employeeId) return this.hrVacations.list(db);
+    const { rows } = await db.query('select * from public.hr_vacation_periods where tenant_id = $1 and employee_id = $2 order by seq asc', [this.tenantId, employeeId]);
+    return rows.map(r => fromRow<HrVacationPeriod>({}, r));
   }
 
   async listHrPayroll(employeeId?: string, db: Queryable = getPool()): Promise<HrPayrollRecord[]> {
     await this.ensureHrOperationalBaseline(db);
-    const rows = await this.hrPayroll.list(db);
-    return employeeId ? rows.filter(r => r.employeeId === employeeId) : rows;
+    if (!employeeId) return this.hrPayroll.list(db);
+    const { rows } = await db.query('select * from public.hr_payroll_records where tenant_id = $1 and employee_id = $2 order by seq asc', [this.tenantId, employeeId]);
+    return rows.map(r => fromRow<HrPayrollRecord>({}, r));
   }
+
   async employeeTimeline(employeeId: string, db: Queryable = getPool()): Promise<EmployeeTimelineEvent[]> {
     const employee = await this.employees.get(employeeId, db);
     if (!employee) throw new NotFoundError('Colaborador nao encontrado.');
@@ -299,8 +318,29 @@ export class TenantRepository {
     const add = (event: EmployeeTimelineEvent) => events.push(event);
     add({ id: `profile-${employee.id}`, kind: 'profile', at: employee.createdAt, title: 'Perfil de colaborador criado', description: employee.createdByName ? `Criado por ${employee.createdByName}.` : undefined });
 
+    const candidateKeys = [employee.candidateId, employee.userId].filter(Boolean) as string[];
     const [offers, onboardings, developments, alerts, hrDocuments, vacations, payroll] = await Promise.all([
-      this.offers.list(db), this.onboardings.list(db), this.development.list(db), this.turnoverAlerts.list(db),
+      employee.candidateId
+        ? db.query("select * from public.job_offers where tenant_id = $1 and candidate_id = $2 and status = 'accepted' order by seq asc", [this.tenantId, employee.candidateId]).then(r => r.rows.map(row => fromRow<JobOffer>({}, row)))
+        : Promise.resolve([] as JobOffer[]),
+      db.query(
+        `select * from public.onboarding_journeys
+          where tenant_id = $1 and (employee_id = $2 or id = $3 or ($4::text is not null and candidate_id = $4))
+          order by seq asc`,
+        [this.tenantId, employee.id, employee.onboardingId ?? '', employee.candidateId ?? null]
+      ).then(r => r.rows.map(row => fromRow<OnboardingJourney>({}, row))),
+      db.query(
+        `select * from public.collaborator_development
+          where tenant_id = $1 and (employee_id = $2 or id = $3 or collaborator_id = any($4::text[]))
+          order by seq asc`,
+        [this.tenantId, employee.id, employee.developmentId ?? '', candidateKeys]
+      ).then(r => r.rows.map(row => fromRow<CollaboratorDevelopment>({}, row))),
+      db.query(
+        `select * from public.turnover_alerts
+          where tenant_id = $1 and (employee_id = $2 or collaborator_id = any($3::text[]))
+          order by seq asc`,
+        [this.tenantId, employee.id, candidateKeys]
+      ).then(r => r.rows.map(row => fromRow<TurnoverRiskAlert>({}, row))),
       this.listHrDocuments(employee.id, db), this.listHrVacations(employee.id, db), this.listHrPayroll(employee.id, db)
     ]);
     for (const offer of offers.filter(o => employee.candidateId && o.candidateId === employee.candidateId && o.status === 'accepted')) {
@@ -564,7 +604,7 @@ export class TenantRepository {
     if (search) {
       params.push(`%${search}%`);
       const p = `$${params.length}`;
-      where.push(`(lower(name) like ${p} or lower("current_role") like ${p} or lower(email) like ${p} or exists (select 1 from unnest(skills) as skill(skill_name) where lower(skill_name) like ${p}))`);
+      where.push(`(lower(name) like ${p} or lower("current_role") like ${p} or lower(email) like ${p} or lower(public.text_array_join_immutable(skills, ' ')) like ${p})`);
     }
     const whereSql = where.join(' and ');
     const { rows } = await db.query(
@@ -1167,9 +1207,11 @@ export class TenantRepository {
   ): Promise<CollaboratorDevelopment> {
     return withTransaction(async tx => {
       await tx.query('select pg_advisory_xact_lock(hashtext($1))', [`development:${this.tenantId}:${collaboratorId}`]);
-      if ((await this.development.list(tx)).some(r => r.collaboratorId === collaboratorId)) {
-        throw new ConflictError('Este colaborador já tem um PDI.');
-      }
+      const existing = await tx.query(
+        'select 1 from public.collaborator_development where tenant_id = $1 and collaborator_id = $2 limit 1',
+        [this.tenantId, collaboratorId]
+      );
+      if (existing.rows[0]) throw new ConflictError('Este colaborador ja tem um PDI.');
       const created = await this.development.insert(
         { id: newId('dev'), collaboratorId, goals: [], oneOnOnes: [], lastReviewDate: '', nextReviewDate: '', ...fields },
         tx
@@ -1184,7 +1226,7 @@ export class TenantRepository {
       const record = await getRow<CollaboratorDevelopment>(TABLES.development, this.tenantId, recordId, tx, true);
       if (!record) throw new NotFoundError('Registro de PDI não encontrado');
       assertRecordRemovable(record);
-      await tx.query('delete from public.agenda_events where tenant_id = $1 and starts_with(id, $2)', [this.tenantId, meetingEventPrefix(recordId)]);
+      await tx.query(`delete from public.agenda_events where tenant_id = $1 and id like $2 || '%'`, [this.tenantId, meetingEventPrefix(recordId)]);
       await this.development.delete(recordId, tx);
     });
   }
@@ -1201,11 +1243,11 @@ export class TenantRepository {
 
   /** Every PDI's appointment still pending in the Agenda (at most one per PDI). */
   openNextMeetings(db: Queryable = getPool()): Promise<AgendaEvent[]> {
-    return this.meetingEvents(`starts_with(id, $2) and status in ('scheduled', 'in_progress')`, [MEETING_ID_PREFIX], db);
+    return this.meetingEvents(`id like $2 || '%' and status in ('scheduled', 'in_progress')`, [MEETING_ID_PREFIX], db);
   }
 
   async openNextMeeting(recordId: string, db: Queryable = getPool()): Promise<AgendaEvent | undefined> {
-    return (await this.meetingEvents(`starts_with(id, $2) and status in ('scheduled', 'in_progress')`, [meetingEventPrefix(recordId)], db))[0];
+    return (await this.meetingEvents(`id like $2 || '%' and status in ('scheduled', 'in_progress')`, [meetingEventPrefix(recordId)], db))[0];
   }
 
   /**
@@ -1222,7 +1264,7 @@ export class TenantRepository {
     request: NextMeetingRequest,
     tx: PoolClient
   ): Promise<void> {
-    let open: AgendaEvent | undefined = (await this.meetingEvents(`starts_with(id, $2) and status in ('scheduled', 'in_progress')`, [meetingEventPrefix(after.id)], tx))[0];
+    let open: AgendaEvent | undefined = (await this.meetingEvents(`id like $2 || '%' and status in ('scheduled', 'in_progress')`, [meetingEventPrefix(after.id)], tx))[0];
 
     if (open && before?.nextReviewDate && after.lastReviewDate >= before.nextReviewDate) {
       const latest = [...after.oneOnOnes].sort((a, b) => b.date.localeCompare(a.date))[0];

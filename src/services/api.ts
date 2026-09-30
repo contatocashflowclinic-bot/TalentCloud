@@ -65,9 +65,34 @@ const TOKEN_KEY = 'talentcloud.token';
 let authToken: string | null = null;
 try { authToken = localStorage.getItem(TOKEN_KEY); } catch { /* storage unavailable */ }
 
+const READ_CACHE_TTL_MS = 20_000;
+const readCache = new Map<string, { expiresAt: number; data: unknown }>();
+const inFlightReads = new Map<string, Promise<unknown>>();
+let readCacheVersion = 0;
+
+function clearApiReadCache(scope?: string) {
+  readCacheVersion += 1;
+  if (!scope) {
+    readCache.clear();
+    inFlightReads.clear();
+    return;
+  }
+  for (const key of readCache.keys()) if (key.includes(scope)) readCache.delete(key);
+  for (const key of inFlightReads.keys()) if (key.includes(scope)) inFlightReads.delete(key);
+}
+
+function cacheKeyFor(endpoint: string) {
+  return `${authToken ?? 'public'}:${endpoint}`;
+}
+
+function isCacheableRead(endpoint: string, method: string) {
+  return method === 'GET' && endpoint.startsWith('/api/v1/');
+}
+
 export function getAuthToken() { return authToken; }
 export function setAuthToken(token: string | null) {
   authToken = token;
+  clearApiReadCache();
   try {
     if (token) localStorage.setItem(TOKEN_KEY, token);
     else localStorage.removeItem(TOKEN_KEY);
@@ -98,6 +123,15 @@ export function getLastTelemetry() {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const method = (options.method || 'GET').toUpperCase();
+  const cacheKey = cacheKeyFor(endpoint);
+  if (isCacheableRead(endpoint, method)) {
+    const cached = readCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.data as T;
+    const pending = inFlightReads.get(cacheKey);
+    if (pending) return pending as Promise<T>;
+  }
+
   const headers = new Headers(options.headers || {});
   if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   
@@ -105,48 +139,63 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     headers.set('Authorization', `Bearer ${authToken}`);
   }
 
-  const response = await fetch(endpoint, {
-    ...options,
-    headers
-  });
+  const requestCacheVersion = readCacheVersion;
+  const run = (async () => {
+    const response = await fetch(endpoint, {
+      ...options,
+      headers
+    });
 
-  // Extract routing headers for multi-tenant awareness
-  const resolvedId = response.headers.get('X-Resolved-Tenant-Id');
-  const isolatedDb = response.headers.get('X-Isolated-Database');
-  const strategy = response.headers.get('X-Routing-Strategy') as TenantRoutingResolution['strategy'];
-  const latency = response.headers.get('X-Routing-Latency-Ms');
+    // Extract routing headers for multi-tenant awareness
+    const resolvedId = response.headers.get('X-Resolved-Tenant-Id');
+    const isolatedDb = response.headers.get('X-Isolated-Database');
+    const strategy = response.headers.get('X-Routing-Strategy') as TenantRoutingResolution['strategy'];
+    const latency = response.headers.get('X-Routing-Latency-Ms');
 
-  if (resolvedId && isolatedDb && strategy) {
-    lastRoutingResolution = {
-      strategy,
-      sourceValue: 'session',
-      resolvedTenantId: resolvedId,
-      targetDatabase: isolatedDb,
-      timestamp: new Date().toISOString(),
-      latencyMs: latency ? parseInt(latency, 10) : 6
-    };
+    if (resolvedId && isolatedDb && strategy) {
+      lastRoutingResolution = {
+        strategy,
+        sourceValue: 'session',
+        resolvedTenantId: resolvedId,
+        targetDatabase: isolatedDb,
+        timestamp: new Date().toISOString(),
+        latencyMs: latency ? parseInt(latency, 10) : 6
+      };
+    }
+
+    const data = await response.json().catch(() => ({}));
+    if (response.status === 401 && authToken && !endpoint.startsWith('/api/auth/login')) {
+      setAuthToken(null);
+      window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+    }
+    if (response.status === 403 && authToken && data.code !== 'PASSWORD_CHANGE_REQUIRED') {
+      window.dispatchEvent(new Event(PERMISSION_DENIED_EVENT));
+    }
+    if (!response.ok || !data.success) {
+      // Servidor ainda na versão antiga responde com o texto técnico "Rota não encontrada: ..."
+      const staleServer = response.status === 404 && /^Rota não encontrada/.test(String(data.error ?? ''));
+      const message = staleServer
+        ? 'Não foi possível concluir esta ação porque o sistema está desatualizado. Atualize a página (Ctrl+F5) e tente de novo. Se o problema continuar, avise o suporte.'
+        : data.error || 'Erro na requisição ao servidor';
+      throw new ApiError(message, response.status, data.code);
+    }
+
+    if (isCacheableRead(endpoint, method) && requestCacheVersion === readCacheVersion) {
+      readCache.set(cacheKey, { data, expiresAt: Date.now() + READ_CACHE_TTL_MS });
+    } else if (endpoint.startsWith('/api/v1/') && method !== 'GET') {
+      clearApiReadCache('/api/v1/');
+    }
+
+    return data as T;
+  })();
+
+  if (isCacheableRead(endpoint, method)) {
+    inFlightReads.set(cacheKey, run);
+    void run.finally(() => inFlightReads.delete(cacheKey)).catch(() => undefined);
   }
 
-  const data = await response.json().catch(() => ({}));
-  if (response.status === 401 && authToken && !endpoint.startsWith('/api/auth/login')) {
-    setAuthToken(null);
-    window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
-  }
-  if (response.status === 403 && authToken && data.code !== 'PASSWORD_CHANGE_REQUIRED') {
-    window.dispatchEvent(new Event(PERMISSION_DENIED_EVENT));
-  }
-  if (!response.ok || !data.success) {
-    // Servidor ainda na versão antiga responde com o texto técnico "Rota não encontrada: ..."
-    const staleServer = response.status === 404 && /^Rota não encontrada/.test(String(data.error ?? ''));
-    const message = staleServer
-      ? 'Não foi possível concluir esta ação porque o sistema está desatualizado. Atualize a página (Ctrl+F5) e tente de novo. Se o problema continuar, avise o suporte.'
-      : data.error || 'Erro na requisição ao servidor';
-    throw new ApiError(message, response.status, data.code);
-  }
-
-  return data as T;
+  return run;
 }
-
 /** Files sit behind the API (permission + tenant checked): they are fetched with the session token (not linked) and handed to the browser as a download. */
 async function downloadAuthenticatedFile(endpoint: string, fileName: string): Promise<void> {
   const response = await fetch(endpoint, { headers: authToken ? { Authorization: `Bearer ${authToken}` } : {} });
