@@ -490,6 +490,14 @@ async function main() {
       // as a deleted tenant not clearing its Storage files (documented risk, not specific to the smoke test).
 
       check('duplicate upload (same bytes) -> 409', (await uploadResume(adminA, jobId, validPdf, 'application/pdf', 'curriculo-smoke.pdf')).status === 409);
+
+      // A organização costuma ter o mesmo candidato concorrendo a mais de uma vaga: o mesmo arquivo de currículo
+      // não pode ser bloqueado em uma vaga diferente — a checagem de duplicidade é por vaga, não global.
+      const screeningJob2 = await A('POST', '/api/v1/openings', { title: 'Vaga Smoke 2 (mesmo cargo)', positionId: posId, departmentId: deptId });
+      check('create a second opening for the cross-job duplicate check', screeningJob2.status === 201, screeningJob2.json);
+      const upOtherJob = await uploadResume(adminA, screeningJob2.json.opening.id, validPdf, 'application/pdf', 'curriculo-smoke.pdf');
+      check('same bytes, different vaga -> 201 (duplicate check is per vaga, not global)', upOtherJob.status === 201 && upOtherJob.json.file?.status === 'uploaded', upOtherJob.json);
+
       check('upload: type not PDF/DOCX -> 400', (await uploadResume(adminA, jobId, Buffer.from('não sou um currículo'), 'text/plain')).status === 400);
       const oldDoc = Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.alloc(16)]);
       check('upload: old .doc -> 400 with a friendly message', (await uploadResume(adminA, jobId, oldDoc, 'application/msword')).status === 400);

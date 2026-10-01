@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { UploadCloud, FileText, CheckCircle2, XCircle, Loader2, RotateCw, X } from 'lucide-react';
+import { UploadCloud, FileText, CheckCircle2, XCircle, Loader2, RotateCw, X, CopyX } from 'lucide-react';
 import { TenantApi, ApiError } from '../../services/api.js';
 import { RESUME_LIMITS } from '../../types.js';
 
@@ -7,7 +7,7 @@ const ACCEPTED_EXTENSIONS = ['.pdf', '.docx'];
 const MAX_BYTES = 4 * 1024 * 1024;
 const CONCURRENCY = 3;
 
-type QueueStatus = 'queued' | 'uploading' | 'analyzing' | 'done' | 'needs_data' | 'error';
+type QueueStatus = 'queued' | 'uploading' | 'analyzing' | 'done' | 'needs_data' | 'duplicate' | 'error';
 
 interface QueueItem {
   key: string;
@@ -55,6 +55,11 @@ export const ResumeUploadZone: React.FC<{ jobId: string; disabled?: boolean; onF
         });
       }
     } catch (err) {
+      // Duplicado não é uma falha a reprocessar: o arquivo já está na vaga, então nada de botão "tentar de novo" para ele.
+      if (err instanceof ApiError && err.status === 409) {
+        patch(item.key, { status: 'duplicate', message: err.message });
+        return;
+      }
       patch(item.key, { status: 'error', message: err instanceof ApiError ? err.message : 'Falha ao enviar este arquivo.' });
     }
   };
@@ -152,6 +157,8 @@ const StatusBadge: React.FC<{ item: QueueItem; onRetry: () => void }> = ({ item,
       return <span className="flex items-center gap-1 text-emerald-600"><CheckCircle2 className="w-3.5 h-3.5" />Pronto</span>;
     case 'needs_data':
       return <span className="flex items-center gap-1 text-amber-600" title={item.message}><CheckCircle2 className="w-3.5 h-3.5" />Precisa de dados</span>;
+    case 'duplicate':
+      return <span className="flex items-center gap-1 text-slate-500" title={item.message}><CopyX className="w-3.5 h-3.5" />Já enviado</span>;
     case 'error':
       return (
         <span className="flex items-center gap-1.5 min-w-0">

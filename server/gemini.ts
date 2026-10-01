@@ -39,9 +39,9 @@ const SKIP_TEXT: Record<AiSkipReason, string> = {
 // The provider sometimes answers "high demand" for a while; the request is retried before giving up, but always inside a time budget:
 // the whole evaluation must finish well before the 60 s limit of the serverless function.
 const TRANSIENT_STATUS = new Set([429, 500, 502, 503, 504]);
-const RETRY_DELAYS_MS = [1200, 3500];
-const AI_TOTAL_BUDGET_MS = 42_000;
-const AI_ATTEMPT_TIMEOUT_MS = 20_000;
+const RETRY_DELAYS_MS = [1000, 2500, 5000];
+const AI_TOTAL_BUDGET_MS = 48_000;
+const AI_ATTEMPT_TIMEOUT_MS = 15_000;
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 
 const isTimeout = (err: unknown) => ['AbortError', 'TimeoutError'].includes((err as { name?: string } | undefined)?.name ?? '');
